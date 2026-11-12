@@ -2,7 +2,7 @@
 
 C 使用 clang-format 18：4 空格、100 列、控制流与函数展开、函数大括号换行。`.clang-format` 是唯一格式依据。头文件使用 include guard；接口说明写清资源所有权、线程约束、返回值与超时。状态修改和错误处理使用明确分支，业务变更避免堆叠在表达式内。
 
-HTML/CSS/JS、Markdown、JSON、JSON 使用 Prettier 3.6.2，2 空格。Python 使用 Black 25.1.0，4 空格。Makefile 按变量、源文件、构建、测试、维护目标分组，多项列表逐行续写；配方使用真实 Tab，不能用普通文本格式化器替换。
+HTML/CSS/JS、Markdown、JSON 使用 Prettier 3.6.2，2 空格。Python 使用 Black 25.1.0，4 空格。Makefile 按变量、源文件、构建、测试、维护目标分组，多项列表逐行续写；配方使用真实 Tab，不能用普通文本格式化器替换。
 
 ```sh
 python3 -m pip install -r requirements-dev.txt
