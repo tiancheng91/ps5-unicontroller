@@ -1,0 +1,51 @@
+name: Test and build PS5 payload
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LLVM_CONFIG: /usr/bin/llvm-config-18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler
+        run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 lld-18 clang-format-18
+      - name: Install Python formatter
+        run: python3 -m pip install -r requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check formatting
+        run: make format-check
+      - name: Host regression tests
+        run: make test CC=clang-18
+      - name: Download pinned PS5 SDK
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/ps5-payload-dev/sdk/releases/download/v0.45/ps5-payload-sdk.zip \
+            -o "$RUNNER_TEMP/ps5-sdk.zip"
+          echo '5fac64093d0e3e69f2584ce7935f24f703f622d9681f1495c85b9f00d1291a2c  ps5-sdk.zip' \
+            | (cd "$RUNNER_TEMP" && sha256sum --check)
+          unzip -q "$RUNNER_TEMP/ps5-sdk.zip" -d "$RUNNER_TEMP/ps5-sdk"
+          echo "PS5_PAYLOAD_SDK=$RUNNER_TEMP/ps5-sdk/ps5-payload-sdk" >> "$GITHUB_ENV"
+      - name: Build payload
+        run: make ps5
+      - name: Hash payload
+        run: |
+          file dist/unicontroller.elf
+          readelf -h dist/unicontroller.elf
+          (cd dist && sha256sum unicontroller.elf > unicontroller.elf.sha256)
+          printf 'commit=%s\nrun=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniController-PS5
+          path: dist/
+          if-no-files-found: error
