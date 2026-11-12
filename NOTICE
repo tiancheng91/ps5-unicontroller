@@ -14,3 +14,5 @@ patterns follow ShadowMountPlus by drakmor (GPL-3.0).
 
 USB architecture research also consulted AnyController:
 https://github.com/BallerIsLeet/AnyController
+
+The Web-shortcut installer follows the existing project installer implementation and the AppInstUtil TitleDir/InstallAll pattern credited there to itsPLK/ps5-payload-manager (src/app_installer.c).

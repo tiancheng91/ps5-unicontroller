@@ -5,6 +5,7 @@
 #include "assets.h"
 #include "../drivers/bt.h"
 #include "../drivers/usb.h"
+#include "../ps5/launcher.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -44,6 +45,7 @@ __attribute__((weak)) const char uc_settings_html[] =
 static Client clients[CLIENTS];
 static Settings settings;
 static char token[65], origin[160];
+static unsigned short listening_port;
 static const char *store_path;
 static uint64_t active_session;
 static int active_user = -1;
@@ -281,6 +283,34 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 response(c, 200, uc_assets[i].type, uc_assets[i].body);
                 return;
             }
+    }
+    if (!strcmp(path, "/api/v1/launcher")) {
+        if (strcmp(method, "GET")) {
+            /* Installer calls can block; perform maintenance only with inputs stopped. */
+            if (uc_bt_running() || uc_usb_running() || bt_start_queued || usb_start_queued ||
+                uc_core_active_session() || enable_pending) {
+                error_response(c, 409, "disable_inputs_before_launcher_change");
+                return;
+            }
+            int rc;
+            if (!strcmp(method, "POST"))
+                rc = uc_launcher_install(listening_port, 1);
+            else if (!strcmp(method, "DELETE"))
+                rc = uc_launcher_remove();
+            else {
+                error_response(c, 404, "not_found");
+                return;
+            }
+            if (rc) {
+                error_response(c, 503, "launcher_operation_failed_or_unsupported");
+                return;
+            }
+        }
+        char status[192];
+        snprintf(status, sizeof status, "{\"state\":\"%s\",\"title_id\":\"%s\",\"port\":%u}",
+                 uc_launcher_state(), UC_LAUNCHER_TITLE_ID, (unsigned)listening_port);
+        response(c, 200, "application/json", status);
+        return;
     }
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/usb")) {
         if (usb_start_queued) {
@@ -851,6 +881,11 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         close(listener);
         return -1;
     }
+    listening_port = port;
+#ifdef UC_PS5
+    if (uc_launcher_install(port, 0))
+        fprintf(stderr, "[launcher] automatic registration failed; HTTP remains available\n");
+#endif
     uc_bt_set_log_level((unsigned)settings.recording);
     uc_bt_set_rumble_enabled(settings.rumble);
     uc_usb_set_log_level((unsigned)settings.recording);

@@ -34,6 +34,7 @@ HOST_SOURCES := \
 	$(DRIVER_SHARED) \
 	$(USB_SOURCES) \
 	$(CONFIG_SOURCES) \
+	src/ps5/launcher.c \
 	src/web/runtime.c \
 	tests/web/host_main.c \
 	tests/web/host_backend.c
@@ -70,7 +71,7 @@ host: $(HOST_BINARY)
 $(HOST_BINARY): $(HOST_SOURCES) $(C_HEADERS) $(BUILD)/assets.c $(CONTROLLER_DATA)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(HOST_SOURCES) $(BUILD)/assets.c -o $@
 
-ps5: assets controllers
+ps5: assets controllers $(BUILD)/launcher_icon.inc
 	$(MAKE) -f ps5.mk
 
 # Core/platform tests run without sockets; web tests bind local listeners.
@@ -176,3 +177,17 @@ $(BUILD)/test-overrides: tests/config/test_overrides.c $(CONFIG_SOURCES) $(DRIVE
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/config/test_overrides.c $(CONFIG_SOURCES) \
 		$(DRIVER_SHARED) -o $@
+
+
+$(BUILD)/launcher_icon.inc: assets/branding/icon0.png tools/embed_icon.py
+	$(PYTHON) tools/embed_icon.py
+
+
+.PHONY: test-launcher
+test: test-launcher
+test-launcher: $(BUILD)/test-launcher
+	./$(BUILD)/test-launcher
+
+$(BUILD)/test-launcher: tests/launcher/test_launcher.c src/ps5/launcher.c \
+	src/ps5/launcher.h $(BUILD)/launcher_icon.inc
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/launcher/test_launcher.c -o $@

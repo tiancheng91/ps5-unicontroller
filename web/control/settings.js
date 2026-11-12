@@ -165,3 +165,29 @@ $("save").onclick = async () => {
   }
 };
 load();
+
+async function launcherAction(method = "GET") {
+  $("launcher-install").disabled = true;
+  $("launcher-remove").disabled = true;
+  try {
+    const result = await api("/launcher", method);
+    const labels = {
+      registered: "已注册",
+      removed: "已移除",
+      failed: "注册失败，可重试",
+      unsupported: "仅 PS5 支持应用图标",
+    };
+    $("launcher-status").textContent =
+      (labels[result.state] || result.state) + " · " + result.title_id + " · 端口 " + result.port;
+    const unsupported = result.state === "unsupported";
+    $("launcher-install").disabled = unsupported;
+    $("launcher-remove").disabled = unsupported || result.state === "removed";
+  } catch (error) {
+    $("launcher-status").textContent = "操作未确认：" + error.message;
+    $("launcher-install").disabled = false;
+    $("launcher-remove").disabled = false;
+  }
+}
+$("launcher-install").onclick = () => launcherAction("POST");
+$("launcher-remove").onclick = () => launcherAction("DELETE");
+launcherAction();

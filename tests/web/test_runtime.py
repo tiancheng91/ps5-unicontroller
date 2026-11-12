@@ -49,6 +49,12 @@ with tempfile.TemporaryDirectory() as directory:
             raise AssertionError("runtime did not start")
         assert status == 200
         token = session["token"]
+        status, launcher = request("GET", "/api/v1/launcher")
+        assert status == 200 and launcher["state"] == "unsupported"
+        assert launcher["port"] == port and launcher["title_id"] == "UNIC00001"
+        assert request("POST", "/api/v1/launcher", auth=False)[0] == 403
+        assert request("POST", "/api/v1/launcher")[0] == 503
+        assert request("DELETE", "/api/v1/launcher")[0] == 503
         # Embedded CSS/JS must match source bytes and have strict MIME types.
         root = Path(__file__).resolve().parents[2]
         for asset in (root / "web").rglob("*"):

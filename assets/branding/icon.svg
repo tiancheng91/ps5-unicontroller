@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="512" height="512" role="img" aria-labelledby="title">
+  <title id="title">UniController</title>
+  <rect width="48" height="48" fill="#FF8C00" />
+  <g fill="#0D0E11" transform="translate(6 6) scale(.75)">
+    <path fill-rule="evenodd" d="M18 11H30A16 16 0 0 1 30 43H18A16 16 0 0 1 18 11ZM18 15A12 12 0 0 0 18 39H30A12 12 0 0 0 30 15Z" />
+    <rect x="22" y="5" width="4" height="8" rx="2" />
+    <path d="M15 24V22A2 2 0 0 1 19 22V25H22A2 2 0 0 1 22 29H19V32A2 2 0 0 1 15 32V29H12A2 2 0 0 1 12 25H15Z" />
+    <circle cx="31" cy="22" r="2" />
+    <circle cx="35" cy="27" r="2" />
+  </g>
+</svg>

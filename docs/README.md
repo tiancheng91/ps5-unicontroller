@@ -4,6 +4,7 @@
 - [蓝牙](bluetooth.md)、[USB](usb.md)：接入机制、支持范围与限制。
 - [控制器配置](controller-config.md)、[设置存储](settings-storage.md)：内置定义、用户覆盖与持久化。
 - [设备说明](gamesir-nova.md)：型号、协议身份与验证边界。
+- [应用图标](launcher.md)：PS5入口注册、移除及Logo配色。
 - [实机验证](validation.md)：部署和回归步骤。
 - [代码风格](code-style.md)、[视觉规范](../design.md)：维护规范。
 

@@ -88,3 +88,5 @@ make preview PREVIEW_BIND=0.0.0.0
 settings.json 继续保存 UI/core 偏好，包括 A/B 翻转和全局 32 位按键映射；当前没有新增每会话轴方向反转。Touchpad 映射仅是点击位；Switch Capture 已有默认映射，背键必须独立上报才能单独映射。游戏震动受全局震动开关控制，依赖具体协议的输出支持。
 
 示例见 [examples/controllers.json](examples/controllers.json)，详细字段与边界见[配置说明](docs/controller-config.md)。
+
+PS5 会在服务启动后注册 UniController 图标，点击打开本机配置页；设置页可更新或移除。图标不负责加载 payload。安装行为与主题换色见[应用图标说明](docs/launcher.md)。

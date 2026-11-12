@@ -9,7 +9,7 @@ include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 CFLAGS := -std=c11 -Wall -Wextra -Werror -O2
 CPPFLAGS += -Isrc/core -Isrc/web -Isrc/ps5 -Isrc/drivers/common -Ibuild -DUC_PS5
-LDLIBS += -lScePad -lSceUserService -ldl
+LDLIBS += -lScePad -lSceUserService -lSceAppInstUtil -ldl
 
 PAYLOAD := dist/unicontroller.elf
 BT_DIR := src/drivers/bluetooth
@@ -31,6 +31,7 @@ SOURCES := \
 	src/core/uc_core.c \
 	src/ps5/main.c \
 	src/ps5/backend.c \
+	src/ps5/launcher.c \
 	src/web/runtime.c \
 	build/assets.c
 OBJECTS := $(patsubst %.c,build/ps5/%.o,$(SOURCES))
@@ -44,9 +45,13 @@ $(PAYLOAD): $(OBJECTS)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $(OBJECTS) $(LDLIBS)
 
-build/ps5/%.o: %.c $(HEADERS) $(CONTROLLER_DATA)
+build/ps5/%.o: %.c $(HEADERS) $(CONTROLLER_DATA) build/launcher_icon.inc
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 build/controller_registry.inc: src/drivers/protocols/controllers.json tools/embed_controllers.py
 	python3 tools/embed_controllers.py
+
+
+build/launcher_icon.inc: assets/branding/icon0.png tools/embed_icon.py
+	python3 tools/embed_icon.py
