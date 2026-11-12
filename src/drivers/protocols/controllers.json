@@ -1,0 +1,707 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "ds4": {
+      "name": "DualShock 4",
+      "implementation": "ds4",
+      "output": true,
+      "needs_full": true,
+      "rumble_refresh_ms": 0
+    },
+    "ds5": {
+      "name": "DualSense",
+      "implementation": "ds5",
+      "output": true,
+      "needs_full": true,
+      "rumble_refresh_ms": 0
+    },
+    "xbox": {
+      "name": "Xbox",
+      "implementation": "xbox",
+      "output": true,
+      "needs_full": false,
+      "rumble_refresh_ms": 0
+    },
+    "switch": {
+      "name": "Switch Pro",
+      "implementation": "switch",
+      "output": true,
+      "needs_full": true,
+      "rumble_refresh_ms": 60
+    },
+    "joycon-left": {
+      "name": "Joy-Con (L)",
+      "implementation": "joycon-left",
+      "output": true,
+      "needs_full": true,
+      "rumble_refresh_ms": 60
+    },
+    "joycon-right": {
+      "name": "Joy-Con (R)",
+      "implementation": "joycon-right",
+      "output": true,
+      "needs_full": true,
+      "rumble_refresh_ms": 60
+    }
+  },
+  "layouts": {
+    "android": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "none",
+        "button4": "square",
+        "button5": "triangle",
+        "button6": "none",
+        "button7": "l1",
+        "button8": "r1",
+        "button9": "l2",
+        "button10": "r2",
+        "button11": "create",
+        "button12": "options",
+        "button13": "ps",
+        "button14": "l3",
+        "button15": "r3"
+      }
+    },
+    "android-ipega": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "l3",
+        "button4": "square",
+        "button5": "triangle",
+        "button6": "r3",
+        "button7": "l1",
+        "button8": "r1",
+        "button9": "l2",
+        "button10": "r2",
+        "button11": "create",
+        "button12": "options",
+        "button13": "none",
+        "button14": "l3",
+        "button15": "r3"
+      }
+    },
+    "android-steelseries": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "none",
+        "button4": "square",
+        "button5": "triangle",
+        "button6": "none",
+        "button7": "l1",
+        "button8": "r1",
+        "button9": "l2",
+        "button10": "r2",
+        "button11": "none",
+        "button12": "options",
+        "button13": "create",
+        "button14": "l3",
+        "button15": "r3"
+      }
+    },
+    "nvidia-shield": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button7": "l3",
+        "button8": "r3",
+        "button9": "options"
+      }
+    },
+    "razer-serval": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button7": "create",
+        "button8": "options",
+        "button9": "l3",
+        "button10": "r3",
+        "button11": "none",
+        "button12": "ps",
+        "button13": "create"
+      }
+    },
+    "powera-moga": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button7": "create",
+        "button8": "options",
+        "button9": "l3",
+        "button10": "r3"
+      }
+    },
+    "atari-vcs": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button7": "l3",
+        "button8": "r3",
+        "button9": "create",
+        "button10": "options",
+        "button11": "ps"
+      }
+    },
+    "hyperkin-scout": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button9": "create",
+        "button10": "options"
+      }
+    },
+    "mocute-050": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1",
+        "button7": "create",
+        "button8": "options",
+        "button9": "l3",
+        "button10": "r3",
+        "button11": "l2",
+        "button12": "r2"
+      }
+    }
+  },
+  "devices": [
+    {
+      "vid": "054c",
+      "pid": "09cc",
+      "name": "DualShock 4 v2",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "054c",
+      "pid": "05c4",
+      "name": "DualShock 4 v1",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "0f0d",
+      "pid": "00f6",
+      "name": "Hori Onyx",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1532",
+      "pid": "1009",
+      "name": "Razer Raiju Ultimate",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1532",
+      "pid": "100a",
+      "name": "Razer Raiju Tournament Edition",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2e95",
+      "pid": "7725",
+      "name": "SCUF Vantage 2",
+      "bluetooth_profile": "ds4",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "054c",
+      "pid": "0ce6",
+      "name": "DualSense",
+      "bluetooth_profile": "ds5",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "054c",
+      "pid": "0df2",
+      "name": "DualSense Edge",
+      "bluetooth_profile": "ds5",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "02e0",
+      "name": "Xbox One S",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "02fd",
+      "name": "Xbox One S",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b00",
+      "name": "Xbox Elite Series 2",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b05",
+      "name": "Xbox Elite Series 2",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b0a",
+      "name": "Xbox Adaptive Controller",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b0c",
+      "name": "Xbox Adaptive Controller",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b12",
+      "name": "Xbox Series X|S",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b13",
+      "name": "Xbox Series X|S",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol",
+      "ble": true
+    },
+    {
+      "vid": "045e",
+      "pid": "0b20",
+      "name": "Xbox One S",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b21",
+      "name": "Xbox Adaptive Controller",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "045e",
+      "pid": "0b22",
+      "name": "Xbox Elite Series 2",
+      "bluetooth_profile": "xbox",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "057e",
+      "pid": "2006",
+      "name": "Joy-Con (L)",
+      "bluetooth_profile": "joycon-left",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "057e",
+      "pid": "2007",
+      "name": "Joy-Con (R)",
+      "bluetooth_profile": "joycon-right",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "057e",
+      "pid": "2009",
+      "name": "Switch Pro Controller",
+      "bluetooth_profile": "switch",
+      "identity_kind": "protocol"
+    },
+    {
+      "vid": "057e",
+      "pid": "2017",
+      "name": "Switch Online SNES Controller",
+      "bluetooth_profile": "switch",
+      "identity_kind": "protocol",
+      "rumble": false
+    },
+    {
+      "vid": "057e",
+      "pid": "2019",
+      "name": "Switch Online N64 Controller",
+      "bluetooth_profile": "switch",
+      "identity_kind": "protocol",
+      "rumble": false
+    },
+    {
+      "vid": "057e",
+      "pid": "201a",
+      "name": "Switch Online Mega Drive Controller",
+      "bluetooth_profile": "switch",
+      "identity_kind": "protocol",
+      "rumble": false
+    },
+    {
+      "vid": "057e",
+      "pid": "201e",
+      "name": "Switch Online Mega Drive Controller",
+      "bluetooth_profile": "switch",
+      "identity_kind": "protocol",
+      "rumble": false
+    },
+    {
+      "vid": "ffff",
+      "pid": "046e",
+      "name": "GameSir G3s",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "05ac",
+      "pid": "022d",
+      "name": "GameSir G3s",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "ffff",
+      "pid": "046f",
+      "name": "GameSir G4s",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "1040",
+      "name": "GameSir Nova Lite",
+      "usb": {
+        "xinput_activation": true,
+        "input_watchdog": true
+      },
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "1041",
+      "name": "GameSir Nova Lite",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "100f",
+      "name": "GameSir Nova 2 Lite",
+      "usb": {
+        "xinput_activation": true,
+        "input_watchdog": true
+      },
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "1098",
+      "name": "GameSir Nova 2 Lite Receiver",
+      "usb": {
+        "xinput_activation": true,
+        "input_watchdog": true
+      },
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "1022",
+      "name": "GameSir G7 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "103c",
+      "name": "GameSir Tarantula 8K",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3537",
+      "pid": "10b8",
+      "name": "GameSir G7 Pro 8K",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "ffff",
+      "pid": "0450",
+      "name": "GameSir T1s",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "05ac",
+      "pid": "056b",
+      "name": "GameSir T2a",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "20bc",
+      "pid": "5501",
+      "name": "Betop 2585N2",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2e2c",
+      "pid": "0002",
+      "name": "Bionik Vulkan",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "0079",
+      "pid": "181c",
+      "name": "LanShen X1Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2717",
+      "pid": "3144",
+      "name": "Xiaomi Mi Controller",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1949",
+      "pid": "0402",
+      "name": "Amazon Fire Controller",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "2100",
+      "name": "8BitDo SN30 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "2101",
+      "name": "8BitDo SN30 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "3012",
+      "name": "8BitDo Ultimate 2.4G",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "301b",
+      "name": "8BitDo Ultimate 2C Wireless",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "3106",
+      "name": "8BitDo Ultimate Wireless",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6001",
+      "name": "8BitDo SN30 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6003",
+      "name": "8BitDo Pro 2",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6006",
+      "name": "8BitDo Pro 2",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6009",
+      "name": "8BitDo Pro 3",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6012",
+      "name": "8BitDo Ultimate 2 Wireless",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6100",
+      "name": "8BitDo SF30 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "6101",
+      "name": "8BitDo SN30 Pro",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2dc8",
+      "pid": "ab20",
+      "name": "8BitDo Pro 2",
+      "hid_layout": "android",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1949",
+      "pid": "0403",
+      "name": "iPega 9-series",
+      "hid_layout": "android-ipega",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "05ac",
+      "pid": "022c",
+      "name": "iPega 9-series",
+      "hid_layout": "android-ipega",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1038",
+      "pid": "1412",
+      "name": "SteelSeries Controller",
+      "hid_layout": "android-steelseries",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "0111",
+      "pid": "1420",
+      "name": "SteelSeries Controller",
+      "hid_layout": "android-steelseries",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "0111",
+      "pid": "1431",
+      "name": "SteelSeries Controller",
+      "hid_layout": "android-steelseries",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "0111",
+      "pid": "1419",
+      "name": "SteelSeries Controller",
+      "hid_layout": "android-steelseries",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "0955",
+      "pid": "7214",
+      "name": "NVIDIA Shield Controller",
+      "hid_layout": "nvidia-shield",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "1532",
+      "pid": "0900",
+      "name": "Razer Serval",
+      "hid_layout": "razer-serval",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "20d6",
+      "pid": "89e5",
+      "name": "PowerA MOGA Hero",
+      "hid_layout": "powera-moga",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "20d6",
+      "pid": "0dad",
+      "name": "PowerA MOGA Pro",
+      "hid_layout": "powera-moga",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "20d6",
+      "pid": "6271",
+      "name": "PowerA MOGA Pro 2",
+      "hid_layout": "powera-moga",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "3250",
+      "pid": "1002",
+      "name": "Atari VCS Modern Controller",
+      "hid_layout": "atari-vcs",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "2e24",
+      "pid": "200a",
+      "name": "Hyperkin Scout",
+      "hid_layout": "hyperkin-scout",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "04e8",
+      "pid": "046e",
+      "name": "Mocute 050",
+      "hid_layout": "mocute-050",
+      "identity_kind": "reported-model"
+    },
+    {
+      "vid": "045e",
+      "pid": "028e",
+      "usb": {
+        "xinput_activation": true,
+        "input_watchdog": false
+      },
+      "identity_kind": "protocol"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+/* Bluetooth HID host for game controllers, on a controller shared with the
+ * console's own driver.
+ *
+ * Runs on one thread: host_poll() pumps the transport, dispatches what
+ * arrived and advances every link's state machine. Every step that needs a
+ * reply is retried or timed out, since a few packets go to the system's
+ * driver instead of here.
+ *
+ *   pairing:    host_pair() searches for a pad in pairing mode, connects,
+ *               pairs, reads its vendor/product id over SDP and opens the
+ *               HID channels. The link key and ids are stored.
+ *   reconnect:  a stored pad that is switched on connects by itself; it is
+ *               accepted, authenticated with the stored key and its HID
+ *               channels accepted or opened.
+ */
+#ifndef PH_HOST_H
+#define PH_HOST_H
+
+#include "hci.h"
+#include "../../core/pad.h"
+
+#define HOST_MAX_PADS 4
+
+typedef struct host host_t;
+
+typedef struct {
+    void (*on_connect)(void *ud, int slot, const pad_info *info);
+    void (*on_state)(void *ud, int slot, const pad_state *st);
+    void (*on_disconnect)(void *ud, int slot);
+    void *ud;
+    /* Called every time the host waits (at least every 50 ms), including
+     * while it waits for the controller to answer at start-up, so that the
+     * menu keeps serving. Must be quick and must not call into the host.
+     * NULL: nothing to do. */
+    void (*idle)(void *ud);
+} host_events;
+
+/* Prepares the controller and loads the paired pads from db_path. Returns
+ * NULL if the controller does not answer. */
+host_t *host_open(hci_t hci, const char *db_path, const host_events *ev);
+void host_close(host_t *h);
+/* Disconnect only a link allocated by this host, never a system-owned handle. */
+int host_disconnect_slot(host_t *h, int slot);
+
+void host_poll(host_t *h, int timeout_ms);
+
+/* Searches for pads in pairing mode for `seconds`. */
+int host_pair(host_t *h, int seconds);
+
+/* Sends rumble and lights to the pad in `slot` (queued for rate-limited
+ * profiles). Returns 0 if unavailable, still initializing or unsupported. */
+int host_set_output(host_t *h, int slot, const pad_output *out);
+
+/* Rumbles the pad in `slot` for `ms` (100..2000) and stops it: a test from
+ * the web page. Lights are left as they are. Returns 0 if the slot has no
+ * connected pad, it is still initializing or the pad takes no output.
+ * Rate-limited profiles queue the pulse; a return of 1 means accepted. */
+int host_rumble_pulse(host_t *h, int slot, int ms);
+
+/* Latest game motor values; preserves lights and lets a web test finish first.
+ * Call with every successful feedback sample, including unchanged values.
+ * Non-zero rumble expires after 500 ms without a sample. Returns 0 if unavailable. */
+int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak);
+/* Whether a connected pad is ready for output; avoids querying unsupported pads. */
+int host_output_ready(const host_t *h, int slot);
+
+int host_connected(const host_t *h, int slot);
+int host_paired_count(const host_t *h);
+
+/* The controller went away (rest mode): close and open again. */
+int host_transport_lost(const host_t *h);
+
+/* ---- for the web page ---- */
+
+typedef struct {
+    unsigned char addr[6]; /* identity address */
+    uint16_t vid, pid;
+    int le; /* Bluetooth LE */
+    int connected;
+} host_paired_info;
+
+/* Seconds left in the pairing window, 0 if not pairing. */
+int host_pairing_left(const host_t *h);
+
+/* The i-th paired pad (0 <= i < host_paired_count). Returns 0 past the end. */
+int host_paired_get(const host_t *h, int i, host_paired_info *out);
+
+/* A connected, ready pad's identity and latest state. Returns 0 if none. */
+int host_pad_get(const host_t *h, int slot, pad_info *info, pad_state *st);
+
+/* Forgets a paired pad: disconnects it if linked and drops its keys.
+ * Returns 0 if it was not paired. */
+int host_forget(host_t *h, const unsigned char addr[6]);
+
+/* Stops pairing, disconnects our links, clears all stored transports. */
+int host_forget_all(host_t *h);
+
+#endif

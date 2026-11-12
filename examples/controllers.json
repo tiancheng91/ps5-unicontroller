@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "devices": [
+    {
+      "match": {
+        "transport": "classic",
+        "vid": "1234",
+        "pid": "5678"
+      },
+      "name": "My generic HID controller",
+      "profile": "generic-hid",
+      "mapping": {
+        "button1": "touchpad",
+        "lx": "x",
+        "ly": "y",
+        "rx": "z",
+        "ry": "rz"
+      }
+    },
+    {
+      "match": {
+        "transport": "usb",
+        "vid": "1234",
+        "pid": "5679"
+      },
+      "name": "My XInput-compatible controller",
+      "profile": "xinput-usb"
+    }
+  ]
+}

@@ -1,0 +1,749 @@
+#include "profiles.h"
+#include "../config/overrides.h"
+#include "crc32.h"
+#include "util.h"
+
+#include <string.h>
+
+/* Trigger travel past which L2/R2 also count as pressed buttons. */
+#define TRIGGER_PRESS 0x20
+
+/* ---- shared helpers ------------------------------------------------------ */
+
+/* A hat switch: 0 north, clockwise to 7 north-west; anything else is centred. */
+static uint32_t hat_buttons(unsigned hat)
+{
+    static const uint32_t dirs[8] = {
+        PAD_UP,   PAD_UP | PAD_RIGHT,  PAD_RIGHT, PAD_DOWN | PAD_RIGHT,
+        PAD_DOWN, PAD_DOWN | PAD_LEFT, PAD_LEFT,  PAD_UP | PAD_LEFT,
+    };
+    return hat < 8 ? dirs[hat] : 0;
+}
+
+static uint32_t trigger_buttons(uint8_t l2, uint8_t r2)
+{
+    return (l2 > TRIGGER_PRESS ? PAD_L2 : 0) | (r2 > TRIGGER_PRESS ? PAD_R2 : 0);
+}
+
+/* The three button bytes DualShock 4 and DualSense share:
+ *   b0: hat (low nibble), square, cross, circle, triangle
+ *   b1: L1, R1, L2, R2, share/create, options, L3, R3
+ *   b2: PS, touchpad click, (DualSense) mute */
+static uint32_t sony_buttons(const uint8_t *b)
+{
+    static const uint32_t b0[4] = {PAD_SQUARE, PAD_CROSS, PAD_CIRCLE, PAD_TRIANGLE};
+    static const uint32_t b1[8] = {PAD_L1,     PAD_R1,      PAD_L2, PAD_R2,
+                                   PAD_CREATE, PAD_OPTIONS, PAD_L3, PAD_R3};
+    uint32_t out = hat_buttons(b[0] & 0x0F);
+    int i;
+
+    for (i = 0; i < 4; i++)
+        if (b[0] & (0x10 << i))
+            out |= b0[i];
+    for (i = 0; i < 8; i++)
+        if (b[1] & (1 << i))
+            out |= b1[i];
+    if (b[2] & 0x01)
+        out |= PAD_PS;
+    if (b[2] & 0x02)
+        out |= PAD_TOUCHPAD;
+    return out;
+}
+
+/* A touch point: contact byte (bit 7 set = no finger), then 12-bit x and y
+ * packed in three bytes. */
+static void sony_touch(const uint8_t *p, pad_state *st, int i)
+{
+    st->touch[i].down = !(p[0] & 0x80);
+    st->touch[i].x = (uint16_t)(p[1] | (p[2] & 0x0F) << 8);
+    st->touch[i].y = (uint16_t)(p[2] >> 4 | p[3] << 4);
+}
+
+static void read_motion(const uint8_t *gyro, const uint8_t *accel, pad_state *st)
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        st->gyro[i] = les16(gyro + 2 * i);
+        st->accel[i] = les16(accel + 2 * i);
+    }
+    st->has_motion = 1;
+}
+
+static void sony_basic(const uint8_t *sticks, const uint8_t *buttons, uint8_t l2, uint8_t r2,
+                       pad_state *st)
+{
+    st->lx = sticks[0];
+    st->ly = sticks[1];
+    st->rx = sticks[2];
+    st->ry = sticks[3];
+    st->l2 = l2;
+    st->r2 = r2;
+    st->buttons = sony_buttons(buttons) | trigger_buttons(l2, r2);
+}
+
+/* ---- DualShock 4 ----------------------------------------------------------
+ *
+ * Over Bluetooth it starts with the short report 0x01 and moves to the full
+ * report 0x11 once it receives an output report 0x11.
+ *
+ *   0x01: [1..4] sticks  [5..7] buttons  [8] L2  [9] R2
+ *   0x11: [1..2] flags   [3..6] sticks   [7..9] buttons  [10] L2  [11] R2
+ *         [15..20] gyro  [21..26] accel  [32] battery (low nibble level,
+ *         bit 4 cable)   [35] touch report count, [36] first touch report:
+ *         timestamp, then two 4-byte points
+ */
+
+static int ds4_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    (void)ctx;
+    if (r[0] == 0x01 && n >= 10) {
+        sony_basic(r + 1, r + 5, r[8], r[9], st);
+        return PARSE_OK;
+    }
+    if (r[0] != 0x11 || n < 36)
+        return PARSE_NONE;
+
+    sony_basic(r + 3, r + 7, r[10], r[11], st);
+    read_motion(r + 15, r + 21, st);
+
+    {
+        unsigned level = r[32] & 0x0F, cable = (r[32] >> 4) & 1;
+        unsigned full = cable ? 11 : 8; /* cable reports up to 11 */
+        if (level > full)
+            level = full;
+        st->battery_pct = (uint8_t)(level * 100 / full);
+        st->charging = (uint8_t)(cable && level < full);
+        st->has_battery = 1;
+    }
+    if (n >= 45 && r[35] > 0) {
+        sony_touch(r + 37, st, 0);
+        sony_touch(r + 41, st, 1);
+        st->has_touch = 1;
+    }
+    return PARSE_FULL;
+}
+
+/* Output report 0x11: 73 bytes after the id, then the CRC.
+ *   [1] 0xC0 | report interval  [2] 0x20  [3] 0xF3 (rumble, light bar)
+ *   [4] 0x04  [6] weak motor  [7] strong motor  [8..10] light bar RGB */
+static int ds4_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    const int len = 1 + 73 + 4;
+
+    (void)ctx;
+    if (max < len)
+        return 0;
+    memset(b, 0, (size_t)len);
+    b[0] = 0x11;
+    b[1] = 0xC0 | 0x08; /* 0x08: 125 Hz input reports */
+    b[2] = 0x20;
+    b[3] = 0xF3;
+    b[4] = 0x04;
+    b[6] = o->weak;
+    b[7] = o->strong;
+    b[8] = o->r;
+    b[9] = o->g;
+    b[10] = o->b;
+    crc32_seal_output(b, len);
+    return len;
+}
+
+/* Waking a Sony pad up is just sending it an output report. */
+static int ds4_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
+{
+    return step == 0 ? ds4_output(ctx, o, b, max) : 0;
+}
+
+/* ---- DualSense --------------------------------------------------------------
+ *
+ * Same idea: short report 0x01 until an output report 0x31 arrives.
+ *
+ *   0x01: [1..4] sticks  [5..8] buttons  [9] L2  [10] R2
+ *   0x31: [2..5] sticks  [6] L2  [7] R2  [9..12] buttons
+ *         [17..22] gyro  [23..28] accel  [34..41] two touch points
+ *         [54] battery: low nibble level 0..10, high nibble 1 charging,
+ *         2 full
+ */
+
+static int ds5_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    (void)ctx;
+    if (r[0] == 0x01 && n >= 11) {
+        sony_basic(r + 1, r + 5, r[9], r[10], st);
+        return PARSE_OK;
+    }
+    if (r[0] != 0x31 || n < 55)
+        return PARSE_NONE;
+
+    sony_basic(r + 2, r + 9, r[6], r[7], st);
+    read_motion(r + 17, r + 23, st);
+    sony_touch(r + 34, st, 0);
+    sony_touch(r + 38, st, 1);
+    st->has_touch = 1;
+
+    {
+        unsigned level = r[54] & 0x0F, status = r[54] >> 4;
+        unsigned pct = level * 10 + 5;
+        st->battery_pct = (uint8_t)(pct > 100 ? 100 : pct);
+        st->charging = (uint8_t)(status == 1);
+        st->has_battery = 1;
+    }
+    return PARSE_FULL;
+}
+
+/* Output report 0x31: 73 bytes after the id, then the CRC.
+ *   [1] 0x02 (tag)  [2] valid flags 0: rumble  [3] valid flags 1: lights
+ *   [4] weak motor  [5] strong motor  [40] valid flags 2
+ *   [43] light bar setup  [44] LED brightness  [45] player LEDs
+ *   [46..48] light bar RGB */
+static int ds5_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    static const uint8_t player_leds[5] = {0x00, 0x04, 0x0A, 0x15, 0x1B};
+    const int len = 1 + 73 + 4;
+
+    (void)ctx;
+    if (max < len)
+        return 0;
+    memset(b, 0, (size_t)len);
+    b[0] = 0x31;
+    b[1] = 0x02;
+    b[2] = 0x03;
+    b[3] = 0x54;
+    b[4] = o->weak;
+    b[5] = o->strong;
+    b[40] = 0x03;
+    b[43] = 0x02;
+    b[44] = 0x02;
+    b[45] = 0x20 | player_leds[o->player < 5 ? o->player : 4]; /* 0x20: no fade-in */
+    b[46] = o->r;
+    b[47] = o->g;
+    b[48] = o->b;
+    crc32_seal_output(b, len);
+    return len;
+}
+
+static int ds5_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
+{
+    return step == 0 ? ds5_output(ctx, o, b, max) : 0;
+}
+
+/* ---- Xbox One / Series ------------------------------------------------------
+ *
+ * The same reports over Bluetooth Classic (older firmware) and Bluetooth LE
+ * (HID over GATT, current firmware), as documented publicly:
+ *
+ *   0x01: [1..8] sticks, 16-bit each  [9..12] triggers, 10-bit each
+ *         [13] hat, 1 north .. 8 north-west, 0 centred
+ *         16 bytes (first Xbox One S firmware):
+ *           [14] A B X Y LB RB View Menu  [15] L3 R3
+ *         17 bytes and more:
+ *           [14] A B - X Y - LB RB  [15] - - View Menu Xbox L3 R3
+ *           [16] bit 0: Share on Series controllers, View on older ones
+ *   0x02: [1] bit 0 Xbox button (first firmware)
+ *   0x04: [1] battery: bits 0-1 level, bits 2-3 power mode, bit 4 charging
+ *
+ * View is the "select" of Xbox games: it becomes the touchpad click, which
+ * plays that part in PlayStation games. Share becomes Create.
+ */
+
+typedef struct {
+    int has_share;
+} xbox_ctx;
+
+static void xbox_setup(void *ctx, uint16_t vid, uint16_t pid)
+{
+    xbox_ctx *c = ctx;
+
+    c->has_share = vid == 0x045E && (pid == 0x0B12 || pid == 0x0B13);
+}
+
+static int xbox_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    const xbox_ctx *c = ctx;
+    uint32_t b = 0;
+    unsigned hat;
+
+    if (r[0] == 0x02 && n >= 2) {
+        st->buttons = (st->buttons & ~(uint32_t)PAD_PS) | (r[1] & 1 ? PAD_PS : 0);
+        return PARSE_OK;
+    }
+    if (r[0] == 0x04 && n >= 2) {
+        st->battery_pct = (uint8_t)((r[1] & 3) * 100 / 3);
+        st->charging = (uint8_t)((r[1] >> 4) & 1);
+        st->has_battery = 1;
+        return PARSE_OK;
+    }
+    if (r[0] != 0x01 || n < 16)
+        return PARSE_NONE;
+
+    st->lx = (uint8_t)(le16(r + 1) >> 8);
+    st->ly = (uint8_t)(le16(r + 3) >> 8);
+    st->rx = (uint8_t)(le16(r + 5) >> 8);
+    st->ry = (uint8_t)(le16(r + 7) >> 8);
+    st->l2 = (uint8_t)((le16(r + 9) & 0x3FF) >> 2);
+    st->r2 = (uint8_t)((le16(r + 11) & 0x3FF) >> 2);
+
+    hat = r[13];
+    b |= hat >= 1 && hat <= 8 ? hat_buttons(hat - 1) : 0;
+
+    if (n > 16) {
+        if (r[14] & 0x01)
+            b |= PAD_CROSS;
+        if (r[14] & 0x02)
+            b |= PAD_CIRCLE;
+        if (r[14] & 0x08)
+            b |= PAD_SQUARE;
+        if (r[14] & 0x10)
+            b |= PAD_TRIANGLE;
+        if (r[14] & 0x40)
+            b |= PAD_L1;
+        if (r[14] & 0x80)
+            b |= PAD_R1;
+        if (r[15] & 0x04)
+            b |= PAD_TOUCHPAD; /* View */
+        if (r[15] & 0x08)
+            b |= PAD_OPTIONS; /* Menu */
+        if (r[15] & 0x10)
+            b |= PAD_PS; /* Xbox */
+        if (r[15] & 0x20)
+            b |= PAD_L3;
+        if (r[15] & 0x40)
+            b |= PAD_R3;
+        if (r[16] & 0x01)
+            b |= c && c->has_share ? PAD_CREATE : PAD_TOUCHPAD;
+    } else {
+        if (r[14] & 0x01)
+            b |= PAD_CROSS;
+        if (r[14] & 0x02)
+            b |= PAD_CIRCLE;
+        if (r[14] & 0x04)
+            b |= PAD_SQUARE;
+        if (r[14] & 0x08)
+            b |= PAD_TRIANGLE;
+        if (r[14] & 0x10)
+            b |= PAD_L1;
+        if (r[14] & 0x20)
+            b |= PAD_R1;
+        if (r[14] & 0x40)
+            b |= PAD_TOUCHPAD; /* View */
+        if (r[14] & 0x80)
+            b |= PAD_OPTIONS; /* Menu */
+        if (r[15] & 0x01)
+            b |= PAD_L3;
+        if (r[15] & 0x02)
+            b |= PAD_R3;
+        b |= st->buttons & PAD_PS; /* comes in report 0x02 */
+    }
+    st->buttons = b | trigger_buttons(st->l2, st->r2);
+    return PARSE_OK;
+}
+
+/* Output report 0x03, as sent over Bluetooth Classic and LE (the same
+ * bytes as SDL's HIDAPI Xbox One driver and xpadneo): all four motors
+ * enabled, trigger motors, main motors (strong = left/low, weak =
+ * right/high, 0..100), on for 2.55 s, no delay, repeated 235 times: in
+ * effect until the next report. Over LE it is written to the output Report
+ * characteristic whose Report Reference says id 3, type output. A test
+ * pulse runs pulse_10ms and is not repeated, so it stops by itself even
+ * if the report that ends it is lost. */
+static int xbox_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    (void)ctx;
+    if (max < 9)
+        return 0;
+    b[0] = 0x03;
+    b[1] = 0x0F;
+    b[2] = 0;
+    b[3] = 0;
+    b[4] = (uint8_t)(o->strong * 100 / 255);
+    b[5] = (uint8_t)(o->weak * 100 / 255);
+    b[6] = o->pulse_10ms ? o->pulse_10ms : 0xFF;
+    b[7] = 0x00;
+    b[8] = o->pulse_10ms ? 0x00 : 0xEB;
+    return 9;
+}
+
+/* ---- Nintendo Switch Pro Controller and compatibles -------------------------
+ *
+ * Starts in a simple HID mode (report 0x3F) and moves to the standard full
+ * report 0x30 when asked with subcommands in output report 0x01:
+ *
+ *   0x01: [1] packet counter (low nibble)  [2..9] rumble data
+ *         [10] subcommand id  [11..] subcommand arguments
+ *
+ *   0x30: [1] timer  [2] battery (high nibble) and connection
+ *         [3] right buttons: Y X B A SR SL R ZR
+ *         [4] shared: - + RS LS Home Capture
+ *         [5] left buttons: down up right left SR SL L ZL
+ *         [6..8] left stick, [9..11] right stick: two 12-bit values each
+ *         [13..48] three IMU samples: accel xyz, gyro xyz, 16-bit each
+ *
+ *   0x3F: [1] B A Y X L R ZL ZR  [2] - + LS RS Home Capture  [3] hat
+ *         [4..11] sticks, 16-bit each
+ *
+ * Buttons are placed by position, as on the PlayStation: B (bottom) is
+ * cross, A (right) circle, Y (left) square, X (top) triangle.
+ */
+
+typedef struct {
+    uint8_t counter;
+} switch_ctx;
+
+/* Protocol amplitude levels (milli-units), from dekuNukem's rumble data:
+ * github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/rumble_data_table.md
+ * Also used by Linux hid-nintendo. Fixed 160/320 Hz avoids libm and
+ * keeps the encoded amplitude at or below the normal 1.003 maximum. */
+static void switch_motor(uint8_t strength, uint8_t b[4])
+{
+    static const uint16_t amplitudes[] = {
+        0,   8,   12,  14,  17,  20,  24,  28,  33,  40,  47,  56,  67,  80,  95,  112,  117,
+        123, 128, 134, 140, 146, 152, 159, 166, 173, 181, 189, 198, 206, 215, 225, 230,  235,
+        240, 245, 251, 256, 262, 268, 273, 279, 286, 292, 298, 305, 311, 318, 325, 332,  340,
+        347, 355, 362, 370, 378, 387, 395, 404, 413, 422, 431, 440, 450, 460, 470, 480,  491,
+        501, 512, 524, 535, 547, 559, 571, 584, 596, 609, 623, 636, 650, 665, 679, 694,  709,
+        725, 741, 757, 773, 790, 808, 825, 843, 862, 881, 900, 920, 940, 960, 981, 1003,
+    };
+    unsigned amplitude = strength * 1000u / 255u;
+    unsigned i = 0;
+
+    while (i + 1 < sizeof amplitudes / sizeof amplitudes[0] && amplitudes[i] < amplitude)
+        i++;
+    b[0] = 0x00; /* 320 Hz high band */
+    b[1] = (uint8_t)(0x01 + 2 * i);
+    b[2] = (uint8_t)(0x40 + ((i & 1) << 7)); /* 160 Hz low band */
+    b[3] = (uint8_t)(0x40 + (i >> 1));
+}
+
+static int switch_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    switch_ctx *c = ctx;
+
+    if (max < 10)
+        return 0;
+    b[0] = 0x10;
+    b[1] = c->counter++ & 0x0F;
+    switch_motor(o->strong, b + 2); /* left actuator */
+    switch_motor(o->weak, b + 6);   /* right actuator */
+    return 10;
+}
+
+/* Stick travel from centre the raw values usually reach; factory
+ * calibration (SPI flash) is not read yet. */
+#define SWITCH_STICK_RANGE 1600
+
+static uint8_t switch_axis(int v, int invert)
+{
+    int s = (v - 2048) * 127 / SWITCH_STICK_RANGE;
+
+    if (invert)
+        s = -s;
+    s += 128;
+    return (uint8_t)(s < 0 ? 0 : s > 255 ? 255 : s);
+}
+
+static void switch_stick(const uint8_t *p, uint8_t *x, uint8_t *y)
+{
+    *x = switch_axis(p[0] | (p[1] & 0x0F) << 8, 0);
+    *y = switch_axis(p[1] >> 4 | p[2] << 4, 1); /* up is positive */
+}
+
+static int switch_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    uint32_t b = 0;
+
+    (void)ctx;
+    if (r[0] == 0x3F && n >= 12) {
+        if (r[1] & 0x01)
+            b |= PAD_CROSS; /* B */
+        if (r[1] & 0x02)
+            b |= PAD_CIRCLE; /* A */
+        if (r[1] & 0x04)
+            b |= PAD_SQUARE; /* Y */
+        if (r[1] & 0x08)
+            b |= PAD_TRIANGLE; /* X */
+        if (r[1] & 0x10)
+            b |= PAD_L1;
+        if (r[1] & 0x20)
+            b |= PAD_R1;
+        if (r[1] & 0x40)
+            b |= PAD_L2;
+        if (r[1] & 0x80)
+            b |= PAD_R2;
+        if (r[2] & 0x01)
+            b |= PAD_CREATE;
+        if (r[2] & 0x02)
+            b |= PAD_OPTIONS;
+        if (r[2] & 0x04)
+            b |= PAD_L3;
+        if (r[2] & 0x08)
+            b |= PAD_R3;
+        if (r[2] & 0x10)
+            b |= PAD_PS;
+        if (r[2] & 0x20)
+            b |= PAD_TOUCHPAD; /* Capture */
+        b |= hat_buttons(r[3]);
+        st->lx = (uint8_t)(le16(r + 4) >> 8);
+        st->ly = (uint8_t)(le16(r + 6) >> 8);
+        st->rx = (uint8_t)(le16(r + 8) >> 8);
+        st->ry = (uint8_t)(le16(r + 10) >> 8);
+        st->l2 = b & PAD_L2 ? 255 : 0;
+        st->r2 = b & PAD_R2 ? 255 : 0;
+        st->buttons = b;
+        return PARSE_OK;
+    }
+    if (r[0] != 0x30 || n < 12)
+        return PARSE_NONE;
+
+    if (r[3] & 0x01)
+        b |= PAD_SQUARE; /* Y */
+    if (r[3] & 0x02)
+        b |= PAD_TRIANGLE; /* X */
+    if (r[3] & 0x04)
+        b |= PAD_CROSS; /* B */
+    if (r[3] & 0x08)
+        b |= PAD_CIRCLE; /* A */
+    if (r[3] & 0x40)
+        b |= PAD_R1;
+    if (r[3] & 0x80)
+        b |= PAD_R2;
+    if (r[4] & 0x01)
+        b |= PAD_CREATE; /* - */
+    if (r[4] & 0x02)
+        b |= PAD_OPTIONS; /* + */
+    if (r[4] & 0x04)
+        b |= PAD_R3;
+    if (r[4] & 0x08)
+        b |= PAD_L3;
+    if (r[4] & 0x10)
+        b |= PAD_PS; /* Home */
+    if (r[4] & 0x20)
+        b |= PAD_TOUCHPAD; /* Capture */
+    if (r[5] & 0x01)
+        b |= PAD_DOWN;
+    if (r[5] & 0x02)
+        b |= PAD_UP;
+    if (r[5] & 0x04)
+        b |= PAD_RIGHT;
+    if (r[5] & 0x08)
+        b |= PAD_LEFT;
+    if (r[5] & 0x40)
+        b |= PAD_L1;
+    if (r[5] & 0x80)
+        b |= PAD_L2;
+    switch_stick(r + 6, &st->lx, &st->ly);
+    switch_stick(r + 9, &st->rx, &st->ry);
+    st->l2 = b & PAD_L2 ? 255 : 0; /* ZL/ZR are digital */
+    st->r2 = b & PAD_R2 ? 255 : 0;
+    st->buttons = b;
+
+    {
+        unsigned level = r[2] >> 5; /* 0 empty .. 4 full */
+        st->battery_pct = (uint8_t)(level * 25);
+        st->charging = (uint8_t)((r[2] >> 4) & 1);
+        st->has_battery = 1;
+    }
+    if (n >= 25) {
+        /* First IMU sample: accel then gyro, 16-bit each. */
+        int i;
+        for (i = 0; i < 3; i++) {
+            st->accel[i] = les16(r + 13 + 2 * i);
+            st->gyro[i] = les16(r + 19 + 2 * i);
+        }
+        st->has_motion = 1;
+    }
+    return PARSE_FULL;
+}
+
+/* An output report 0x01 carrying one subcommand, rumble neutral. */
+static int switch_subcmd(switch_ctx *c, uint8_t id, const uint8_t *arg, int alen, uint8_t *b,
+                         int max)
+{
+    static const uint8_t neutral[8] = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40};
+
+    if (max < 11 + alen)
+        return 0;
+    b[0] = 0x01;
+    b[1] = c->counter++ & 0x0F;
+    memcpy(b + 2, neutral, 8);
+    b[10] = id;
+    memcpy(b + 11, arg, (size_t)alen);
+    return 11 + alen;
+}
+
+static int switch_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
+{
+    static const uint8_t full_mode[1] = {0x30};
+    static const uint8_t on[1] = {0x01};
+    uint8_t leds[1];
+    switch_ctx *c = ctx;
+
+    switch (step) {
+    case 0:
+        return switch_subcmd(c, 0x03, full_mode, 1, b, max); /* report mode */
+    case 1:
+        return switch_subcmd(c, 0x40, on, 1, b, max); /* IMU on */
+    case 2:
+        return switch_subcmd(c, 0x48, on, 1, b, max); /* vibration on */
+    case 3:
+        leds[0] = (uint8_t)((1u << ((o->player ? o->player : 1) - 1)) & 0x0F);
+        return switch_subcmd(c, 0x30, leds, 1, b, max); /* player LEDs */
+    default:
+        return 0;
+    }
+}
+
+/* ---- the table --------------------------------------------------------- */
+
+/* Standalone halves retain their physical orientation; no automatic combining.
+ * A missing stick must remain centred even when its wire bytes are all zero. */
+static int joycon_left_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    int result = switch_parse(ctx, r, n, st);
+    if (result != PARSE_NONE)
+        st->rx = st->ry = 128;
+    return result;
+}
+static int joycon_right_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    int result = switch_parse(ctx, r, n, st);
+    if (result != PARSE_NONE)
+        st->lx = st->ly = 128;
+    return result;
+}
+
+/* One validated source for protocol bindings, names, layouts and USB quirks. */
+#include "controller_registry.inc"
+
+const pad_profile *profile_find(uint16_t vid, uint16_t pid)
+{
+    size_t p;
+    int i;
+
+    for (p = 0; p + 1 < sizeof k_no_rumble / sizeof k_no_rumble[0]; p++)
+        if (k_no_rumble[p].vid == vid && k_no_rumble[p].pid == pid)
+            return &k_no_rumble[p].profile;
+
+    for (p = 0; p < sizeof k_profiles / sizeof k_profiles[0]; p++)
+        for (i = 0; i < k_profiles[p].nids; i++)
+            if (k_profiles[p].ids[i][0] == vid && k_profiles[p].ids[i][1] == pid)
+                return &k_profiles[p];
+    return NULL;
+}
+
+const char *profile_model_name(uint16_t vid, uint16_t pid)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid)
+            return k_models[i].name;
+    return NULL;
+}
+
+const char *pad_display_name(uint16_t vid, uint16_t pid, const char *profile)
+{
+    const char *m = profile_model_name(vid, pid);
+
+    if (m)
+        return m;
+    if (profile && *profile && strcmp(profile, "Generic HID") != 0)
+        return profile;
+    return "Controller";
+}
+
+int profile_class_is_gamepad(uint32_t cod)
+{
+    unsigned major = (cod >> 8) & 0x1F, minor = (cod >> 2) & 0x0F;
+
+    return major == 5 && (minor == 1 || minor == 2);
+}
+
+profile_family profile_classify(uint16_t vid, uint16_t pid)
+{
+    const pad_profile *profile = profile_find(vid, pid);
+    if (!profile)
+        return PROFILE_GENERIC_HID;
+    if (profile->parse == switch_parse || profile->parse == joycon_left_parse ||
+        profile->parse == joycon_right_parse)
+        return PROFILE_SWITCH;
+    if (profile->parse == xbox_parse)
+        return PROFILE_XBOX;
+    return PROFILE_KNOWN_OTHER;
+}
+
+static unsigned model_usb_flags(uint16_t vid, uint16_t pid)
+{
+    for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid)
+            return k_models[i].usb_flags;
+    return 0;
+}
+int profile_usb_xinput_activation(uint16_t vid, uint16_t pid)
+{
+    return (model_usb_flags(vid, pid) & 1u) != 0;
+}
+int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
+{
+    return (model_usb_flags(vid, pid) & 2u) != 0;
+}
+const char *profile_hid_mapping(uint16_t vid, uint16_t pid)
+{
+    for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid)
+            return k_models[i].map;
+    return NULL;
+}
+
+const pad_profile *profile_builtin_named(const char *key)
+{
+    if (!key)
+        return NULL;
+    for (size_t i = 0; i < sizeof k_profiles / sizeof k_profiles[0]; i++)
+        if (strcmp(key, k_profile_keys[i]) == 0)
+            return &k_profiles[i];
+    return NULL;
+}
+const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t vid, uint16_t pid)
+{
+    const void *selected = NULL;
+    if ((transport == PAD_TRANSPORT_CLASSIC || transport == PAD_TRANSPORT_BLE) &&
+        uc_controller_override_profile(transport, vid, pid, &selected))
+        return selected;
+    return profile_find(vid, pid);
+}
+profile_family profile_classify_for_transport(pad_transport transport, uint16_t vid, uint16_t pid)
+{
+    const pad_profile *p = profile_find_for_transport(transport, vid, pid);
+    if (!p)
+        return PROFILE_GENERIC_HID;
+    if (p->parse == switch_parse || p->parse == joycon_left_parse || p->parse == joycon_right_parse)
+        return PROFILE_SWITCH;
+    if (p->parse == xbox_parse)
+        return PROFILE_XBOX;
+    return PROFILE_KNOWN_OTHER;
+}
+const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid, uint16_t pid,
+                                           const char *profile)
+{
+    const uc_controller_override *r = uc_controller_override_find(transport, vid, pid);
+    return r && r->has_name ? r->name : pad_display_name(vid, pid, profile);
+}
+int profile_usb_protocol_hint(uint16_t vid, uint16_t pid)
+{
+    return uc_controller_override_usb_hint(vid, pid);
+}
+
+int profile_ble_allowed(uint16_t vid, uint16_t pid)
+{
+    if (profile_classify(vid, pid) == PROFILE_SWITCH ||
+        profile_classify_for_transport(PAD_TRANSPORT_BLE, vid, pid) == PROFILE_SWITCH)
+        return 0;
+    const uc_controller_override *rule = uc_controller_override_find(PAD_TRANSPORT_BLE, vid, pid);
+    if (rule && rule->has_ble)
+        return rule->ble;
+    for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid)
+            return k_models[i].ble;
+    return 0;
+}
