@@ -883,8 +883,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     }
     listening_port = port;
 #ifdef UC_PS5
-    if (uc_launcher_install(port, 0))
-        fprintf(stderr, "[launcher] automatic registration failed; HTTP remains available\n");
+    uc_launcher_startup(port);
 #endif
     uc_bt_set_log_level((unsigned)settings.recording);
     uc_bt_set_rumble_enabled(settings.rumble);
@@ -903,6 +902,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     while (!stop_requested) {
         uc_backend_poll();
         if (uc_backend_suspend()) {
+            uc_launcher_cancel();
             bt_start_queued = 0;
             usb_start_queued = 0;
             uc_bt_suspend();
@@ -911,6 +911,16 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             active_session = 0;
             active_user = -1;
             enable_pending = 0;
+        }
+        if (uc_launcher_pending()) {
+            int32_t users[4];
+            int logged_in = 0;
+            if (!uc_backend_users(users))
+                for (unsigned i = 0; i < 4; i++)
+                    logged_in |= users[i] > 0;
+            int idle = !uc_bt_running() && !uc_usb_running() && !bt_start_queued &&
+                       !usb_start_queued && !uc_core_active_session() && !enable_pending;
+            uc_launcher_poll(millis(), uc_backend_power_state() == 0 && logged_in, idle);
         }
         if (bt_start_queued && millis() >= bt_start_at) {
             bt_start_queued = 0;

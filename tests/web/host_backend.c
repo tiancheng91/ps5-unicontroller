@@ -84,3 +84,8 @@ int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8
     *strong = *weak = 0;
     return 0; /* No game/backend exists on the host: do not invent samples. */
 }
+
+int uc_backend_power_state(void)
+{
+    return 0;
+}

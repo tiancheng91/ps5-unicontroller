@@ -87,7 +87,8 @@ static int put_file(const char *path, const unsigned char *data, size_t size)
     (void)unlink(temporary);
     return -1;
 }
-int uc_launcher_write(const char *root, unsigned short port, const unsigned char *icon, size_t size)
+static int resources(const char *root, unsigned short port, const unsigned char *icon, size_t size,
+                     int write_files)
 {
     char dir[384], sys[416], param_path[448], icon_path[448], param[512];
     if (!root || !icon || !size || (port != 7456 && port != 7457))
@@ -103,25 +104,84 @@ int uc_launcher_write(const char *root, unsigned short port, const unsigned char
                  "\"deeplinkUri\":\"http://127.0.0.1:%u/\",\"localizedParameters\":{"
                  "\"defaultLanguage\":\"en-US\",\"en-US\":{\"titleName\":\"UniController\"}}}\n",
                  UC_LAUNCHER_TITLE_ID, (unsigned)port);
-    if (n < 0 || (size_t)n >= sizeof param || directory(dir) || directory(sys))
+    if (n < 0 || (size_t)n >= sizeof param || (write_files && (directory(dir) || directory(sys))))
         return -1;
     int changed = 0;
     if (!same_file(param_path, (const unsigned char *)param, (size_t)n)) {
-        if (put_file(param_path, (const unsigned char *)param, (size_t)n))
+        if (write_files && put_file(param_path, (const unsigned char *)param, (size_t)n))
             return -1;
         changed = 1;
     }
     if (!same_file(icon_path, icon, size)) {
-        if (put_file(icon_path, icon, size))
+        if (write_files && put_file(icon_path, icon, size))
             return -1;
         changed = 1;
     }
-    if (chmod(param_path, 0644) || chmod(icon_path, 0644))
+    if (write_files && (chmod(param_path, 0644) || chmod(icon_path, 0644)))
         return -1;
     return changed;
 }
+int uc_launcher_write(const char *root, unsigned short port, const unsigned char *icon, size_t size)
+{
+    return resources(root, port, icon, size, 1);
+}
 #ifdef UC_PS5
 #include "launcher_icon.inc"
+static int pending, timing;
+static unsigned short pending_port;
+static uint64_t stable_since;
+static int current_resources(unsigned short port)
+{
+    return same_file(UC_LAUNCHER_STAMP, (const unsigned char *)"1\n", 2) &&
+           resources(UC_LAUNCHER_ROOT, port, uc_launcher_icon, sizeof uc_launcher_icon, 0) == 0;
+}
+void uc_launcher_startup(unsigned short port)
+{
+    pending = timing = 0;
+    if (access(UC_LAUNCHER_DISABLED, F_OK) == 0)
+        state = "removed";
+    else if (current_resources(port))
+        state = "registered";
+    else {
+        pending = 1;
+        pending_port = port;
+        state = "pending";
+    }
+    fprintf(stderr, "[launcher] startup state=%s port=%u\n", state, (unsigned)port);
+}
+int uc_launcher_pending(void)
+{
+    return pending;
+}
+void uc_launcher_cancel(void)
+{
+    if (pending) {
+        pending = timing = 0;
+        state = "deferred";
+        fprintf(stderr,
+                "[launcher] startup install cancelled; manual retry or next load required\n");
+    }
+}
+void uc_launcher_poll(uint64_t now, int ready, int idle)
+{
+    if (!pending)
+        return;
+    if (!ready || !idle) {
+        timing = 0;
+        return;
+    }
+    if (!timing || now < stable_since) {
+        stable_since = now;
+        timing = 1;
+        return;
+    }
+    if (now - stable_since < 5000)
+        return;
+    pending = timing = 0; /* One attempt, even if registration fails. */
+    if (uc_launcher_install(pending_port, 0))
+        fprintf(stderr, "[launcher] automatic registration failed; no automatic retry\n");
+}
+
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilTerminate(void);
 int sceAppInstUtilAppInstallAll(void *);
@@ -131,8 +191,13 @@ intptr_t kernel_dynlib_resolve(pid_t, uint32_t, const char *);
 
 int uc_launcher_install(unsigned short port, int force)
 {
+    pending = timing = 0;
     if (!force && access(UC_LAUNCHER_DISABLED, F_OK) == 0) {
         state = "removed";
+        return 0;
+    }
+    if (!force && current_resources(port)) {
+        state = "registered";
         return 0;
     }
     state = "failed";
@@ -176,6 +241,7 @@ int uc_launcher_install(unsigned short port, int force)
 }
 int uc_launcher_remove(void)
 {
+    uc_launcher_cancel();
     int rc = sceAppInstUtilInitialize();
     if (!rc) {
         rc = sceAppInstUtilAppUnInstall(UC_LAUNCHER_TITLE_ID);
@@ -200,6 +266,23 @@ int uc_launcher_remove(void)
     return 0;
 }
 #else
+void uc_launcher_startup(unsigned short port)
+{
+    (void)port;
+}
+int uc_launcher_pending(void)
+{
+    return 0;
+}
+void uc_launcher_cancel(void)
+{
+}
+void uc_launcher_poll(uint64_t now, int ready, int idle)
+{
+    (void)now;
+    (void)ready;
+    (void)idle;
+}
 int uc_launcher_install(unsigned short port, int force)
 {
     (void)port;

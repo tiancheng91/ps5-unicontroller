@@ -173,6 +173,8 @@ async function launcherAction(method = "GET") {
     const result = await api("/launcher", method);
     const labels = {
       registered: "已注册",
+      pending: "等待系统稳定后安装",
+      deferred: "自动安装已取消，可手动安装",
       removed: "已移除",
       failed: "注册失败，可重试",
       unsupported: "仅 PS5 支持应用图标",
