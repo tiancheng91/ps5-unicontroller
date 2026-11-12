@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>UniController · 控制面</title>
+    <link rel="stylesheet" href="/assets/shared/tokens.css" />
+    <link rel="stylesheet" href="/assets/shared/components.css" />
+    <link rel="stylesheet" href="/assets/control/control.css" />
+  </head>
+  <body>
+    <header>
+      <b>UNI / CONTROLLER</b><span class="tag">PS5 · VIRTUAL OUTPUT</span>
+      <nav>
+        <a href="/" aria-current="page">控制面</a><a href="/controller">触控手柄</a
+        ><a href="/settings">设置</a>
+      </nav>
+    </header>
+    <main>
+      <h1>控制工作台 <span class="tag">/ LIVE</span></h1>
+      <div id="status" class="status" role="status">正在连接本机服务…</div>
+      <br />
+      <div class="grid">
+        <div>
+          <section>
+            <h2>账号 / OUTPUT</h2>
+            <label>已登录用户<select id="user" aria-label="已登录用户"></select></label>
+            <div class="row">
+              <button id="enable" class="primary" disabled>启用测试输出</button
+              ><button id="disable" class="danger">关闭输出</button>
+            </div>
+            <p>先选择账号，再显式启用。请打开触控手柄发送输入。</p>
+            <a href="/controller">进入触控手柄 →</a>
+          </section>
+          <section class="usb-panel" aria-labelledby="usb-title">
+            <h2 id="usb-title">USB / WIRED HID</h2>
+            <p id="usb-status" class="status" role="status">正在读取 USB 状态…</p>
+            <p id="usb-user-gate">等候已登录账号稳定 5 秒。</p>
+            <div class="row usb-actions">
+              <button id="usb-start" class="primary" disabled>启动 USB</button>
+              <button id="usb-stop" class="danger" disabled>停止 USB</button>
+            </div>
+            <p>使用上方账号手动启动有线手柄。USB、蓝牙与网页测试输出互斥；USB 无需配对。</p>
+            <div id="usb-devices" class="usb-device-list">等待状态</div>
+          </section>
+          <section class="bluetooth-panel" aria-labelledby="bt-title">
+            <h2 id="bt-title">蓝牙 / CLASSIC HID</h2>
+            <p id="bt-status" class="status" role="status">正在读取蓝牙状态…</p>
+            <p id="bt-user-gate">等候已登录账号稳定 5 秒。</p>
+            <div class="row bt-actions">
+              <button id="bt-start" class="primary" disabled>启动蓝牙</button>
+              <button id="bt-stop" class="danger" disabled>停止蓝牙</button>
+              <button id="bt-pair" disabled>配对 60 秒</button>
+            </div>
+            <p id="bt-pairing" class="tag">配对未开启</p>
+            <p>
+              默认关闭，使用上方账号手动启动。支持 Classic Switch、Xbox 和 Generic
+              HID；不会把未识别设备自动当作 Switch 或 Xbox。
+            </p>
+            <h3>连接设备</h3>
+            <div id="bt-devices" class="bt-device-list">等待状态</div>
+            <h3>已配对设备</h3>
+            <div id="bt-paired" class="bt-device-list">等待状态</div>
+          </section>
+        </div>
+        <div>
+          <section>
+            <h2>系统 / INITIALIZATION</h2>
+            <pre id="system">等待服务器</pre>
+            <div class="row">
+              <button id="refresh">刷新状态</button
+              ><button id="stop" class="danger">停止 UniController</button>
+            </div>
+          </section>
+          <section>
+            <h2>诊断 / EVENT STREAM</h2>
+            <div class="row">
+              <select id="level" aria-label="日志显示级别">
+                <option>error</option>
+                <option>warn</option>
+                <option selected>info</option>
+                <option>debug</option>
+                <option>trace</option></select
+              ><label><input type="checkbox" id="pause" />暂停刷新</label
+              ><button id="copy">复制</button><button id="export">导出</button>
+            </div>
+            <pre id="logs" aria-live="off">等待日志</pre>
+            <p>
+              页面筛选只能显示服务端已记录的日志。<a
+                href="/api/v1/diagnostics"
+                target="_blank"
+                rel="noopener"
+                >平台启动与错误日志</a
+              >
+            </p>
+          </section>
+        </div>
+        <aside>
+          <section>
+            <h2>会话 / TELEMETRY</h2>
+            <pre id="session">等待状态</pre>
+            <p>
+              输入超时 500ms
+              自动释放。硬件不可用或初始化失败时，服务器会拒绝启用；刷新可查看重试后的状态。
+            </p>
+          </section>
+        </aside>
+      </div>
+    </main>
+    <footer>UniController / 本地控制工作台 · 仅显式启用后输出输入</footer>
+    <script src="/assets/control/control.js"></script>
+  </body>
+</html>

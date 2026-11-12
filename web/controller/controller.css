@@ -1,0 +1,322 @@
+main {
+  max-width: 1100px;
+}
+.controller-stage {
+  position: relative;
+  width: min(100%, 760px);
+  aspect-ratio: 720 / 460;
+  margin: 18px auto 0;
+  isolation: isolate;
+}
+.controller-shell {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.shell-edge {
+  fill: #adb5bf;
+  stroke: #d3d9e0;
+  stroke-width: 2;
+}
+.shell-inset {
+  fill: #14181e;
+  stroke: #1b2129;
+  stroke-width: 2;
+}
+.shell-seam {
+  fill: none;
+  stroke: #343c46;
+  stroke-width: 2;
+}
+.light-strip {
+  fill: none;
+  stroke: var(--secondary);
+  stroke-width: 3;
+  opacity: 0.65;
+}
+.shell-well {
+  fill: #12151a;
+  stroke: #2d353f;
+  stroke-width: 2;
+}
+.speaker path {
+  fill: none;
+  stroke: #424c58;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.mic {
+  stroke: var(--primary);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.padbutton {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  transform: translate(-50%, -50%);
+  width: clamp(44px, 9.3%, 68px);
+  height: clamp(44px, 9.85%, 68px);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 50%;
+  border: 1px solid #515b68;
+  background: #242a33;
+  color: #dce5ee;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.padbutton svg {
+  width: 25px;
+  height: 25px;
+  pointer-events: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.padbutton span {
+  pointer-events: none;
+}
+.padbutton:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+button.padbutton.pressed {
+  background: #3d2200;
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.padbutton:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 3px;
+}
+.key-l2,
+.key-l1,
+.key-r1,
+.key-r2 {
+  --y: 7%;
+  width: 18%;
+  border-radius: 5px 5px 2px 2px;
+  height: clamp(44px, 8%, 54px);
+}
+.key-l2 {
+  --x: 12%;
+}
+.key-l1 {
+  --x: 32%;
+}
+.key-r1 {
+  --x: 68%;
+}
+.key-r2 {
+  --x: 88%;
+}
+.key-create {
+  --x: 34%;
+  --y: 22%;
+}
+.key-options {
+  --x: 66%;
+  --y: 22%;
+}
+.key-create,
+.key-options {
+  border-radius: 5px;
+  width: clamp(44px, 7%, 52px);
+  height: clamp(44px, 8%, 54px);
+}
+.key-touchpad {
+  --x: 50%;
+  --y: 25%;
+  width: 18%;
+  height: 16%;
+  border-radius: 6px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  background: #1f252d;
+}
+.key-up {
+  --x: 20%;
+  --y: 31%;
+}
+.key-down {
+  --x: 20%;
+  --y: 57%;
+}
+.key-left {
+  --x: 7%;
+  --y: 44%;
+}
+.key-right {
+  --x: 33%;
+  --y: 44%;
+}
+.key-up,
+.key-down,
+.key-left,
+.key-right {
+  border-radius: 5px;
+}
+.key-triangle {
+  --x: 80%;
+  --y: 31%;
+}
+.key-cross {
+  --x: 80%;
+  --y: 57%;
+}
+.key-square {
+  --x: 67%;
+  --y: 44%;
+}
+.key-circle {
+  --x: 93%;
+  --y: 44%;
+}
+.key-l3 {
+  --x: 15%;
+  --y: 88%;
+}
+.key-r3 {
+  --x: 85%;
+  --y: 88%;
+}
+.key-ps {
+  --x: 50%;
+  --y: 76%;
+}
+.key-l3,
+.key-r3 {
+  height: 44px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.stick {
+  position: absolute;
+  top: 73%;
+  left: 34%;
+  transform: translate(-50%, -50%);
+  width: 16%;
+  aspect-ratio: 1;
+  border: 2px solid var(--outline-variant);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #0d0e11;
+  touch-action: none;
+}
+#right {
+  left: 66%;
+}
+.stick span {
+  width: 55%;
+  height: 55%;
+  border: 2px solid var(--secondary);
+  border-radius: 50%;
+  background: #242d36;
+  pointer-events: none;
+}
+.stick[aria-disabled="true"] {
+  opacity: 0.45;
+}
+.controller-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font:
+    10px "JetBrains Mono",
+    Consolas,
+    monospace;
+  letter-spacing: 0.08em;
+  color: var(--secondary);
+}
+.controller-legend span {
+  color: var(--text-secondary);
+  letter-spacing: 0;
+}
+@media (max-width: 420px) {
+  .controller-stage {
+    margin-top: 16px;
+  }
+  .padbutton {
+    padding: 8px;
+  }
+  .key-touchpad {
+    font-size: 8px;
+  }
+  .controller-legend {
+    font-size: 9px;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .controller-stage {
+    width: min(100%, 600px);
+  }
+}
+
+/* Optional compact view keeps both hands' controls visible on short screens. */
+.controller-page.focus-mode > header,
+.controller-page.focus-mode > footer,
+.controller-page.focus-mode main > h1,
+.controller-page.focus-mode main > p,
+.controller-page.focus-mode #telemetry,
+.controller-page.focus-mode .controller-legend {
+  display: none;
+}
+.controller-page.focus-mode main {
+  margin: 0 auto;
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .controller-page.focus-mode main {
+    padding: 8px 16px;
+  }
+  .controller-page.focus-mode .controller-stage {
+    width: min(100%, calc((100vh - 100px) * 1.565));
+    width: min(100%, calc((100dvh - 100px) * 1.565));
+    min-width: 370px;
+    height: auto;
+    aspect-ratio: 720 / 460;
+    margin-top: 22px;
+  }
+  .controller-page.focus-mode .stick {
+    width: 16%;
+    height: auto;
+  }
+}
+
+.controller-shell .light-strip {
+  stroke-width: 2;
+  opacity: 0.8;
+}
+.padbutton {
+  border-color: #424b58;
+  background: #1d232c;
+}
+.padbutton:disabled {
+  opacity: 0.85;
+  color: #8a95a5;
+}
+.key-triangle svg {
+  color: #9ab5ac;
+}
+.key-circle svg {
+  color: #c0959c;
+}
+.key-cross svg {
+  color: #9daecc;
+}
+.key-square svg {
+  color: #b5a4bb;
+}

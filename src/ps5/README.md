@@ -1,0 +1,13 @@
+# PS5 platform adapter
+
+`backend.c` is a C11 virtual DualSense output adapter for the PS5 payload SDK v0.45. It does not access physical USB or Bluetooth controllers. All APIs run on the same event-loop thread.
+
+Creation returns 2 while pending and 0 with an owned token only after identification and user binding. Call poll every loop, then retry creation for the same user. Other users receive busy. User discovery returns 0 and up to four IDs, with -1 for unused entries. The power query returns -1 unknown, 0 working, 1 rest; the suspend query returns and clears a latched event. The runtime must suspend sessions on rest or event-loop gaps and require manual enable afterward.
+
+The adapter uses nonblocking local TCP port 3232 first, falling back to nonblocking `/dev/klog`. Before consuming raw kernel logs it opens `/data/unicontroller/kernel-identification.log` and copies consumed bytes there. Each poll reads at most 8 KiB and each raw identification at most 256 KiB. It drains old lines before creating a device, matches strict device/type/subtype/battery fields, waits 300ms for ambiguity, and stops after three seconds. The source closes afterward. No device is bound or deleted if identity remains unknown or ambiguous. Concurrent creation of indistinguishable virtual devices by another payload cannot be proven safe through log correlation; only one virtual-device creator should run.
+
+Deletion validates owned tokens and sends neutral before removal. Pending cancellation retains identification long enough to remove an identified device. Shutdown allows at most 3.5 seconds to finish that cleanup, then restores saved credentials. Failed removal retains identity for retry; ambiguous/unidentified creation can require console restart. The adapter reports such failures rather than guessing IDs. Abrupt termination cannot guarantee cleanup.
+
+Sources: `src/ps5/backend.c`, `src/ps5/main.c`. Includes: `src/ps5`, plus the runtime header directory. Link SDK libraries `-lScePad -lSceUserService -ldl`; the SDK wrapper supplies libc, kernel, and networking. No Rust archive is needed. Native seam tests: compile `tests/ps5/test_backend.c` with `-std=c11 -Wall -Wextra -Werror -Isrc/ps5`, then execute it. Linux may additionally require `-ldl`.
+
+Host tests and SDK-header ELF object compilation verify contracts and ABI shape. They do not validate behavior on a console.

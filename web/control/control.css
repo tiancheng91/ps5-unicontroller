@@ -1,0 +1,65 @@
+/* Bluetooth diagnostics remain dense without shrinking touch targets. */
+.bluetooth-panel h3 {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.bt-actions button,
+.bt-device button {
+  min-height: 45px;
+}
+.bt-device-list {
+  display: grid;
+  gap: 8px;
+}
+.bt-device {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: var(--canvas);
+  border: 1px solid var(--outline);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.bt-device strong {
+  font-size: 13px;
+}
+.bt-device button {
+  justify-self: start;
+  margin-top: 4px;
+}
+.bluetooth-panel .status {
+  padding: 8px;
+}
+#bt-user-gate {
+  font-size: 12px;
+}
+
+.usb-panel h2 {
+  color: var(--secondary);
+}
+.usb-actions button {
+  min-height: 45px;
+}
+.usb-device-list {
+  display: grid;
+  gap: 8px;
+}
+.usb-device {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: var(--canvas);
+  border: 1px solid var(--outline);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.usb-device strong {
+  font-size: 13px;
+}
+.usb-panel .status {
+  padding: 8px;
+}
+#usb-user-gate {
+  font-size: 12px;
+}

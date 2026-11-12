@@ -1,0 +1,8 @@
+.mapping {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 24px;
+}
+main {
+  max-width: 1000px;
+}

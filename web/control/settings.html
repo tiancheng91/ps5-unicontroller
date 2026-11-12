@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>UniController · 设置</title>
+    <link rel="stylesheet" href="/assets/shared/tokens.css" />
+    <link rel="stylesheet" href="/assets/shared/components.css" />
+    <link rel="stylesheet" href="/assets/control/settings.css" />
+  </head>
+  <body>
+    <header>
+      <b>UNI / CONTROLLER</b><span class="tag">PS5 · VIRTUAL OUTPUT</span>
+      <nav>
+        <a href="/">控制面</a><a href="/controller">触控手柄</a
+        ><a href="/settings" aria-current="page">设置</a>
+      </nav>
+    </header>
+    <main>
+      <h1>设置 / PERSISTENCE</h1>
+      <div id="status" class="status" role="status">正在读取设置…</div>
+      <section>
+        <h2>诊断</h2>
+        <label>后台记录级别<select id="recording"></select></label
+        ><label>页面显示级别<select id="page"></select></label>
+        <p>记录级别控制日志保留；页面级别仅筛选已保留日志。Trace 会记录高频输入事件。</p>
+      </section>
+      <section>
+        <h2>默认控制器</h2>
+        <label>允许震动<input id="rumble" type="checkbox" /></label
+        ><label>A/B 翻转<input id="swap" type="checkbox" /></label>
+        <p>A/B 翻转对应 PS5 Cross/Circle（位 14/13）。震动开关不表示当前后端具备震动能力。</p>
+        <details>
+          <summary>自定义按键映射 · 32 位</summary>
+          <p>每个来源位独立映射一次；多个来源可合并到同一目标位。</p>
+          <div id="mapping" class="mapping"></div>
+          <button id="identity">恢复恒等映射</button>
+        </details>
+      </section>
+      <div class="row">
+        <button id="load">重新读取</button
+        ><button id="save" class="primary" disabled>保存设置</button>
+      </div>
+    </main>
+    <footer>UniController / 本地控制工作台 · 仅显式启用后输出输入</footer>
+    <script src="/assets/control/settings.js"></script>
+  </body>
+</html>
