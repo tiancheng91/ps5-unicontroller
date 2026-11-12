@@ -25,7 +25,7 @@
 
 子布局覆盖基础布局的同名字段；`none` 显式禁用该绑定。未知基础布局、循环引用、无效字段在构建时拒绝，合并后的映射仍受大小限制。此机制仅用于开发者维护的内置表，构建时展开，不增加运行时解析或改变用户 JSON 格式。
 
-不引入 SDL 映射数据库。当前通用 HID 映射依据 HID Usage，不能直接使用 SDL 的平台相关按钮/轴编号。保留已有型号差异，后续仅为实际需要的兼容性问题增加例外；用户的 Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）和全局按键设置仍独立生效。
+不引入 SDL 映射数据库。当前通用 HID 映射依据 HID Usage，不能直接使用 SDL 的平台相关按钮/轴编号。保留已有型号差异，后续仅为实际需要的兼容性问题增加例外；用户的 翻转 ABXY 按键和全局按键设置仍独立生效。
 
 ## 启动加载与失败处理
 
@@ -92,7 +92,7 @@ USB profile hint 只能选择已经实现且接口描述符满足要求的入口
 
 按键目标为 `cross/circle/square/triangle`、`l1/r1/l2/r2/l3/r3`、`create/share/options/ps/touchpad`、`up/down/left/right/none`。映射不能重写 Switch/Xbox 等专用协议的字节格式。JSON 不接受方向反转选项、脚本、函数名、原始 USB/HCI 命令或任意文件路径。
 
-`settings.json` 继续保存网页/core 偏好，例如日志级别、允许震动、Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）和全局 32 位按键映射。Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）对应标准 PS5 Cross14↔Circle13、Square15↔Triangle12，再执行一次全局按键映射。当前没有新增每会话摇杆轴反转设置；不要把协议层字段绑定当作已实现的会话偏好。
+`settings.json` 继续保存网页/core 偏好，例如日志级别、允许震动、翻转 ABXY 按键和全局 32 位按键映射。翻转 ABXY 按键对应标准 PS5 Cross14↔Circle13、Square15↔Triangle12，再执行一次全局按键映射。当前没有新增每会话摇杆轴反转设置；不要把协议层字段绑定当作已实现的会话偏好。
 
 ## Touchpad 与背键
 

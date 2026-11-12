@@ -2,6 +2,8 @@
 
 [中文](README.md) · **English**
 
+![UniController for PS5 — Make Any Controller Work on PS5.](assets/branding/banner.png)
+
 Universal Controller Support for PS5 — **Make Any Controller Work on PS5.**
 
 Connect third-party controllers to PS5 over Bluetooth or USB, and manage connections, buttons and settings through a web interface on your phone or console. A touchscreen controller is also available for testing.
@@ -84,7 +86,9 @@ Each automatic attempt runs once. If conditions are not met, observation expires
 
 ## Settings, data and troubleshooting
 
-Settings include log levels, rumble, Switch ↔ PS/Xbox face-button layout switching (both A/B and X/Y) and button mapping. Stop input sources before changing settings. Most users do not need to edit files.
+Settings include log levels, rumble, **Swap A/B and X/Y** and button mapping. Stop input sources before changing settings. Most users do not need to edit files.
+
+**Swap A/B and X/Y** exchanges both button pairs and is off by default. If the controller already applies the same swap (for example, Nova Lite’s M+A shortcut), normally enable it in only one place: applying the swap twice cancels it out.
 
 | Data                                               | Location / purpose                                                                                                                              |
 | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

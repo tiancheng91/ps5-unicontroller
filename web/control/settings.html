@@ -56,10 +56,11 @@
       <section>
         <h2>默认控制器</h2>
         <label>允许震动<input id="rumble" type="checkbox" /></label
-        ><label>Switch / PS·Xbox 面键布局切换<input id="swap" type="checkbox" /></label>
+        ><label>翻转 ABXY 按键<input id="swap" type="checkbox" /></label>
+        <p>同时交换 A↔B、X↔Y，默认关闭。</p>
+        <p>若手柄自身已开启同类交换（例如启明星 M+A），通常只在一处开启；两处同时开启会抵消。</p>
         <p>
-          同时交换 A/B 与 X/Y，对应
-          Cross↔Circle、Square↔Triangle。作用于所有本应用输出，先切换布局再执行自定义映射；不自动按型号切换。震动开关不表示当前后端具备震动能力。
+          作用于所有本应用输出，先翻转按键，再执行自定义映射。震动开关不表示当前后端具备震动能力。
         </p>
         <details>
           <summary>自定义按键映射 · 32 位</summary>

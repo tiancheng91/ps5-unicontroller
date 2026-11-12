@@ -8,6 +8,6 @@
 
 蓝牙配对密钥独立保存于 bonds.db，不放入JSON偏好配置或普通日志/API响应。自动启动规则见 [蓝牙说明](bluetooth.md)。
 
-Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）为标准Cross14↔Circle13与Square15↔Triangle12两组交换，之后单次映射，多源按OR。页面明确显示两组面键交换，避免按厂商印字误判。
+翻转 ABXY 按键为标准Cross14↔Circle13与Square15↔Triangle12两组交换，之后单次映射，多源按OR。页面明确显示两组面键交换，避免按厂商印字误判。
 
 为兼容已有 JSON，字段名仍为 `swap_ab`，但其含义现在是完整面键布局切换（A/B 和 X/Y 同时交换）。旧配置为 true 时升级后也会交换 X/Y；默认 false。此项为全局偏好，应用于本程序所有输入源，不按 VID/PID 自动启停。

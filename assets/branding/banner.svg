@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="640" viewBox="0 0 2048 640" role="img" aria-labelledby="title desc">
+  <title id="title">UniController for PS5</title>
+  <desc id="desc">A compact bold unicontroller wordmark with a red dot, a single-line tagline, and subtle orange background waves.</desc>
+  <defs>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#ff8c00" stop-opacity="0"/>
+      <stop offset=".45" stop-color="#ff8c00" stop-opacity=".17"/>
+      <stop offset="1" stop-color="#ff8c00" stop-opacity=".02"/>
+    </linearGradient>
+  </defs>
+  <rect width="2048" height="640" fill="#0d0e11"/>
+  <g fill="none" stroke="url(#wave)">
+    <path d="M-100 500C330 650 500 335 990 470S1690 690 2150 410" stroke-width="2"/>
+    <path d="M-100 520C330 670 500 355 990 490S1690 710 2150 430" stroke-width="1"/>
+    <path d="M-100 540C330 690 500 375 990 510S1690 730 2150 450" stroke-width="1"/>
+  </g>
+  <text x="670" y="320" fill="#e6edf3" font-family="'Trebuchet MS', sans-serif" font-size="112" font-weight="700" letter-spacing="-5" textLength="680" lengthAdjust="spacing">unicontroller</text>
+  <circle cx="1374" cy="312" r="10" fill="#E5484D"/>
+  <text x="1024" y="383" text-anchor="middle" fill="#8b949e" font-family="'Trebuchet MS', sans-serif" font-size="28" font-weight="400">Make Any Controller Work on PS5.</text>
+</svg>
