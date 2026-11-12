@@ -1,0 +1,12 @@
+/build/
+/dist/
+.DS_Store
+*.log
+
+/target/
+__pycache__/
+
+# Local AI notes and development scratch files
+/.local/
+/.agents/
+/.codex/
