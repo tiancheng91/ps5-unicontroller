@@ -13,14 +13,14 @@ static int16_t last_axes[4];
 static uint16_t last_triggers[2];
 int uc_backend_create(int32_t user, uint64_t *handle)
 {
-    assert(user > 0);
+    assert(user >= 0);
     ++create_calls;
     if (create_failure)
         return -1;
     if (create_pending)
         return 2;
     assert(user <= 4);
-    *handle = 98 + (uint64_t)user;
+    *handle = user == 0 ? 99 : 98 + (uint64_t)user;
     return 0;
 }
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
@@ -101,11 +101,17 @@ int main(void)
     assert(uc_core_tick(1000) == 0 && uc_core_active_session() == 0);
     mapping[14] = 5;
     mapping[13] = 7;
+    mapping[15] = 8;
+    mapping[12] = 9;
     assert(uc_core_settings(UC_LOG_TRACE, 1, mapping) == 0);
     assert(uc_core_enable(1, 1000, &next) == 0);
     assert(uc_core_submit(next, 1, 16384, zero, tz, 1001) == 0 && last_buttons == 128);
     assert(uc_core_submit(next, 2, 8192, zero, tz, 1002) == 0 && last_buttons == 32);
-    for (unsigned i = 3; i < 150; ++i)
+    assert(uc_core_submit(next, 3, 1u << 12, zero, tz, 1003) == 0 && last_buttons == (1u << 8));
+    assert(uc_core_submit(next, 4, 1u << 15, zero, tz, 1004) == 0 && last_buttons == (1u << 9));
+    assert(uc_core_submit(next, 5, 0xF000u | (1u << 16) | 1u, zero, tz, 1005) == 0 &&
+           last_buttons == ((1u << 5) | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 16) | 1u));
+    for (unsigned i = 6; i < 150; ++i)
         assert(uc_core_submit(next, i, 0, zero, tz, 1000 + i) == 0);
     assert(uc_core_logs(logs, sizeof logs, UC_LOG_TRACE) > 0);
     assert(strstr(logs, "input_accepted") && strstr(logs, "\"dropped\":0}") == NULL);
@@ -162,6 +168,31 @@ int main(void)
     assert(uc_core_suspend() == 0);
     assert(uc_core_refresh_source(next, 5005) < 0);
     test_multiple_sessions();
+    uint64_t system_session = 0, other = 0;
+    assert(uc_core_enable(0, 8200, &other) < 0);
+    assert(uc_core_enable_physical(0, 8200, &other) < 0);
+    assert(uc_core_enable_system_assigned(8201, &system_session) == 0);
+    assert(uc_core_enable_physical(2, 8202, &other) == 2 && other == 0);
+    assert(uc_core_enable(2, 8202, &other) == 2);
+    assert(uc_core_enable_system_assigned(8202, &other) == 2 && other == 0);
+    assert(uc_core_submit(system_session, 1, 1u << 16, zero, tz, 8203) == 0);
+    assert(last_buttons == (1u << 16));
+    assert(uc_core_tick(8703) == 0 && last_buttons == 0);
+    assert(uc_core_suspend() == 0 && !uc_core_session_active(system_session));
+    assert(uc_core_submit(system_session, 2, 1, zero, tz, 8704) < 0);
+    other = 0;
+    assert(uc_core_enable_physical(1, 8800, &other) == 0);
+    system_session = 0;
+    assert(uc_core_enable_system_assigned(8801, &system_session) == 2 && !system_session);
+    assert(uc_core_disable() == 0);
+    create_pending = 1;
+    assert(uc_core_enable_system_assigned(8900, &system_session) == 2 && system_session);
+    other = 0;
+    assert(uc_core_enable_system_assigned(8901, &other) == 2 && !other);
+    create_pending = 0;
+    assert(uc_core_enable_system_assigned(8902, &system_session) == 0);
+    assert(uc_core_disable_session(system_session) == 0);
+
     puts("core: cleanup, stale, timeout, mapping, lifecycle, pending, logs PASS");
     return 0;
 }

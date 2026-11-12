@@ -33,7 +33,7 @@ static struct {
     char database[256];
     Slot slots[HOST_MAX_PADS];
     int32_t user;
-    int selected, stopping, opening;
+    int selected, stopping, opening, system_assignment;
     uint64_t now;
     const char *error;
 } bt = {.selected = -1, .user = -1};
@@ -160,7 +160,12 @@ static void on_state(void *unused, int slot, const pad_state *state)
     s->last_input = bt.now;
     s->valid = 1;
     ++s->frames;
-    if (bt.selected == -1 && s->user <= 0 && uc_backend_can_start(bt.user)) {
+    if (bt.system_assignment && bt.selected == -1 && s->user < 0) {
+        bt.selected = slot;
+        s->user = 0;
+        log_code("system_choice_source_selected");
+    } else if (!bt.system_assignment && bt.selected == -1 && s->user <= 0 &&
+               uc_backend_can_start(bt.user)) {
         int taken = 0;
         for (int i = 0; i < HOST_MAX_PADS; i++)
             if (bt.slots[i].user == bt.user)
@@ -169,9 +174,13 @@ static void on_state(void *unused, int slot, const pad_state *state)
             bt.selected = slot;
             s->user = bt.user;
             log_code("first_valid_input");
+            if (recording_level >= 3)
+                fprintf(stderr, "[bluetooth] binding saved user=%d slot=%d after fresh input\n",
+                        s->user, slot);
         }
     }
-    if (own_output(s) && uc_backend_can_start(s->user))
+    if (own_output(s) &&
+        (bt.system_assignment ? uc_backend_transport_ready() : uc_backend_can_start(s->user)))
         (void)submit_latest(slot);
 }
 static void on_disconnect(void *unused, int slot)
@@ -237,11 +246,12 @@ static void startup_idle(void *unused)
     }
 }
 #endif
-int uc_bt_start(int32_t user)
+static int start_transport(int32_t user, int system_assignment)
 {
     if (bt.host || bt.opening || bt.stopping || any_output())
         return 2;
-    if (user <= 0 || !uc_backend_can_start(user)) {
+    if (system_assignment ? (user < 0 || !uc_backend_transport_ready())
+                          : (user <= 0 || !uc_backend_can_start(user))) {
         bt.error = "start_not_ready";
         return -1;
     }
@@ -250,6 +260,7 @@ int uc_bt_start(int32_t user)
     memset(bt.slots, 0, sizeof(bt.slots));
     bt.selected = -1;
     bt.user = user;
+    bt.system_assignment = system_assignment;
     bt.error = NULL;
     bt.opening = 1;
     host_events events = {.on_connect = on_connect,
@@ -270,8 +281,16 @@ int uc_bt_start(int32_t user)
         log_code(bt.error);
         return -1;
     }
-    log_code("started");
+    log_code(bt.system_assignment ? "started_system_choice_experiment" : "started");
     return 0;
+}
+int uc_bt_start(int32_t user)
+{
+    return start_transport(user, 0);
+}
+int uc_bt_start_system_assigned(void)
+{
+    return start_transport(0, 1);
 }
 int uc_bt_stop(void)
 {
@@ -350,7 +369,7 @@ void uc_bt_poll(uint64_t now)
     for (int i = 0; i < HOST_MAX_PADS; i++)
         if (bt.slots[i].user > 0 && uc_backend_can_start(bt.slots[i].user))
             working_user = 1;
-    if (!working_user) {
+    if (bt.system_assignment ? !uc_backend_transport_ready() : !working_user) {
         bt.error = "power_or_user_unavailable";
         (void)uc_bt_stop();
         return;
@@ -383,9 +402,9 @@ void uc_bt_poll(uint64_t now)
             }
             continue;
         }
-        if (!s->connected || s->user <= 0)
+        if (!s->connected || s->user < 0 || (s->user == 0 && !bt.system_assignment))
             continue;
-        if (!uc_backend_can_start(s->user)) {
+        if (bt.system_assignment ? !uc_backend_transport_ready() : !uc_backend_can_start(s->user)) {
             s->valid = 0;
             if (cleanup_output(s))
                 s->closing = 1;
@@ -406,7 +425,8 @@ void uc_bt_poll(uint64_t now)
             if (!s->session && now - s->last_input >= 500)
                 continue;
             uint64_t session = s->session;
-            int rc = uc_core_enable_physical(s->user, now, &session);
+            int rc = bt.system_assignment ? uc_core_enable_system_assigned(now, &session)
+                                          : uc_core_enable_physical(s->user, now, &session);
             if (session)
                 s->session = session;
             if (rc == 2) {
@@ -424,7 +444,8 @@ void uc_bt_poll(uint64_t now)
             s->session = session;
             s->sequence = 0;
             s->submitted = 0;
-            log_code("virtual_bound");
+            log_code(bt.system_assignment ? "virtual_system_choice_ready_binding_unverified"
+                                          : "virtual_bound");
         } else if (!own_output(s)) {
             bt.error = "session_lost_manual_assignment_required";
             s->closing = 1;
@@ -488,7 +509,8 @@ static void address_text(const unsigned char a[6], char out[18])
 }
 int uc_bt_assign(int slot, const char *address, int32_t user)
 {
-    if (!bt.host || bt.stopping || !valid_slot(slot) || !address || user <= 0)
+    if (bt.system_assignment || !bt.host || bt.stopping || !valid_slot(slot) || !address ||
+        user <= 0)
         return -1;
     Slot *s = &bt.slots[slot];
     char current[18];
@@ -558,13 +580,16 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
         "d,\"error\":",
         state, bt.error ? bt.error : "", uc_bt_running() ? "true" : "false",
         bt.stopping ? "true" : "false", bt.user, bt.selected,
-        summary && own_output(summary) ? "true" : "false",
+        summary && summary->user > 0 && own_output(summary) ? "true" : "false",
         (unsigned long long)(summary ? summary->session : 0), pending ? "true" : "false",
         bt.host ? host_pairing_left(bt.host) : 0);
     if (bt.error)
         ADD("\"%s\"", bt.error);
     else
         ADD("null");
+    ADD(",\"system_assignment\":%s,\"output_active\":%s",
+        bt.system_assignment && bt.host ? "true" : "false",
+        summary && own_output(summary) ? "true" : "false");
     ADD(",\"devices\":[");
     int count = 0;
     for (int i = 0; i < HOST_MAX_PADS; i++) {
@@ -581,13 +606,15 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             "input_ms\":%llu,"
             "\"battery\":",
             count++ ? "," : "", i, addr, s->vid, s->pid, profile, model,
-            own_output(s) ? "true" : "false", s->user, (unsigned long long)s->session,
-            (s->pending || s->assigning) ? "true" : "false", (unsigned long long)s->frames,
-            (unsigned long long)s->last_input);
+            s->user > 0 && own_output(s) ? "true" : "false", s->user,
+            (unsigned long long)s->session, (s->pending || s->assigning) ? "true" : "false",
+            (unsigned long long)s->frames, (unsigned long long)s->last_input);
         if (s->valid && s->latest.has_battery)
             ADD("%u", s->latest.battery_pct <= 100 ? s->latest.battery_pct : 100);
         else
             ADD("-1");
+        ADD(",\"system_assignment\":%s,\"output_active\":%s",
+            bt.system_assignment ? "true" : "false", own_output(s) ? "true" : "false");
         ADD(",\"charging\":%s}", s->valid && s->latest.charging ? "true" : "false");
     }
     ADD("],\"paired\":[");

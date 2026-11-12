@@ -20,6 +20,10 @@ enum uc_log_level {
  * return a nonzero token if owned cleanup remains; retain and remove that token.
  * Legacy phone enable stays exclusive and returns token zero while pending. */
 int uc_core_enable_physical(int32_t user, uint64_t now_ms, uint64_t *session);
+/* Experimental, exclusive output without application account binding. Only the
+ * resume Bluetooth path calls this; user selection is left to the PS5 shell.
+ * Uses the same reservation token, input timeout and cleanup rules. */
+int uc_core_enable_system_assigned(uint64_t now_ms, uint64_t *session);
 int uc_core_enable(int32_t user, uint64_t now_ms, uint64_t *session);
 int uc_core_submit(uint64_t session, uint64_t sequence, uint32_t buttons, const int16_t axes[4],
                    const uint16_t triggers[2], uint64_t now_ms);
@@ -39,8 +43,8 @@ int uc_core_session_active(uint64_t session);
 int uc_core_read_rumble(uint64_t session, uint64_t now_ms, uint8_t *strong, uint8_t *weak);
 int uc_core_suspend(void);
 uint64_t uc_core_active_session(void);
-/* Validated and applied atomically only when inactive; Cross/Circle swap is
- * applied before the source->destination map. Recording level defaults to Info. */
+/* Validated and applied atomically only when inactive; Cross/Circle and Square/Triangle layout
+ * swapping is applied before the source->destination map. Recording level defaults to Info. */
 int uc_core_settings(uint8_t recording_level, uint8_t swap_ab, const uint8_t mapping[32]);
 /* JSON entries+dropped. Page filter never changes recording level. Returns
  * bytes excluding NUL, or zero (empty output) for invalid level/small buffer.

@@ -25,7 +25,7 @@ Nova Lite（启明星一代）、Nova 2 Lite（启明星二代）、Nova（NS版
 
 两者本来是Windows输入API。XInput面向Xbox风格的统一状态，DirectInput覆盖较广设备、布局不固定。PS5不调用这些Windows库；我们实际实现的是Xbox360 USB、Xbox蓝牙、Nintendo报告和HID描述符解析，不能把“支持一种API”理解为兼容所有设备。
 
-输入和震动是不同链路。本轮沿用蓝牙连接后短震动；USB游戏震动回传尚未接通。
+输入和震动是不同链路。本轮沿用蓝牙连接后短震动；USB游戏震动回传已接通支持的Switch/XInput路径，仍需按型号实测。
 
 ## 型号配置与身份边界
 
@@ -39,7 +39,7 @@ Nova Lite（启明星一代）、Nova 2 Lite（启明星二代）、Nova（NS版
 
 1. 内置型号元数据和运行时显示别名：用于说明观测到的身份，不证明真实制造商。
 2. 传输/协议匹配：由 USB/Classic/BLE 作用域、描述符、握手和有效报告共同决定；仅能选择已有协议。
-3. 原始通用 HID 字段映射与 core 用户偏好：JSON mapping 只绑定通用 HID 字段；settings.json 保存 A/B 翻转和全局 32 位按键映射。当前没有新增每会话轴方向反转。
+3. 原始通用 HID 字段映射与 core 用户偏好：JSON mapping 只绑定通用 HID 字段；settings.json 保存 Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）和全局 32 位按键映射。当前没有新增每会话轴方向反转。
 
 配置不接受脚本、原始 USB/HCI 命令或组合键。独立上报的 HID 背键才能独立映射；映射为 touchpad 仅产生 PAD_TOUCHPAD 点击，不产生触控坐标。Switch Capture 已有默认映射。
 

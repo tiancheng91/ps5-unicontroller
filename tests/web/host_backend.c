@@ -20,7 +20,7 @@ int uc_backend_init(void)
 }
 int uc_backend_create(int32_t user, uint64_t *handle)
 {
-    if (!handle || user < 1 || user > 4 || !next_id)
+    if (!handle || user < 0 || user > 4 || !next_id)
         return -1;
     *handle = 0;
     for (int i = 0; i < 4; i++) {
@@ -88,4 +88,20 @@ int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8
 int uc_backend_power_state(void)
 {
     return 0;
+}
+
+void uc_backend_auto_watch(int enabled)
+{
+    (void)enabled;
+}
+int uc_backend_auto_due(int32_t user, int idle)
+{
+    (void)user;
+    (void)idle;
+    return 0; /* A host cannot manufacture PS5 desktop events. */
+}
+
+int uc_backend_transport_ready(void)
+{
+    return 1;
 }

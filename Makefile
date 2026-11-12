@@ -26,7 +26,7 @@ USB_SOURCES := src/drivers/usb.c src/drivers/usb/transport.c src/drivers/usb/pro
 
 CONFIG_SOURCES := src/drivers/config/json.c src/drivers/config/overrides.c
 
-CORE_SOURCES := src/core/uc_core.c
+CORE_SOURCES := src/core/uc_core.c src/core/bt_autostart.c
 HOST_SOURCES := \
 	$(CORE_SOURCES) \
 	$(BT_MANAGER) \
@@ -95,9 +95,10 @@ $(BUILD)/test-json: tests/web/test_json.c src/web/json.h
 test-backend: $(BUILD)/test-backend
 	./$(BUILD)/test-backend
 
-$(BUILD)/test-backend: tests/ps5/test_backend.c src/ps5/backend.c src/ps5/uc_backend.h
+$(BUILD)/test-backend: tests/ps5/test_backend.c src/ps5/backend.c src/ps5/uc_backend.h \
+	src/core/bt_autostart.c src/core/bt_autostart.h
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/ps5/test_backend.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/ps5/test_backend.c src/core/bt_autostart.c -o $@
 
 test-web: host
 	$(PYTHON) tests/web/test_runtime.py $(HOST_BINARY)
@@ -191,3 +192,14 @@ test-launcher: $(BUILD)/test-launcher
 $(BUILD)/test-launcher: tests/launcher/test_launcher.c src/ps5/launcher.c \
 	src/ps5/launcher.h $(BUILD)/launcher_icon.inc
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/launcher/test_launcher.c -o $@
+
+
+.PHONY: test-bt-autostart
+test: test-bt-autostart
+test-bt-autostart: $(BUILD)/test-bt-autostart
+	./$(BUILD)/test-bt-autostart
+
+$(BUILD)/test-bt-autostart: src/core/bt_autostart.c src/core/bt_autostart.h \
+	tests/core/test_bt_autostart.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/core/bt_autostart.c tests/core/test_bt_autostart.c -o $@

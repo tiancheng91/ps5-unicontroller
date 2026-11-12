@@ -1,5 +1,6 @@
 /* Independent narrow PS5 virtual-pad adapter. No physical-controller I/O/hooks. */
 #include "uc_backend.h"
+#include "../core/bt_autostart.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -36,6 +37,7 @@ _Static_assert(sizeof(PadData) == 120, "pad ABI size");
 _Static_assert(offsetof(PadData, timestamp) == 80, "pad timestamp ABI");
 int32_t sceUserServiceInitialize(void *);
 int32_t sceUserServiceGetLoginUserIdList(int32_t[4]);
+int32_t sceUserServiceGetForegroundUser(int32_t *);
 int32_t scePadInit(void);
 int32_t scePadSetProcessPrivilege(int32_t);
 int32_t scePadVirtualDeviceAddDevice(void *, int32_t);
@@ -52,7 +54,7 @@ static int (*bind_user)(uint64_t, int32_t);
 typedef int32_t (*remote_setting_fn)(int32_t, void *);
 static remote_setting_fn remote_setting;
 typedef struct {
-    int used, closing;
+    int used, closing, input_logged, ps_logged;
     int32_t owner;
     uint64_t device, token, feedback_at;
     int feedback_polled, feedback_failed;
@@ -82,6 +84,13 @@ static int raised;
 static intptr_t power_flag = -1;
 static int suspend_event, rest_seen, power_status = -1;
 static uint64_t working_since;
+static uc_bt_autostart home_gate;
+static int home_waiting, home_owns_log, auto_mode;
+static int32_t home_foreground = -1;
+static uint64_t home_connect_at;
+static uint64_t system_users_at;
+static int system_users_valid;
+static int32_t system_users_last[5];
 /* At most one error per stage per process, including repeated frame failures. */
 static uint32_t reported_errors;
 static void backend_error(unsigned stage, const char *operation, int32_t result)
@@ -141,11 +150,15 @@ static int user_live(int32_t user)
             return 1;
     return 0;
 }
-int uc_backend_can_start(int32_t user)
+int uc_backend_transport_ready(void)
 {
     uint64_t current = now_ms();
-    return ready && user_live(user) && power_status == 0 && working_since &&
-           current >= working_since && current - working_since >= 5000;
+    return ready && power_status == 0 && working_since && current >= working_since &&
+           current - working_since >= 5000;
+}
+int uc_backend_can_start(int32_t user)
+{
+    return user_live(user) && uc_backend_transport_ready();
 }
 int uc_backend_init(void)
 {
@@ -314,6 +327,13 @@ static int read_log(int identify)
             if (buffer[i] == '\n') {
                 if (!discard_line) {
                     line[used] = 0;
+                    if (home_owns_log) {
+                        int previous_home = home_gate.home;
+                        uc_bt_auto_line(&home_gate, line);
+                        if (previous_home != home_gate.home)
+                            fprintf(stderr, "[bluetooth-auto] fresh desktop focus=%d\n",
+                                    home_gate.home);
+                    }
                     if (identify)
                         candidate(line);
                 }
@@ -327,6 +347,135 @@ static int read_log(int identify)
     }
     return 0;
 }
+/* Shares the identification reader: never two competing /dev/klog readers.
+ * Desktop focus is a compatibility signal, not a physical-pad login callback. */
+void uc_backend_auto_watch(int mode)
+{
+    if (home_owns_log)
+        close_log();
+    home_owns_log = 0;
+    auto_mode = mode;
+    home_waiting = mode != UC_AUTO_OFF;
+    home_foreground = -1;
+    uc_bt_auto_cancel(&home_gate);
+    fprintf(stderr, "[bluetooth-auto] mode=%d (%s)\n", mode,
+            mode == UC_AUTO_RESUME ? "waiting for stable resume; system user-selection experiment"
+            : mode == UC_AUTO_DESKTOP ? "waiting for fresh desktop event"
+                                      : "disabled/cancelled");
+}
+static void poll_home(uint64_t now)
+{
+    if (!home_waiting && !home_gate.armed)
+        return;
+    if (suspend_event || power_status != 0) {
+        if (home_owns_log)
+            close_log();
+        home_owns_log = 0;
+        home_waiting = 1;
+        uc_bt_auto_cancel(&home_gate);
+        return;
+    }
+    /* Wait for any in-flight virtual-device identification to finish. */
+    if (phase >= 1 && phase <= 3)
+        return;
+    if (auto_mode == UC_AUTO_RESUME) {
+        if (home_waiting) {
+            home_waiting = 0;
+            uc_bt_auto_arm(&home_gate, now);
+            home_gate.fresh = home_gate.home = 1; /* Power event; no log dependency. */
+            fprintf(stderr, "[bluetooth-auto] resume observed; waiting 5000ms; no user required\n");
+        }
+        return;
+    }
+    if (home_waiting) {
+        home_waiting = 0;
+        uc_bt_auto_arm(&home_gate, now);
+        home_connect_at = now;
+        close_log();
+        if (open_log()) {
+            fprintf(stderr, "[bluetooth-auto] log source unavailable; manual start required\n");
+            uc_bt_auto_cancel(&home_gate);
+            return;
+        }
+        home_owns_log = 1;
+        fprintf(stderr, "[bluetooth-auto] observing desktop for 120000ms; draining history\n");
+    }
+    if (now < home_gate.last || now >= home_gate.until) {
+        fprintf(stderr, "[bluetooth-auto] observation expired; manual start required\n");
+        uc_backend_auto_watch(0);
+        return;
+    }
+    if (connection_pending) {
+        struct sockaddr_in peer;
+        socklen_t len = sizeof peer;
+        if (getpeername(fd, (struct sockaddr *)&peer, &len)) {
+            int error = 0;
+            len = sizeof error;
+            if (!getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) && !error &&
+                now - home_connect_at < 1000)
+                return;
+            if (raw_log_open()) {
+                fprintf(stderr, "[bluetooth-auto] log connection failed; manual start required\n");
+                uc_backend_auto_watch(0);
+                return;
+            }
+        }
+        connection_pending = 0;
+    }
+    int saved_phase = phase;
+    int drained = read_log(0);
+    phase = saved_phase; /* Observation failures do not corrupt output ownership. */
+    if (fd < 0) {
+        fprintf(stderr, "[bluetooth-auto] log stream lost; manual start required\n");
+        uc_backend_auto_watch(0);
+    } else if (drained && !home_gate.fresh) {
+        used = 0;
+        discard_line = 0;
+        home_gate.fresh = 1;
+        fprintf(stderr, "[bluetooth-auto] history drained; awaiting new desktop focus\n");
+    }
+}
+int uc_backend_auto_due(int32_t target_user, int idle)
+{
+    if (auto_mode == UC_AUTO_RESUME) {
+        /* The timer begins as soon as power is working; the final transport gate
+         * independently enforces the same five-second power grace. */
+        int eligible = idle && ready && power_status == 0 && !suspend_event;
+        int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+        if (due || (!home_waiting && !home_gate.armed)) {
+            uc_backend_auto_watch(UC_AUTO_OFF);
+            if (due)
+                fprintf(
+                    stderr,
+                    "[bluetooth-auto] resume delay complete; system-choice experimental start\n");
+        }
+        return due && uc_backend_transport_ready();
+    }
+    int32_t foreground = -1;
+    int eligible = idle && home_owns_log && power_status == 0 && !suspend_event &&
+                   sceUserServiceGetForegroundUser(&foreground) == 0 && user_live(foreground) &&
+                   uc_backend_can_start(target_user);
+    if (foreground != home_foreground) {
+        home_gate.timing = 0;
+        home_foreground = foreground;
+    }
+    int timing = home_gate.timing;
+    int armed = home_gate.armed;
+    int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+    if (!timing && home_gate.timing)
+        fprintf(
+            stderr,
+            "[bluetooth-auto] desktop and users ready; waiting 5000ms foreground=%d target=%d\n",
+            foreground, target_user);
+    else if (timing && !home_gate.timing && !due && home_gate.armed)
+        fprintf(stderr, "[bluetooth-auto] readiness lost; delay cancelled\n");
+    if (due || (armed && !home_gate.armed)) {
+        uc_backend_auto_watch(0);
+        if (due)
+            fprintf(stderr, "[bluetooth-auto] desktop delay complete; starting once\n");
+    }
+    return due;
+}
 static void clear_pending(void)
 {
     close_log();
@@ -339,10 +488,12 @@ static void clear_pending(void)
 }
 int uc_backend_create(int32_t user, uint64_t *handle)
 {
+    if (home_waiting || home_gate.armed || home_owns_log)
+        uc_backend_auto_watch(0);
     if (!handle)
         return -1;
     *handle = 0;
-    if (!ready || !user_live(user))
+    if (!ready || user < 0 || (user > 0 && !user_live(user)))
         return -1;
     if (power_status != 0) {
         backend_error(10, "create blocked: power state unknown or resting", power_status);
@@ -351,6 +502,9 @@ int uc_backend_create(int32_t user, uint64_t *handle)
     uint64_t current = now_ms();
     if (!working_since || current < working_since || current - working_since < 5000)
         return 2;
+    for (unsigned i = 0; i < 4; i++)
+        if (outputs[i].used && outputs[i].owner != user && (user == 0 || outputs[i].owner == 0))
+            return -2;
     for (unsigned i = 0; i < 4; i++)
         if (outputs[i].used && outputs[i].owner == user) {
             if (outputs[i].closing)
@@ -403,7 +557,8 @@ int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
         return -1;
     int is_neutral = buttons == 0 && axes[0] == 0 && axes[1] == 0 && axes[2] == 0 && axes[3] == 0 &&
                      triggers[0] == 0 && triggers[1] == 0;
-    if (!is_neutral && (output->closing || !user_live(output->owner)))
+    if (!is_neutral &&
+        (output->closing || power_status != 0 || (output->owner != 0 && !user_live(output->owner))))
         return -1;
     PadData d;
     memset(&d, 0, sizeof d);
@@ -420,6 +575,16 @@ int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
     int32_t rc = scePadVirtualDeviceInsertData((int32_t)output->device, &d);
     if (rc != 0)
         backend_error(6, "scePadVirtualDeviceInsertData", rc);
+    else if (output->owner == 0 && !is_neutral) {
+        int ps = (buttons & (UINT32_C(1) << 16)) != 0;
+        if (!output->input_logged || (ps && !output->ps_logged))
+            fprintf(stderr,
+                    "[system-choice] device=%#llx input accepted buttons=%#x ps=%d; binding "
+                    "unverified\n",
+                    (unsigned long long)output->device, buttons, ps);
+        output->input_logged = 1;
+        output->ps_logged |= ps;
+    }
     return rc == 0 ? 0 : -1;
 }
 int uc_backend_delete(uint64_t handle)
@@ -472,7 +637,7 @@ int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8
     owned_output *output = find_output(handle);
     if (!output || !strong || !weak)
         return -1;
-    if (output->closing || !user_live(output->owner) || power_status != 0)
+    if (output->closing || (output->owner != 0 && !user_live(output->owner)) || power_status != 0)
         return 0;
     if (!remote_setting || output->feedback_failed)
         return 0;
@@ -498,6 +663,31 @@ int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8
     *strong = setting.bytes[3];
     *weak = setting.bytes[4];
     return 1;
+}
+static void observe_system_users(uint64_t now)
+{
+    int exists = 0;
+    for (unsigned i = 0; i < 4; ++i)
+        exists |= outputs[i].used && outputs[i].owner == 0;
+    if (!exists) {
+        system_users_valid = 0;
+        system_users_at = 0;
+        return;
+    }
+    if (system_users_at && now >= system_users_at && now - system_users_at < 1000)
+        return;
+    system_users_at = now;
+    int32_t snapshot[5] = {-1, -1, -1, -1, -1};
+    if (uc_backend_users(snapshot) || sceUserServiceGetForegroundUser(snapshot + 4))
+        return;
+    if (!system_users_valid || memcmp(snapshot, system_users_last, sizeof snapshot)) {
+        memcpy(system_users_last, snapshot, sizeof snapshot);
+        system_users_valid = 1;
+        fprintf(
+            stderr,
+            "[system-choice] signed_in=%d,%d,%d,%d foreground=%d; not proof of device binding\n",
+            snapshot[0], snapshot[1], snapshot[2], snapshot[3], snapshot[4]);
+    }
 }
 void uc_backend_poll(void)
 {
@@ -530,6 +720,8 @@ void uc_backend_poll(void)
         working_since = 0;
     else if (!working_since)
         working_since = now;
+    observe_system_users(now);
+    poll_home(now);
     if (!phase || phase == 4 || phase == 5)
         return;
     if (power_status != 0) {
@@ -596,7 +788,12 @@ void uc_backend_poll(void)
         identified = 1;
         close_log();
         int32_t bind_result = 0;
-        if (!cancelled && user_live(owner)) {
+        if (!cancelled && owner == 0 && power_status == 0) {
+            fprintf(stderr,
+                    "[system-choice] device=%#llx registered without application binding; press PS "
+                    "to select user\n",
+                    (unsigned long long)device);
+        } else if (!cancelled && user_live(owner)) {
             bind_result = bind_user(device, owner);
             if (bind_result != 0)
                 backend_error(9, "sceMbusBindDeviceWithUserId", bind_result);
@@ -643,6 +840,7 @@ int uc_backend_suspend(void)
 }
 void uc_backend_shutdown(void)
 {
+    uc_backend_auto_watch(0);
     (void)uc_backend_delete(0);
     /* A pending AddDevice must finish identification before it can safely be
      * removed. This bounded shutdown grace never guesses an unrelated handle. */

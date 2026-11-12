@@ -29,6 +29,7 @@ SOURCES := \
 	$(BT_SOURCES) \
 	$(DRIVER_SHARED) \
 	src/core/uc_core.c \
+	src/core/bt_autostart.c \
 	src/ps5/main.c \
 	src/ps5/backend.c \
 	src/ps5/launcher.c \

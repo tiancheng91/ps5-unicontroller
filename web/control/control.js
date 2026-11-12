@@ -249,7 +249,13 @@ function renderBluetooth(data) {
   btMessage(
     labels[data.state] +
       (data.reason ? " · " + data.reason : "") +
-      (data.state === "on" ? " · 账号 " + data.user_id : ""),
+      (data.state === "on"
+        ? data.system_assignment
+          ? " · 系统账号选择实验（绑定未确认）"
+          : data.user_id > 0
+            ? " · 首选账号 " + data.user_id
+            : " · 等待分配账号"
+        : ""),
     data.state === "failed",
   );
   $("bt-pairing").textContent =
@@ -268,9 +274,24 @@ function renderBluetooth(data) {
     addText(
       card,
       "div",
-      "输入帧 " + device.input_frames + " · " + (device.bound ? "已绑定账号" : "未绑定"),
+      "输入帧 " +
+        device.input_frames +
+        " · " +
+        (device.system_assignment
+          ? device.output_active
+            ? "虚拟输出已启用 · 系统绑定未确认"
+            : "等待虚拟输出"
+          : device.bound
+            ? "已绑定账号"
+            : "未绑定"),
     );
-    addAssignment(card, device, true);
+    if (data.system_assignment)
+      addText(
+        card,
+        "p",
+        "实验模式仅一只手柄注入输入；在 PS5 上按 PS/Home 并选择用户。网页不代为绑定账号。",
+      );
+    else addAssignment(card, device, true);
     addText(card, "div", Number(device.battery) >= 0 ? "电量 " + device.battery + "%" : "电量未知");
   }
   if (!data.devices.length) addText($("bt-devices"), "p", "当前没有连接的蓝牙手柄。");

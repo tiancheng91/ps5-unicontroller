@@ -170,6 +170,48 @@ with tempfile.TemporaryDirectory() as directory:
         )
         status, settings = request("GET", "/api/v1/settings")
         assert status == 200 and len(settings["button_mapping"]) == 32
+        assert settings["bluetooth_auto_start"] is False
+        assert settings["bluetooth_auto_user"] == 0
+        assert settings["bluetooth_auto_trigger"] == "login"
+        resume = dict(
+            settings, bluetooth_auto_start=True, bluetooth_auto_trigger="resume"
+        )
+        assert request("POST", "/api/v1/settings", resume)[1] == resume
+        assert json.loads(path.read_text()) == resume
+        for bad_trigger in ["awake", True, 2, None]:
+            assert (
+                request(
+                    "POST",
+                    "/api/v1/settings",
+                    dict(settings, bluetooth_auto_trigger=bad_trigger),
+                )[0]
+                == 400
+            )
+
+        legacy = {
+            k: v for k, v in settings.items() if not k.startswith("bluetooth_auto_")
+        }
+        assert request("POST", "/api/v1/settings", legacy)[1] == settings
+        for invalid_mode in ["login", 1, None]:
+            assert (
+                request(
+                    "POST",
+                    "/api/v1/settings",
+                    dict(settings, bluetooth_auto_start=invalid_mode),
+                )[0]
+                == 400
+            )
+        # Enabled with no remembered account remains inert; never invent a target.
+        enabled = dict(settings, bluetooth_auto_start=True)
+        assert request("POST", "/api/v1/settings", enabled)[1] == enabled
+        assert json.loads(path.read_text()) == enabled
+        # HTTP clients cannot replace the server-owned remembered account.
+        assert (
+            request("POST", "/api/v1/settings", dict(settings, bluetooth_auto_user=2))[
+                1
+            ]
+            == settings
+        )
         changed = dict(settings, swap_ab=True, recording_level="debug")
         assert request("POST", "/api/v1/settings", changed)[0] == 200
         assert json.loads(path.read_text()) == changed

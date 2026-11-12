@@ -33,6 +33,10 @@ static pad_state frame = {.buttons = 0x4000,
                           .r2 = 0,
                           .has_battery = 1,
                           .battery_pct = 80};
+int uc_backend_transport_ready(void)
+{
+    return gate;
+}
 int uc_backend_can_start(int32_t user)
 {
     return gate && user >= 1 && user <= 4 && user != unavailable_user;
@@ -40,9 +44,9 @@ int uc_backend_can_start(int32_t user)
 int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
 {
     (void)now;
-    assert(user >= 1 && user <= 4);
+    assert(user >= 0 && user <= 4);
     enable_calls++;
-    if (user == busy_user) {
+    if (user > 0 && user == busy_user) {
         *out = 0;
         return 2;
     }
@@ -51,7 +55,7 @@ int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
     if (!sessions[user])
         sessions[user] = next_session++;
     *out = sessions[user];
-    if (user == error_user)
+    if (user > 0 && user == error_user)
         return -1;
     if (pending_attempts) {
         pending_attempts--;
@@ -61,13 +65,17 @@ int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
     active = *out;
     return 0;
 }
+int uc_core_enable_system_assigned(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
+}
 int uc_core_disable_session(uint64_t session)
 {
     assert(session);
     disable_calls++;
     if (cleanup_fail)
         return -1;
-    for (int user = 1; user <= 4; user++)
+    for (int user = 0; user <= 4; user++)
         if (sessions[user] == session) {
             sessions[user] = 0;
             ready[user] = 0;
@@ -79,7 +87,7 @@ int uc_core_disable_session(uint64_t session)
 }
 int uc_core_session_active(uint64_t session)
 {
-    for (int user = 1; user <= 4; user++)
+    for (int user = 0; user <= 4; user++)
         if (sessions[user] == session && ready[user])
             return 1;
     return 0;
@@ -103,7 +111,7 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
 {
     (void)now;
     assert(uc_core_session_active(session) && seq);
-    for (int user = 1; user <= 4; user++)
+    for (int user = 0; user <= 4; user++)
         if (sessions[user] == session)
             ++submissions_by_user[user];
     submissions++;
@@ -448,6 +456,42 @@ int main(void)
     assert(sessions[1] && !ready[1]); /* Enable error still carries an owned cleanup token. */
     assert(uc_bt_stop() == 0 && !sessions[1]);
     error_user = 0;
+    /* Experimental resume injects before login, without choosing an account. */
+    unavailable_user = 1;
+    assert(uc_bt_start(1) == -1);
+    assert(uc_bt_start_system_assigned() == 0);
+    enabled = enable_calls;
+    event(1, 0, 26000);
+    event(2, 0, 26001);
+    assert(ready[0] && sessions[0] && enable_calls > enabled);
+    int sent = submissions;
+    frame.buttons = PAD_PS;
+    event(2, 0, 26002);
+    assert(submissions > sent && submitted_buttons == PAD_PS);
+    uint64_t login_device = sessions[0];
+    assert(uc_bt_assign(0, "06:05:04:03:02:01", 2) == -1);
+    unavailable_user = 0; /* A login must not re-create or rebind the device. */
+    event(2, 0, 26003);
+    assert(sessions[0] == login_device && !sessions[1] && !sessions[2]);
+    event(1, 1, 26004);
+    enabled = enable_calls;
+    event(2, 1, 26005);
+    assert(enable_calls == enabled); /* Only one experiment source. */
+    char status_json[8192];
+    assert(uc_bt_status_json(status_json, sizeof status_json));
+    assert(strstr(status_json, "\"system_assignment\":true") &&
+           strstr(status_json, "\"output_active\":true") && strstr(status_json, "\"bound\":false"));
+    uc_bt_suspend();
+    assert(!uc_bt_running() && !sessions[0]);
+    assert(uc_bt_start_system_assigned() == 0);
+    event(1, 0, 27000);
+    event(2, 0, 27001);
+    assert(ready[0]);
+    gate = 0;
+    uc_bt_poll(27002);
+    assert(!uc_bt_running() && !sessions[0]);
+    assert(uc_bt_start_system_assigned() == -1);
+    gate = 1;
     puts("Bluetooth manager checks passed");
     return 0;
 }

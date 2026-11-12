@@ -5,7 +5,8 @@
 - [控制器配置](controller-config.md)、[设置存储](settings-storage.md)：内置定义、用户覆盖与持久化。
 - [设备说明](gamesir-nova.md)：型号、协议身份与验证边界。
 - [应用图标](launcher.md)：PS5入口注册、移除及Logo配色。
-- [实机验证](validation.md)：部署和回归步骤。
+- [实机测试清单](test-checklist.md)：自动启动、系统用户选择、面键布局与反馈模板。
+- [开发验证](validation.md)：部署与回归说明。
 - [代码风格](code-style.md)、[视觉规范](../design.md)：维护规范。
 
 临时计划、AI 工作笔记和选型草稿保存在本地 `.local/notes/`，不纳入版本控制。发布所需的设计、使用说明和验证限制保留在本目录。代码来源与许可证统一见根目录 NOTICE、LICENSE。

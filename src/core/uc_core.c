@@ -109,7 +109,7 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
     *session = 0;
     if (observe(now))
         return -1;
-    if (user <= 0)
+    if (user <= 0 && !(physical == 2 && user == 0))
         return fail("invalid_user");
     struct core_session *candidate = NULL, *free_slot = NULL;
     for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i) {
@@ -122,7 +122,8 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
         if (s->pending && s->user == user && s->physical == physical && !s->closing &&
             (!physical || retry_token == s->id))
             candidate = s;
-        else if (!physical || !s->physical || s->user == user || s->pending || state.suspended) {
+        else if (!physical || !s->physical || physical == 2 || s->physical == 2 ||
+                 s->user == user || s->pending || state.suspended) {
             log_event(UC_LOG_TRACE, "enable_busy", s->id);
             return 2;
         }
@@ -179,6 +180,10 @@ int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *session)
 {
     return enable(user, now, session, 1);
 }
+int uc_core_enable_system_assigned(uint64_t now, uint64_t *session)
+{
+    return enable(0, now, session, 2);
+}
 int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16_t axes[4],
                    const uint16_t triggers[2], uint64_t now)
 {
@@ -192,8 +197,13 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
     if (s->closing || s->pending || state.suspended || !axes || !triggers)
         return fail_session("input_rejected", session);
     if (state.swap) {
-        uint32_t a = buttons & (UINT32_C(1) << 14), b = buttons & (UINT32_C(1) << 13);
-        buttons = (buttons & ~((UINT32_C(1) << 14) | (UINT32_C(1) << 13))) | (a >> 1) | (b << 1);
+        /* Switch <-> PS/Xbox face layout: both A/B and X/Y pairs. */
+        uint32_t cross = buttons & (UINT32_C(1) << 14);
+        uint32_t circle = buttons & (UINT32_C(1) << 13);
+        uint32_t square = buttons & (UINT32_C(1) << 15);
+        uint32_t triangle = buttons & (UINT32_C(1) << 12);
+        buttons = (buttons & ~UINT32_C(0xF000)) | (cross >> 1) | (circle << 1) | (square >> 3) |
+                  (triangle << 3);
     }
     uint32_t mapped = 0;
     for (unsigned i = 0; i < 32; ++i)

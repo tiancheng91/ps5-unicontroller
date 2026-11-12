@@ -37,7 +37,8 @@ typedef struct {
     char out[RESPONSE_MAX];
 } Client;
 typedef struct {
-    int recording, page, rumble, swap;
+    int recording, page, rumble, swap, bt_auto, bt_auto_resume;
+    int32_t bt_auto_user;
     uint8_t map[32];
 } Settings;
 __attribute__((weak)) const char uc_settings_html[] =
@@ -133,14 +134,39 @@ static int array(Json *j, int n, int64_t min, int64_t max, int count, int64_t *o
 static int parse_settings(const char *body, Settings *out)
 {
     Json j;
-    const char *keys[] = {"schema_version", "recording_level", "page_level",
-                          "rumble",         "swap_ab",         "button_mapping"};
-    if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 6))
+    const char *keys[] = {"schema_version",
+                          "recording_level",
+                          "page_level",
+                          "rumble",
+                          "swap_ab",
+                          "button_mapping",
+                          "bluetooth_auto_start",
+                          "bluetooth_auto_user",
+                          "bluetooth_auto_trigger"};
+    if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 9))
         return -1;
     int64_t version, map[32];
     if (jint(&j, jget(&j, "schema_version"), 1, 1, &version) ||
         array(&j, jget(&j, "button_mapping"), 0, 31, 32, map))
         return -1;
+    out->bt_auto_resume = 0;
+    int trigger = jget(&j, "bluetooth_auto_trigger");
+    if (trigger >= 0) {
+        if (jeq(&j, trigger, "resume"))
+            out->bt_auto_resume = 1;
+        else if (!jeq(&j, trigger, "login"))
+            return -1;
+    }
+    out->bt_auto = 0;
+    out->bt_auto_user = 0;
+    int mode = jget(&j, "bluetooth_auto_start");
+    if (mode >= 0 && jbool(&j, mode, &out->bt_auto))
+        return -1;
+    int user = jget(&j, "bluetooth_auto_user");
+    int64_t user_id = 0;
+    if (user >= 0 && jint(&j, user, 0, INT32_MAX, &user_id))
+        return -1;
+    out->bt_auto_user = (int32_t)user_id;
     out->recording = level(&j, jget(&j, "recording_level"));
     out->page = level(&j, jget(&j, "page_level"));
     if (out->recording < 0 || out->page < 0 || jbool(&j, jget(&j, "rumble"), &out->rumble) ||
@@ -152,11 +178,14 @@ static int parse_settings(const char *body, Settings *out)
 }
 static void settings_json(const Settings *s, char *out, size_t cap)
 {
-    int n = snprintf(out, cap,
-                     "{\"schema_version\":1,\"recording_level\":\"%s\",\"page_level\":\"%s\","
-                     "\"rumble\":%s,\"swap_ab\":%s,\"button_mapping\":[",
-                     levels[s->recording], levels[s->page], s->rumble ? "true" : "false",
-                     s->swap ? "true" : "false");
+    int n = snprintf(
+        out, cap,
+        "{\"schema_version\":1,\"recording_level\":\"%s\",\"page_level\":\"%s\","
+        "\"rumble\":%s,\"swap_ab\":%s,\"bluetooth_auto_start\":%s,"
+        "\"bluetooth_auto_user\":%d,\"bluetooth_auto_trigger\":\"%s\",\"button_mapping\":[",
+        levels[s->recording], levels[s->page], s->rumble ? "true" : "false",
+        s->swap ? "true" : "false", s->bt_auto ? "true" : "false", s->bt_auto_user,
+        s->bt_auto_resume ? "resume" : "login");
     for (int i = 0; i < 32; i++)
         n += snprintf(out + n, cap - (size_t)n, "%s%u", i ? "," : "", s->map[i]);
     snprintf(out + n, cap - (size_t)n, "]}");
@@ -195,6 +224,9 @@ static int load_settings(void)
     settings.page = 3;
     settings.rumble = 1;
     settings.swap = 0;
+    settings.bt_auto = 0;
+    settings.bt_auto_resume = 0;
+    settings.bt_auto_user = 0;
     for (int i = 0; i < 32; i++)
         settings.map[i] = (uint8_t)i;
     int fd = open(store_path, O_RDONLY);
@@ -206,7 +238,11 @@ static int load_settings(void)
     if (len <= 0 || len >= (ssize_t)sizeof(body))
         return -1;
     body[len] = 0;
-    return parse_settings(body, &settings);
+    Settings parsed;
+    if (parse_settings(body, &parsed))
+        return -1;
+    settings = parsed;
+    return 0;
 }
 static int secret_equal(const char *a, const char *b)
 {
@@ -387,6 +423,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
+        uc_backend_auto_watch(0);
         bt_start_user = (int32_t)user;
         bt_start_queued = 1;
         bt_start_at = millis() + 50;
@@ -394,6 +431,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/stop")) {
+        uc_backend_auto_watch(0);
         bt_start_queued = 0;
         int rc = uc_bt_stop();
         response(c, rc ? 202 : 200, "application/json",
@@ -547,6 +585,8 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 error_response(c, 400, "invalid_settings");
                 return;
             }
+            /* Account is learned from a successful manual Bluetooth start. */
+            next.bt_auto_user = settings.bt_auto_user;
             if (save_settings(&next)) {
                 if (settings.recording >= 1)
                     fprintf(stderr, "[error] settings_persist_failed\n");
@@ -554,6 +594,8 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 return;
             }
             settings = next;
+            uc_backend_auto_watch(settings.bt_auto && !settings.bt_auto_resume ? UC_AUTO_DESKTOP
+                                                                               : UC_AUTO_OFF);
             if (uc_core_settings((uint8_t)settings.recording, (uint8_t)settings.swap,
                                  settings.map)) {
                 if (settings.recording >= 1)
@@ -881,6 +923,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         close(listener);
         return -1;
     }
+    uc_backend_auto_watch(settings.bt_auto && !settings.bt_auto_resume ? UC_AUTO_DESKTOP
+                                                                       : UC_AUTO_OFF);
     listening_port = port;
 #ifdef UC_PS5
     uc_launcher_startup(port);
@@ -903,6 +947,9 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         uc_backend_poll();
         if (uc_backend_suspend()) {
             uc_launcher_cancel();
+            uc_backend_auto_watch(!settings.bt_auto         ? UC_AUTO_OFF
+                                  : settings.bt_auto_resume ? UC_AUTO_RESUME
+                                                            : UC_AUTO_DESKTOP);
             bt_start_queued = 0;
             usb_start_queued = 0;
             uc_bt_suspend();
@@ -922,9 +969,30 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                        !usb_start_queued && !uc_core_active_session() && !enable_pending;
             uc_launcher_poll(millis(), uc_backend_power_state() == 0 && logged_in, idle);
         }
+        if (settings.bt_auto) {
+            int idle = !uc_bt_running() && !bt_start_queued && !uc_usb_running() &&
+                       !usb_start_queued && !uc_core_active_session() && !enable_pending;
+            if (uc_backend_auto_due(settings.bt_auto_user, idle)) {
+                int rc = settings.bt_auto_resume ? uc_bt_start_system_assigned()
+                                                 : uc_bt_start(settings.bt_auto_user);
+                fprintf(stderr, "[bluetooth-auto] start result=%d user=%d; no automatic retry\n",
+                        rc, settings.bt_auto_user);
+            }
+        }
         if (bt_start_queued && millis() >= bt_start_at) {
             bt_start_queued = 0;
-            (void)uc_bt_start(bt_start_user);
+            int rc = uc_bt_start(bt_start_user);
+            if (rc == 0 && settings.bt_auto_user != bt_start_user) {
+                Settings next = settings;
+                next.bt_auto_user = bt_start_user;
+                if (save_settings(&next) == 0) {
+                    settings = next;
+                    fprintf(stderr, "[bluetooth-auto] remembered user=%d\n", bt_start_user);
+                } else {
+                    fprintf(stderr,
+                            "[bluetooth-auto] could not persist user; previous account retained\n");
+                }
+            }
         }
         if (usb_start_queued && millis() >= usb_start_at) {
             usb_start_queued = 0;

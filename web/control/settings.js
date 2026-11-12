@@ -114,6 +114,10 @@ function valid(s) {
     s.schema_version === 1 &&
     levels.includes(s.recording_level) &&
     levels.includes(s.page_level) &&
+    typeof s.bluetooth_auto_start === "boolean" &&
+    ["login", "resume"].includes(s.bluetooth_auto_trigger) &&
+    Number.isInteger(s.bluetooth_auto_user) &&
+    s.bluetooth_auto_user >= 0 &&
     typeof s.rumble === "boolean" &&
     typeof s.swap_ab === "boolean" &&
     Array.isArray(s.button_mapping) &&
@@ -125,6 +129,12 @@ async function load() {
   try {
     const s = await api("/settings");
     if (!valid(s)) throw Error("设置结构无效，未启用保存");
+    $("bt-auto").checked = s.bluetooth_auto_start;
+    $("bt-auto-trigger").value = s.bluetooth_auto_trigger;
+    $("bt-auto-user").textContent =
+      s.bluetooth_auto_user > 0
+        ? "沿用账号 · " + s.bluetooth_auto_user
+        : "尚未记录账号；登录模式请先手动启动一次。恢复实验模式不使用保存的账号。";
     current = s;
     $("recording").value = s.recording_level;
     $("page").value = s.page_level;
@@ -149,14 +159,15 @@ $("save").onclick = async () => {
   try {
     const s = {
       ...current,
+      bluetooth_auto_start: $("bt-auto").checked,
+      bluetooth_auto_trigger: $("bt-auto-trigger").value,
       recording_level: $("recording").value,
       page_level: $("page").value,
       rumble: $("rumble").checked,
       swap_ab: $("swap").checked,
       button_mapping: Array.from({ length: 32 }, (_, i) => Number($("map" + i).value)),
     };
-    await api("/settings", "POST", s);
-    current = s;
+    current = await api("/settings", "POST", s);
     status("设置已保存");
   } catch (e) {
     status("保存失败：" + e.message, true);

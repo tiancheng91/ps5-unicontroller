@@ -1,92 +1,131 @@
 # UniController for PS5
 
-Universal Controller Support for PS5
+**中文** · [English](README.en.md)
 
-**Make Any Controller Work on PS5.**
+Universal Controller Support for PS5 — **Make Any Controller Work on PS5.**
 
-Repository: `ps5-unicontroller` · Payload: `unicontroller.elf`
+让第三方手柄通过蓝牙或 USB 接入 PS5，并通过手机或主机上的网页管理连接、按键和设置。提供手机触控手柄用于功能验证。
 
-C11 + HTML/CSS/JavaScript。当前包含手机模拟手柄与默认关闭的蓝牙输入接入；蓝牙实体设备兼容性待实机验证，USB有线Switch Pro/XInput也已接入，均待实机验证。口号为愿景，不表示所有手柄已经支持。
+> 项目仍在开发与实机验证阶段。下表表示已实现的适配路径，不代表所有型号、固件和游戏均已验证。请保留原装手柄作为恢复操作的备用设备。
+
+## 安装与打开
+
+准备一台能够加载自制 ELF payload 的 PS5、可用的 Payload Manager 或其他兼容加载器，以及与 PS5 同一局域网的手机或电脑。此项目不是可直接安装到普通未修改系统上的官方应用；固件兼容范围尚未建立完整验证矩阵。
+
+1. 打开 [GitHub Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml)，选择目标提交且构建成功的任务。
+2. 下载 **UniController-PS5** 构建产物并解压，包含 `unicontroller.elf`、SHA256 校验文件和 `build-info.txt`。GitHub 下载 Actions 产物可能需要登录。
+3. 按你的加载器说明部署并运行 `unicontroller.elf`。首次测试先保持自动启动关闭。
+4. 在手机或电脑上打开 `http://<PS5局域网IP>:7456/`。端口占用时会尝试 **7457**，以启动日志为准。
+5. 停止所有输入源、保持系统已登录且稳定后，程序会尝试安装 **UniController** 图标；点击可打开主机本地配置页。没有图标时也可直接通过局域网访问，或在设置页手动安装。
+
+**图标只是配置页入口，不负责加载 payload。** 程序停止后图标仍可能保留，但页面不可访问。网页资源嵌入 ELF，不需要 CDN；运行时请仅在可信局域网访问，不向公网开放端口。
+
+更新时先从控制面停止旧程序，再部署并启动新 ELF。正常更新不需要删除 `/data/unicontroller/`，其中保存用户设置和蓝牙配对记录。移除图标可在设置页操作，详见[图标说明](docs/launcher.md)。
+
+## 手柄兼容性
+
+| 连接方式 / 模式         | 当前适配范围                          | 使用限制                                                         |
+| ----------------------- | ------------------------------------- | ---------------------------------------------------------------- |
+| Switch Pro 蓝牙 Classic | 原装及使用兼容协议的第三方手柄        | 推荐用此路径测试第三方 Switch 模式；Switch 身份的 BLE 入口会拒绝 |
+| Joy-Con 蓝牙            | 左、右手柄专用解析                    | 尚不支持左右合并成一只手柄                                       |
+| Xbox 蓝牙               | 已登记 Xbox HID 型号                  | 不等于所有标称 XInput 的设备都能使用                             |
+| BLE                     | 默认白名单；内置开放 Xbox `045e:0b13` | 其他设备不自动放行；不能仅凭名称认定兼容                         |
+| Android / 通用蓝牙 HID  | 可解析的 HID 描述符及已知布局         | 按键、轴、长按和电量需按型号验证                                 |
+| USB Switch Pro          | `057e:2009` 及兼容握手/报文           | 需数据线；不是任意 USB HID 手柄通用支持                          |
+| USB Xbox 360 / XInput   | 匹配接口和输入报告的设备              | Xbox One/Series USB GIP、专用 Xbox 无线接收器未支持              |
+| 手机触控手柄            | 双摇杆、面键、PS、Touchpad 点击等     | 调试用途；与实体输入源互斥                                       |
+
+GameSir Nova Lite、Nova 2 Lite 等设备会随模式和固件改变上报身份。优先按 **连接方式 + 协议模式** 判断，不仅看商品名或 VID/PID。部分接收器虽使用已知身份，也必须验证实际报告与断线行为。[型号说明](docs/gamesir-nova.md) · [蓝牙详情](docs/bluetooth.md) · [USB 详情](docs/usb.md)
+
+游戏震动反馈已接入支持输出的协议，但仍需逐型号实测；不表示支持 DualSense 自适应扳机或完整触觉反馈。电量取决于手柄是否上报：Switch/Xbox 蓝牙专用解析支持部分电量报告，USB XInput 与通用 HID 当前可能显示“电量未知”。
+
+## 第一次连接
+
+### 蓝牙手柄
+
+1. 用原装手柄登录 PS5。测试两个独立玩家时，先准备两个已登录的本地用户。
+2. 打开控制面，停止手机触控测试输出，选择第三方手柄要使用的账号，点击启动蓝牙。
+3. 开启 **60 秒配对**，按手柄说明切到目标模式并进入配对状态。
+4. 检查设备卡片的输入帧、按键和电量。仅“连接成功”不代表按键已经可用。
+5. 有效输入到达后，程序创建虚拟手柄并绑定所选账号。Switch 的 Home 对应 PS，Capture 对应 Touchpad **点击**，不是触摸滑动。
+6. 进入游戏验证。后续打开已配对手柄通常只需回连，无需重新配对。
+
+同型号的两只手柄可以有相同 VID/PID，但按蓝牙地址分别连接。一个设备的 Classic/BLE 地址也可能不同；不要根据相似地址手动认为它们是两只可用手柄。Switch BLE 被过滤；历史配对记录仍可能出现在列表，可用“忘记设备”删除。
+
+### USB 手柄
+
+选择已登录账号并启动 USB，使用数据线接入支持的手柄模式。设备出现后检查输入与绑定状态。接口被系统占用或协议不支持时，程序不会强制卸载系统驱动。USB 与蓝牙可同时运行，常规模式合计最多 **4 个虚拟输出**；额外设备在卡片上分别分配账号。
+
+### 手机触控测试
+
+打开 `/controller`，选择已登录账号并启用。支持横屏、双摇杆、PS、Touchpad 点击和紧急释放。测试完成后停用，再开启实体手柄输入。该页面用于验证输入链路，不以低延迟游戏操作为目标。
+
+## 账号与多人游戏
+
+常规模式由应用调用系统接口绑定所选账号。两名独立玩家应选择不同用户；如果系统菜单能操作而游戏没有响应，先检查游戏使用者与手柄绑定账号是否一致。
+
+同账号的主/辅助控制器是 PS5 的另一种功能，本项目不会自动开启辅助模式，也不保证将两只手柄绑定同账号就能当作两个玩家。
+
+## 休眠与自动启动
+
+默认关闭自动启动。休眠时停止蓝牙/USB并删除本应用的虚拟手柄，**保留蓝牙配对记录**。恢复不是重新配对；虚拟设备会重新创建，账号可能需要重新选择。
+
+| 设置                   | 恢复后的行为                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| 自动启动关闭           | 等待网页手动启动                                                                                        |
+| 登录进入桌面后（推荐） | 等待新的桌面焦点事件、前台用户和已保存账号已登录，稳定等待 5 秒后启动蓝牙                               |
+| 休眠恢复后（实验）     | 系统恢复工作并稳定等待 5 秒后启动蓝牙；首只有效输入设备创建未由应用绑定的虚拟手柄，允许未登录时注入按键 |
+
+**恢复实验模式用于测试：第三方手柄按 PS/Home → 操作用户选择 → 进入游戏。** 它忽略已保存账号，交由系统处理选择，不调用应用主动绑定。仅允许一只实验输入源，与本应用其他虚拟输出互斥。页面显示“系统绑定未确认”，不能当作系统绑定已成功的证据；该路径仍待实机验证。
+
+恢复模式不会在加载程序或保存设置时立即启动，也不支持用第三方手柄唤醒主机；请用主机电源按钮恢复，以测试是否能不使用原装手柄完成登录。正常模式仍可用原装手柄唤醒。USB 不自动恢复。
+
+自动启动每轮只尝试一次；未满足条件、观察超时或启动失败时可手动启动。登录模式依赖新的桌面事件，历史日志和已有登录列表不会代替该事件。详细边界见[蓝牙说明](docs/bluetooth.md)。
+
+## 设置、数据与排障
+
+设置支持日志级别、震动开关、Switch / PS·Xbox 面键布局切换（A/B 与 X/Y）和按键映射，修改前需停止输入源。一般不需要编辑配置文件。
+
+| 数据                   | 位置 / 说明                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 设置及上次手动启动账号 | `/data/unicontroller/settings.json`；恢复实验模式不使用该账号                                                                  |
+| 蓝牙配对记录           | `/data/unicontroller/bonds.db`；包含密钥，不要公开上传                                                                         |
+| 运行日志               | `/data/unicontroller/runtime.log`；控制面可导出诊断                                                                            |
+| 可选设备覆盖           | `/data/unicontroller/controllers.json`；高级用户使用，[示例](examples/controllers.json)与[字段说明](docs/controller-config.md) |
+
+- **网页打不开**：确认 payload 正在运行、IP 正确，再检查 7456/7457。
+- **有连接但无输入**：确认手柄模式；Switch 使用 Classic。记录输入帧、设备地址和错误日志。
+- **菜单可用、游戏不可用**：常规模式先核对账号；实验模式记录是否能完成系统用户选择，不把“登录成功”直接当作游戏输入成功。
+- **长按中断或卡键**：记录型号与固件。不同设备上报频率不同；服务端有输入超时释放，但不能代替型号适配。
+- **原装手柄也异常**：停止本轮实验，尝试从网页停止蓝牙或整个程序，保存日志；停止程序未恢复时需通过主机正常电源操作恢复，不继续反复配对。
+
+反馈时提供构建提交、PS5 固件、手柄型号/固件/模式、连接方式、账号使用方式、复现步骤和诊断日志。检查日志中的个人信息后再公开分享。具体执行与记录模板见[实机测试清单](docs/test-checklist.md)。
+
+## 开发者
+
+C11 + HTML/CSS/JavaScript。页面离线嵌入 ELF；本地模拟后端不能替代 PS5 实机验证。
 
 ```text
-src/core/     输入会话、映射、分级日志、超时和清理
-src/ps5/      PS5 虚拟手柄、账号、电源、系统接口
-src/web/      HTTP、路由、配置文件、JSON
-src/drivers/  输入源适配、蓝牙/USB传输、共享协议与配对存储
-web/          控制面、手机手柄、设置页面
-tests/       核心、平台和 HTTP 测试
-tools/       离线资源打包
-docs/        设计、计划、验证说明
+src/core/     会话、映射、日志、输入超时
+src/ps5/      虚拟手柄、账号、电源与图标
+src/drivers/  蓝牙/USB 传输、协议与设备配置
+src/web/      HTTP API 与配置存储
+web/          控制面、触控手柄与设置
+tests/       主机回归测试
 ```
 
 ```sh
-make test-core
 make host
 ./build/unicontroller-host 7456 /tmp/unicontroller-settings.json
-make test-web
-PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make ps5
+make test
+make preview                     # 静态网页预览，无 API
+make preview PREVIEW_BIND=0.0.0.0 # 手机访问电脑局域网 IP
 ```
 
-宿主机使用模拟后端；PS5 构建连接真实虚拟手柄 API。两者的运行结果不能互相替代。
+PS5 ELF 由 GitHub Actions 使用固定版本 SDK 构建，不要求本地 Docker。可选本地交叉构建：`PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make ps5`。只把 Actions/SDK 产出的 `unicontroller.elf` 加载到 PS5，不要重命名主机模拟程序冒充 ELF。
 
-[设计](docs/architecture.md) · [实机验证](docs/validation.md) · [视觉规范](design.md) · [蓝牙接入](docs/bluetooth.md)
+内置设备定义位于 [controllers.json](src/drivers/protocols/controllers.json)，用户无需修改。共享页面样式位于 `web/shared/`；通过 `make format` / `make format-check` 维护源码，生成的 `build/` 文件不手工编辑。
 
-默认监听 7456；绑定失败时仅再尝试 7457。两者均失败则启动失败，日志记录失败原因及实际监听端口。页面使用相对 URL，备用端口同样可用。
+[架构](docs/architecture.md) · [代码风格](docs/code-style.md) · [视觉规范](design.md) · [开发验证](docs/validation.md) · [文档索引](docs/README.md)
 
-## 页面格式
-
-HTML、独立 CSS 和 JavaScript 使用两空格缩进，由根目录 `.prettierrc.json` 统一。格式化命令：
-
-```sh
-npx --yes prettier@3.6.2 --write "web/**/*.{html,css,js}"
-```
-
-页面源码保持可读格式，离线嵌入资源由 `make assets` 生成，不手工修改 build/assets.c。
-
-公共设计变量维护在 web/shared/tokens.css，公共组件在 components.css。各页布局和交互在同目录独立 CSS/JS 文件；由离线资源表统一嵌入 ELF，无 CDN 依赖。
-
-## 静态页面预览
-
-```sh
-make preview
-# 默认 http://127.0.0.1:7456/
-make preview PREVIEW_PORT=7457
-# 手机预览：访问电脑的局域网 IP
-make preview PREVIEW_BIND=0.0.0.0
-```
-
-底层使用 `python3 -m http.server`，Ctrl+C 停止。控制面 `/`、手柄 `/controller/`、设置 `/settings/` 与共享 CSS/JS 均可访问。预览通过生成目录的符号链接读取源码，修改页面后刷新即可。
-
-这是静态预览，不提供手柄或设置 API；页面出现 API 连接错误是预期行为。需要验证交互链路时使用 `make host` 启动模拟应用服务。
-
-## 手机触控手柄
-
-`/controller` 使用 SVG 手柄外形和真实按钮，支持多点触控、双摇杆、PS/Touchpad、L3/R3。先选择账号并启用；未启用时控制区域禁用。按钮获得焦点后，可用空格或 Enter 按住/松开。
-
-横屏可开启“专注操控”隐藏说明区域；点击“退出专注”或 Escape 返回。切换视图会先释放输入。紧急释放随时可用；切后台或断网仍保留服务端超时释放机制。
-
-## 蓝牙手柄
-
-控制面选择独立已登录账号，手动启动蓝牙，再开启限时配对。Switch Pro使用Classic专用协议；已知Xbox蓝牙型号使用对应协议，未知手柄根据HID描述符解析。非Switch不能统一视为XInput。最多四个实体输入源分别绑定独立账号，手机测试手柄仍需单独使用。休眠后默认关闭，不自动重开蓝牙。
-
-当前尚未完成PS5实体设备验证；游戏震动回传已接入，需实机验证。详细范围、配对记录与验证步骤见[蓝牙接入](docs/bluetooth.md)。
-
-项目许可证及第三方来源声明见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
-
-## USB有线输入
-
-控制面选择独立已登录账号，手动启动USB，接入Switch Pro或有线Xbox360/XInput设备。蓝牙与USB可同时运行，总计最多四个实体输出；网页测试手柄保持独占；休眠后不会自动恢复。协议、接口占用限制及FreeBSD/Linux差异见[USB说明](docs/usb.md)。源码分层见[架构](docs/architecture.md)。
-
-## 手柄设备配置
-
-内置型号、协议引用、共享 HID 字段布局与 USB 特殊标记维护在源码 [src/drivers/protocols/controllers.json](src/drivers/protocols/controllers.json)，构建时生成 C 表；终端用户无需修改此文件。
-
-可选运行时覆盖位于 `/data/unicontroller/controllers.json`：通过 FTP 手动上传，重启 payload 后生效。固定版本 LibJSON 0.2.5 事件解析器限制文件 32 KiB、32 条规则，启动仅加载一次，不热重载；缺文件正常使用内置规则，整份文件无效时回退内置并记录日志。没有网页上传或写入 JSON 的 API。
-
-规则按 exact transport（classic/ble/usb）与 VID/PID 匹配，可设置显示别名、选择既有 profile，或配置原始通用 HID 按键/轴字段。USB hint 不绕过接口描述符、Sony 或系统驱动保护，别名不认证真实型号；新协议仍需 C 实现，不支持脚本、原始命令或组合键。
-
-settings.json 继续保存 UI/core 偏好，包括 A/B 翻转和全局 32 位按键映射；当前没有新增每会话轴方向反转。Touchpad 映射仅是点击位；Switch Capture 已有默认映射，背键必须独立上报才能单独映射。游戏震动受全局震动开关控制，依赖具体协议的输出支持。
-
-示例见 [examples/controllers.json](examples/controllers.json)，详细字段与边界见[配置说明](docs/controller-config.md)。
-
-PS5 会在服务启动后注册 UniController 图标，点击打开本机配置页；设置页可更新或移除。图标不负责加载 payload。安装行为与主题换色见[应用图标说明](docs/launcher.md)。
+许可证与第三方来源见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。

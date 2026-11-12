@@ -28,6 +28,11 @@ int32_t sceUserServiceGetLoginUserIdList(int32_t users[4])
         users[i] = logged_in ? 42 + i : -1;
     return 0;
 }
+int32_t sceUserServiceGetForegroundUser(int32_t *user)
+{
+    *user = logged_in ? 42 : -1;
+    return 0;
+}
 int32_t scePadInit(void)
 {
     return 0;
@@ -70,10 +75,12 @@ static int32_t feedback(int32_t handle, void *buffer)
     bytes[4] = (uint8_t)(handle + 1);
     return 0;
 }
+static int bind_calls;
 static int bind_mock(uint64_t device_id, int32_t user)
 {
     assert(device_id >= 120 && device_id < 256);
     assert(user >= 42 && user <= 45);
+    ++bind_calls;
     return 0;
 }
 uint64_t kernel_get_ucred_authid(pid_t p)
@@ -283,6 +290,104 @@ static void power_guards(void)
     assert(uc_backend_suspend() == 1 && !phase);
     assert(working_since == fake_ms - 1); /* Event-loop gap restarts stable-power grace. */
 }
+static void home_observation(void)
+{
+    prepare();
+    suspend_event = 0;
+    uc_backend_auto_watch(1);
+    /* Supply a deterministic nonblocking stream instead of connecting to PS5. */
+    int pipes[2];
+    assert(pipe(pipes) == 0);
+    fd = pipes[0];
+    assert(fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+    home_waiting = 0;
+    home_owns_log = 1;
+    uc_bt_auto_arm(&home_gate, fake_ms);
+    const char *focus =
+        "[SceShellUI] OnFocusActiveSceneChanged [Login] -> [Render.NPXS40002 : AppScene]\n";
+    assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
+    poll_home(fake_ms);
+    assert(home_gate.fresh && !home_gate.home); /* Discard historical focus. */
+    assert(!uc_backend_auto_due(42, 1));
+    assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
+    poll_home(fake_ms);
+    assert(home_gate.home);
+    assert(!uc_backend_auto_due(0, 1) && !home_gate.timing); /* No account/inputs busy. */
+    assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
+    fake_ms = home_gate.since + 4997; /* can_start also samples the mock clock. */
+    assert(!uc_backend_auto_due(42, 1));
+    fake_ms = home_gate.since + 5000;
+    assert(uc_backend_auto_due(42, 1));
+    assert(fd == -1 && !home_gate.armed && !home_waiting && !home_owns_log);
+    assert(!uc_backend_auto_due(42, 1));
+    close(pipes[1]);
+    uc_backend_auto_watch(1);
+    power_status = 1;
+    poll_home(fake_ms);
+    assert(home_waiting && !home_gate.armed && fd == -1); /* No HCI/log open in rest. */
+    uc_backend_auto_watch(0);
+    assert(!home_waiting);
+    power_status = 0;
+}
+static void resume_observation(void)
+{
+    prepare();
+    suspend_event = 0;
+    logged_in = 0; /* Transport resume never needs a user or a log source. */
+    uc_backend_auto_watch(UC_AUTO_RESUME);
+    power_status = 1;
+    poll_home(fake_ms);
+    assert(home_waiting && fd == -1);
+    assert(!uc_backend_auto_due(0, 1));
+    power_status = 0;
+    working_since = fake_ms;
+    poll_home(fake_ms);
+    assert(fd == -1 && !home_owns_log && home_gate.armed);
+    assert(!uc_backend_auto_due(0, 1));
+    fake_ms += 3000;
+    assert(!uc_backend_auto_due(0, 0)); /* Cleanup/another input resets the timer. */
+    assert(!uc_backend_auto_due(0, 1));
+    fake_ms = home_gate.since + 4999;
+    assert(!uc_backend_auto_due(0, 1));
+    fake_ms = home_gate.since + 5000;
+    assert(uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_can_start(42) && uc_backend_transport_ready());
+    uc_backend_auto_watch(UC_AUTO_RESUME);
+    poll_home(fake_ms);
+    assert(!uc_backend_auto_due(0, 1));
+    uc_backend_auto_watch(UC_AUTO_OFF);
+    fake_ms += 6000;
+    assert(!uc_backend_auto_due(0, 1));
+    logged_in = 1;
+}
+static void system_choice_output(void)
+{
+    prepare();
+    suspend_event = 0;
+    logged_in = 0;
+    int before = bind_calls;
+    int writer = start_identification(0, 140);
+    uint64_t handle = finish_identification(writer, 0);
+    assert(handle && bind_calls == before); /* No application binding before login. */
+    const int16_t axes[4] = {0};
+    const uint16_t triggers[2] = {0};
+    assert(!uc_backend_submit(handle, 1u << 16, axes, triggers));
+    assert(frames[140].buttons == (1u << 16));
+    logged_in = 1;
+    uint64_t other = 0;
+    assert(uc_backend_create(42, &other) == -2 && !other);
+    assert(!uc_backend_submit(handle, 16, axes, triggers) && bind_calls == before);
+    logged_in = 0;
+    assert(
+        !uc_backend_submit(handle, 32, axes, triggers)); /* User-selection UI remains reachable. */
+    power_status = 1;
+    assert(uc_backend_submit(handle, 16, axes, triggers) < 0);
+    assert(uc_backend_delete(handle) == 0 && removed[140] == 1);
+    assert(uc_backend_submit(handle, 16, axes, triggers) < 0);
+    logged_in = 1;
+    prepare();
+}
 int main(void)
 {
     candidate(
@@ -290,5 +395,8 @@ int main(void)
     assert(!matches);
     isolation_and_rumble();
     power_guards();
+    home_observation();
+    resume_observation();
+    system_choice_output();
     return 0;
 }

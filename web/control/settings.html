@@ -26,10 +26,41 @@
         <p>记录级别控制日志保留；页面级别仅筛选已保留日志。Trace 会记录高频输入事件。</p>
       </section>
       <section>
+        <h2>蓝牙自动启动</h2>
+        <label>自动启动蓝牙<input id="bt-auto" type="checkbox" /></label>
+        <label
+          >启动时机<select id="bt-auto-trigger">
+            <option value="login">登录进入桌面后（推荐）</option>
+            <option value="resume">休眠恢复后（实验）</option>
+          </select></label
+        >
+        <p>
+          两种模式均延迟 5
+          秒。登录模式等待新的桌面焦点及前台用户登录；恢复模式不等待账号，创建未由应用绑定的虚拟手柄并注入按键，用于测试
+          PS5 用户选择。不支持唤醒主机。
+        </p>
+        <p>
+          恢复模式会提前访问蓝牙硬件，共存稳定性待实机验证。仅休眠后触发，加载应用或保存设置不会立即启动。
+        </p>
+        <p id="bt-auto-user"></p>
+        <p>
+          登录模式沿用上次手动成功启动蓝牙时选择的账号。恢复实验模式忽略已保存账号，由你在 PS5 上按
+          PS/Home
+          并选择用户；是否能完成登录和进入游戏待验证。仅支持一只实验手柄，不自动设置主副手柄，也不自动开启配对。
+        </p>
+        <p>
+          登录模式离开桌面会取消计时；观察 120
+          秒仍未满足条件或启动失败时保持关闭，可手动启动。修改设置前请停止输入源。
+        </p>
+      </section>
+      <section>
         <h2>默认控制器</h2>
         <label>允许震动<input id="rumble" type="checkbox" /></label
-        ><label>A/B 翻转<input id="swap" type="checkbox" /></label>
-        <p>A/B 翻转对应 PS5 Cross/Circle（位 14/13）。震动开关不表示当前后端具备震动能力。</p>
+        ><label>Switch / PS·Xbox 面键布局切换<input id="swap" type="checkbox" /></label>
+        <p>
+          同时交换 A/B 与 X/Y，对应
+          Cross↔Circle、Square↔Triangle。作用于所有本应用输出，先切换布局再执行自定义映射；不自动按型号切换。震动开关不表示当前后端具备震动能力。
+        </p>
         <details>
           <summary>自定义按键映射 · 32 位</summary>
           <p>每个来源位独立映射一次；多个来源可合并到同一目标位。</p>
