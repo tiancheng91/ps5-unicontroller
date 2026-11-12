@@ -48,6 +48,36 @@ def example():
 
 
 class ControllerRegistryTests(unittest.TestCase):
+    def test_layout_inheritance_matches_explicit_mapping(self):
+        config = example()
+        config["layouts"]["base"] = {
+            "bindings": {"button1": "circle", "button2": "square", "rx": "x"}
+        }
+        config["layouts"]["middle"] = {
+            "extends": "base",
+            "bindings": {"button2": "none"},
+        }
+        config["layouts"]["test-layout"]["extends"] = "middle"
+        flat = copy.deepcopy(config)
+        flat["layouts"]["middle"] = {
+            "bindings": {"button1": "circle", "button2": "none", "rx": "x"}
+        }
+        flat["layouts"]["test-layout"] = {
+            "bindings": {"button1": "cross", "button2": "none", "rx": "z"}
+        }
+        self.assertEqual(registry.generate(config), registry.generate(flat))
+        self.assertEqual(config["layouts"]["base"]["bindings"]["button2"], "square")
+
+    def test_layout_inheritance_rejects_invalid_bases_and_cycles(self):
+        for base in ("missing", "test-layout", None, [], 1):
+            with self.subTest(base=base):
+                self.invalid(lambda c: c["layouts"]["test-layout"].update(extends=base))
+        config = example()
+        config["layouts"]["test-layout"]["extends"] = "other"
+        config["layouts"]["other"] = {"extends": "test-layout", "bindings": {}}
+        with self.assertRaises(registry.RegistryError):
+            registry.generate(config)
+
     def invalid(self, mutate):
         config = example()
         mutate(config)

@@ -65,64 +65,31 @@
       }
     },
     "android-ipega": {
+      "extends": "android",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
         "button3": "l3",
-        "button4": "square",
-        "button5": "triangle",
         "button6": "r3",
-        "button7": "l1",
-        "button8": "r1",
-        "button9": "l2",
-        "button10": "r2",
-        "button11": "create",
-        "button12": "options",
-        "button13": "none",
-        "button14": "l3",
-        "button15": "r3"
+        "button13": "none"
       }
     },
     "android-steelseries": {
+      "extends": "android",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "none",
-        "button4": "square",
-        "button5": "triangle",
-        "button6": "none",
-        "button7": "l1",
-        "button8": "r1",
-        "button9": "l2",
-        "button10": "r2",
         "button11": "none",
-        "button12": "options",
-        "button13": "create",
-        "button14": "l3",
-        "button15": "r3"
+        "button13": "create"
       }
     },
     "nvidia-shield": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button7": "l3",
         "button8": "r3",
         "button9": "options"
       }
     },
     "razer-serval": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button7": "create",
         "button8": "options",
         "button9": "l3",
@@ -133,13 +100,8 @@
       }
     },
     "powera-moga": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button7": "create",
         "button8": "options",
         "button9": "l3",
@@ -147,13 +109,8 @@
       }
     },
     "atari-vcs": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button7": "l3",
         "button8": "r3",
         "button9": "create",
@@ -162,31 +119,31 @@
       }
     },
     "hyperkin-scout": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button9": "create",
         "button10": "options"
       }
     },
     "mocute-050": {
+      "extends": "face-shoulders",
       "bindings": {
-        "button1": "cross",
-        "button2": "circle",
-        "button3": "square",
-        "button4": "triangle",
-        "button5": "l1",
-        "button6": "r1",
         "button7": "create",
         "button8": "options",
         "button9": "l3",
         "button10": "r3",
         "button11": "l2",
         "button12": "r2"
+      }
+    },
+    "face-shoulders": {
+      "bindings": {
+        "button1": "cross",
+        "button2": "circle",
+        "button3": "square",
+        "button4": "triangle",
+        "button5": "l1",
+        "button6": "r1"
       }
     }
   },

@@ -163,11 +163,35 @@ def generate(config):
             "decoder has no full-report initialization",
         )
     maps = {}
+    resolved = {}
+    resolving = set()
+
+    def resolve_layout(key):
+        if key in resolved:
+            return resolved[key]
+        require(key not in resolving, f"layout {key}: cyclic inheritance")
+        resolving.add(key)
+        layout = layouts[key]
+        object_fields(layout, {"bindings", "extends"}, {"bindings"}, f"layout {key}")
+        # Validate local differences as strictly as a complete mapping.
+        mapping({"bindings": layout["bindings"]}, f"layout {key}")
+        bindings = {}
+        if "extends" in layout:
+            base = layout["extends"]
+            require(
+                type(base) is str and base in layouts, f"layout {key}: unknown base"
+            )
+            bindings.update(resolve_layout(base))
+        bindings.update(layout["bindings"])
+        resolving.remove(key)
+        resolved[key] = bindings
+        return bindings
+
     for key, layout in layouts.items():
         require(
             type(key) is str and IDENTIFIER.fullmatch(key), "invalid layout identifier"
         )
-        maps[key] = mapping(layout, f"layout {key}")
+        maps[key] = mapping({"bindings": resolve_layout(key)}, f"layout {key}")
     identities = set()
     grouped = {key: [] for key in profiles}
     models = []
