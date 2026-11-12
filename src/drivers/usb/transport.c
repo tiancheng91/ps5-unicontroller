@@ -105,7 +105,7 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
  * transfer slots are opened, for the selected interface's endpoints only.
  * Unsupported ownership ioctls fail closed; no detach/reset/configuration write. */
 typedef struct {
-    int fd, claimed, initialized, busy[2], opened[2], dead;
+    int fd, claimed, initialized, busy[2], opened[2], dead, leased, output_dead;
     int iface_index;
     unsigned diagnostic_mask;
     DIR *directory;
@@ -113,11 +113,11 @@ typedef struct {
     struct usb_fs_endpoint endpoints[2];
     uint8_t buffers[2][64];
     void *pointers[2];
-    uint32_t lengths[2];
+    uint32_t lengths[2], requested[2];
     uint8_t received[64];
     unsigned received_length;
 } native_transport;
-static native_transport native = {.fd = -1};
+static native_transport natives[4];
 static void native_close(void *context)
 {
     native_transport *n = context;
@@ -140,20 +140,23 @@ static void native_close(void *context)
         n->directory = NULL;
     }
     n->fd = -1;
-    n->claimed = n->initialized = n->dead = 0;
+    n->claimed = n->initialized = n->dead = n->output_dead = 0;
     n->received_length = 0;
     memset(n->opened, 0, sizeof(n->opened));
     memset(n->busy, 0, sizeof(n->busy));
 }
 static int start(native_transport *n, unsigned slot, unsigned length)
 {
-    n->lengths[slot] = length;
+    n->lengths[slot] = n->requested[slot] = length;
     n->endpoints[slot].nFrames = 1;
     n->endpoints[slot].aFrames = 0;
     n->endpoints[slot].status = 0;
     struct usb_fs_start request = {(uint8_t)slot};
     if (ioctl(n->fd, USB_FS_START, &request) < 0) {
-        n->dead = 1;
+        if (slot == 1)
+            n->output_dead = 1;
+        else
+            n->dead = 1;
         return -1;
     }
     n->busy[slot] = 1;
@@ -175,7 +178,12 @@ static int pump(native_transport *n)
             return -1;
         }
         n->busy[slot] = 0;
-        if (n->endpoints[slot].status || n->lengths[slot] > 64) {
+        if (n->endpoints[slot].status || n->lengths[slot] > 64 ||
+            (slot == 1 && n->lengths[slot] != n->requested[slot])) {
+            if (slot == 1) {
+                n->output_dead = 1;
+                continue;
+            }
             n->dead = 1;
             return -1;
         }
@@ -198,6 +206,10 @@ static int open_candidate(native_transport *n, const char *node, uc_usb_device *
 {
     unsigned diagnostic = 0;
     const char *operation = "descriptor";
+    for (unsigned i = 0; i < 4; i++)
+        if (&natives[i] != n && natives[i].leased && natives[i].fd >= 0 &&
+            !strcmp(natives[i].device.node, node))
+            return 0;
     n->fd = open(node, O_RDWR | O_NONBLOCK);
     if (n->fd < 0)
         return 0;
@@ -336,7 +348,8 @@ static int native_read(void *context, uint8_t *buffer, size_t capacity)
 static int native_write(void *context, const uint8_t *buffer, size_t length)
 {
     native_transport *n = context;
-    if (n->fd < 0 || n->dead || !buffer || !length || length > 64 || pump(n) < 0)
+    if (n->fd < 0 || n->dead || n->output_dead || !buffer || !length || length > 64 ||
+        pump(n) < 0 || n->output_dead)
         return -1;
     if (n->busy[1])
         return 0;
@@ -365,11 +378,33 @@ static int native_alive(void *context)
 static const uc_usb_ops ops = {native_scan, native_read, native_write, native_alive, native_close};
 int uc_usb_transport_open(uc_usb_transport *out)
 {
-    if (!out || native.fd >= 0)
+    if (!out)
         return 0;
-    out->ops = &ops;
-    out->context = &native;
-    return 1;
+    for (unsigned i = 0; i < 4; i++) {
+        native_transport *n = &natives[i];
+        if (n->leased)
+            continue;
+        memset(n, 0, sizeof(*n));
+        n->fd = -1;
+        n->leased = 1;
+        out->ops = &ops;
+        out->context = n;
+        return 1;
+    }
+    memset(out, 0, sizeof(*out));
+    return 0;
+}
+void uc_usb_transport_release(uc_usb_transport *transport)
+{
+    if (!transport || transport->ops != &ops)
+        return;
+    for (unsigned i = 0; i < 4; i++)
+        if (transport->context == &natives[i] && natives[i].leased) {
+            native_close(&natives[i]);
+            natives[i].leased = 0;
+            break;
+        }
+    memset(transport, 0, sizeof(*transport));
 }
 #else
 int uc_usb_transport_open(uc_usb_transport *out)
@@ -377,5 +412,10 @@ int uc_usb_transport_open(uc_usb_transport *out)
     if (out)
         memset(out, 0, sizeof(*out));
     return 0;
+}
+void uc_usb_transport_release(uc_usb_transport *transport)
+{
+    if (transport)
+        memset(transport, 0, sizeof(*transport));
 }
 #endif

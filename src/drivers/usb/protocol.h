@@ -13,6 +13,10 @@ typedef struct {
     int xinput_known; /* Manager validates the XInput interface and native activation allowlist. */
     int led_sent;
     unsigned rejected_reports; /* Three malformed input packets fail the device. */
+    uint8_t rumble_strong, rumble_weak, rumble_packet[64];
+    unsigned rumble_length, rumble_attempts, rumble_stops;
+    int rumble_seen, rumble_sample, rumble_dirty, rumble_sent, rumble_failed;
+    uint64_t rumble_sample_at, rumble_sent_at, rumble_retry_at, rumble_queued_at;
     union {
         max_align_t align;
         uint8_t bytes[PROFILE_CTX_MAX];
@@ -21,6 +25,10 @@ typedef struct {
 void uc_usb_protocol_begin(uc_usb_protocol *, uc_usb_kind, uint64_t now);
 /* Advances at most one initialization command per call; 0 progress/ready, -1 failed. */
 int uc_usb_protocol_poll(uc_usb_protocol *, const uc_usb_transport *, uint64_t now);
+/* Queue a fresh motor sample, without I/O. 0 accepted, -1 unready/failed.
+ * poll is the sole writer: initialization/LED precede output, changed samples
+ * supersede unsent packets, and nonzero samples expire after 500ms. */
+int uc_usb_protocol_rumble(uc_usb_protocol *, uint8_t strong, uint8_t weak, uint64_t now);
 /* Returns 1 for a valid normalized input, 0 ACK/ignored, -1 fatal. */
 int uc_usb_protocol_feed(uc_usb_protocol *, const uint8_t *, size_t, pad_state *, uint64_t now);
 #endif

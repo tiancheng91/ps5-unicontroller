@@ -289,7 +289,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                      "\"pending\":true,\"bound\":false}");
             return;
         }
-        char status[2048];
+        char status[8192];
         if (!uc_usb_status_json(status, sizeof(status)))
             error_response(c, 503, "usb_status_overflow");
         else
@@ -305,8 +305,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 400, "invalid_user");
             return;
         }
-        if (usb_start_queued || uc_usb_running() || bt_start_queued || uc_bt_running() ||
-            uc_core_active_session() || enable_pending) {
+        if (usb_start_queued || uc_usb_running() || active_session || enable_pending) {
             error_response(c, 409, "disable_existing_source_first");
             return;
         }
@@ -350,8 +349,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 400, "invalid_user");
             return;
         }
-        if (bt_start_queued || uc_bt_running() || usb_start_queued || uc_usb_running() ||
-            uc_core_active_session() || enable_pending) {
+        if (bt_start_queued || uc_bt_running() || active_session || enable_pending) {
             error_response(c, 409, "disable_existing_source_first");
             return;
         }
@@ -385,6 +383,42 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "bluetooth_not_ready");
         else
             response(c, 200, "application/json", "{\"pairing\":true}");
+        return;
+    }
+    if (!strcmp(method, "POST") &&
+        (!strcmp(path, "/api/v1/bluetooth/assign") || !strcmp(path, "/api/v1/usb/assign"))) {
+        int wireless = !strcmp(path, "/api/v1/bluetooth/assign");
+        Json j;
+        int64_t slot, user;
+        const char *identity = wireless ? "address" : "node";
+        const char *keys[] = {"slot", identity, "user_id"};
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 3) ||
+            jint(&j, jget(&j, "slot"), 0, 3, &slot) ||
+            jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user)) {
+            error_response(c, 400, "invalid_assignment");
+            return;
+        }
+        int n = jget(&j, identity);
+        char device[128];
+        int len = n >= 0 ? j.t[n].end - j.t[n].start - 2 : 0;
+        if (n < 0 || j.t[n].kind != '"' || len <= 0 || len >= (int)sizeof(device)) {
+            error_response(c, 400, "invalid_device_identity");
+            return;
+        }
+        memcpy(device, j.s + j.t[n].start + 1, (size_t)len);
+        device[len] = 0;
+        /* Device identities are literal ASCII, never escaped JSON strings. */
+        if (strchr(device, '\\') || !uc_backend_can_start((int32_t)user)) {
+            error_response(c, 409, "signed_in_user_and_stable_awake_required");
+            return;
+        }
+        int rc = wireless ? uc_bt_assign((int)slot, device, (int32_t)user)
+                          : uc_usb_assign((unsigned)slot, device, (int32_t)user);
+        if (rc < 0)
+            error_response(c, 409, "device_or_user_unavailable");
+        else
+            response(c, rc == 2 ? 202 : 200, "application/json",
+                     rc == 2 ? "{\"pending\":true}" : "{\"assigned\":true}");
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/forget")) {
@@ -500,6 +534,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             uc_bt_set_log_level((unsigned)settings.recording);
             uc_bt_set_rumble_enabled(settings.rumble);
             uc_usb_set_log_level((unsigned)settings.recording);
+            uc_usb_set_rumble_enabled(settings.rumble);
             if (settings.recording >= 3)
                 fprintf(stderr, "[info] settings_saved\n");
         } else if (strcmp(method, "GET")) {
@@ -819,6 +854,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     uc_bt_set_log_level((unsigned)settings.recording);
     uc_bt_set_rumble_enabled(settings.rumble);
     uc_usb_set_log_level((unsigned)settings.recording);
+    uc_usb_set_rumble_enabled(settings.rumble);
     origin[0] = 0;
     for (int i = 0; i < CLIENTS; i++)
         clients[i].fd = -1;
@@ -852,7 +888,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         uc_bt_poll(millis());
         uc_usb_poll(millis());
         uc_core_tick(millis());
-        active_session = uc_core_active_session();
+        if (active_session && !uc_core_session_active(active_session))
+            active_session = 0;
         if (!active_session)
             active_user = -1;
         for (int count = 0; count < CLIENTS; count++) {

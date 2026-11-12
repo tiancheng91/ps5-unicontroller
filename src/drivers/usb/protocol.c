@@ -28,6 +28,93 @@ static void advance(uc_usb_protocol *p)
     if (p->step == 9)
         p->ready = 1;
 }
+int uc_usb_protocol_rumble(uc_usb_protocol *p, uint8_t strong, uint8_t weak, uint64_t now)
+{
+    if (!p || !p->ready || p->failed || p->rumble_failed ||
+        (p->kind != UC_USB_SWITCH && p->kind != UC_USB_XINPUT))
+        return -1;
+    int changed = !p->rumble_seen || p->rumble_strong != strong || p->rumble_weak != weak;
+    p->rumble_seen = 1;
+    p->rumble_sample = strong || weak;
+    p->rumble_sample_at = now;
+    if (changed) {
+        p->rumble_strong = strong;
+        p->rumble_weak = weak;
+        p->rumble_dirty = 1;
+        p->rumble_stops = strong || weak ? 0 : 3;
+        p->rumble_length = p->rumble_attempts = 0;
+    }
+    return 0;
+}
+static int rumble_fail(uc_usb_protocol *p)
+{
+    log_line("usb rumble: output disabled kind=%d; input remains enabled", p->kind);
+    p->rumble_failed = 1;
+    p->rumble_length = p->rumble_attempts = p->rumble_stops = 0;
+    p->rumble_sample = p->rumble_dirty = 0;
+    p->rumble_strong = p->rumble_weak = 0;
+    return 0;
+}
+static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
+{
+    if (p->rumble_failed)
+        return 0;
+    if (p->rumble_sample && (now < p->rumble_sample_at || now - p->rumble_sample_at >= 500)) {
+        /* Replace even an unsent active packet before attempting a stale write. */
+        p->rumble_strong = p->rumble_weak = 0;
+        p->rumble_sample = 0;
+        p->rumble_dirty = 1;
+        p->rumble_stops = 3;
+        p->rumble_length = p->rumble_attempts = 0;
+    }
+    int active = p->rumble_strong || p->rumble_weak;
+    if (!p->rumble_dirty && !p->rumble_stops && !active)
+        return 0;
+    if (!t || !t->ops || !t->ops->write)
+        return rumble_fail(p);
+    if (p->rumble_length) {
+        if (now < p->rumble_queued_at || now - p->rumble_queued_at >= 300 ||
+            p->rumble_attempts >= 16)
+            return rumble_fail(p);
+        if (now >= p->rumble_retry_at && now - p->rumble_retry_at < 20)
+            return 0;
+    } else {
+        /* A first stop bypasses rate limiting; repeated stops/refresh are bounded. */
+        if (p->rumble_sent && !(p->rumble_dirty && !active) && now >= p->rumble_sent_at &&
+            now - p->rumble_sent_at < 60)
+            return 0;
+        memset(p->rumble_packet, 0, sizeof(p->rumble_packet));
+        if (p->kind == UC_USB_SWITCH) {
+            const pad_profile *profile = profile_builtin_named("switch");
+            pad_output output = {.strong = p->rumble_strong, .weak = p->rumble_weak};
+            if (!profile || !profile->build_output ||
+                profile->build_output(p->context.bytes, &output, p->rumble_packet,
+                                      sizeof(p->rumble_packet)) != 10)
+                return rumble_fail(p);
+            p->rumble_length = 64; /* USB uses the same motor encoding, zero-padded. */
+        } else {
+            const uint8_t packet[8] = {0, 8, 0, p->rumble_strong, p->rumble_weak, 0, 0, 0};
+            memcpy(p->rumble_packet, packet, sizeof(packet));
+            p->rumble_length = sizeof(packet);
+        }
+        p->rumble_queued_at = now;
+        p->rumble_attempts = 0;
+    }
+    ++p->rumble_attempts;
+    p->rumble_retry_at = now;
+    int written = t->ops->write(t->context, p->rumble_packet, p->rumble_length);
+    if (written < 0 || (written > 0 && (unsigned)written != p->rumble_length))
+        return rumble_fail(p);
+    if (!written)
+        return 0;
+    p->rumble_length = p->rumble_attempts = 0;
+    p->rumble_sent = 1;
+    p->rumble_sent_at = now;
+    p->rumble_dirty = 0;
+    if (!active && p->rumble_stops)
+        --p->rumble_stops;
+    return 0;
+}
 int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
 {
     static const uint8_t commands[] = {1, 2, 3, 2, 4};
@@ -37,7 +124,7 @@ int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t
         if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
             return fail(p);
         if (p->led_sent)
-            return 0;
+            return p->ready ? rumble_poll(p, t, now) : 0;
         if (now < p->started || now - p->started >= INIT_DEADLINE_MS)
             return fail(p);
         /* Unknown VID/PID candidates receive no commands until a real 00/14
@@ -56,7 +143,7 @@ int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t
         return 0;
     }
     if (p->ready)
-        return 0;
+        return rumble_poll(p, t, now);
     if (now < p->started || now - p->started >= INIT_DEADLINE_MS)
         return fail(p);
     if (!t || !t->ops || !t->ops->write)

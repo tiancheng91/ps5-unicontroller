@@ -19,7 +19,7 @@ USB手柄 -> ugen接口/端点 -> Switch USB握手 或 XInput解析
 
 ## 运行边界
 
-- 默认关闭，选择独立已登录账号后手动启动；沿用明确工作状态持续5秒的门禁。先保持 USB、蓝牙、网页测试输入三者互斥和单输出，不并行创建多个来源。
+- 默认关闭，选择独立已登录账号后手动启动；沿用明确工作状态持续5秒的门禁。USB与蓝牙可同时运行，总计最多四个独立输出；虚拟设备识别/注册串行推进。网页测试输入仍独占。
 - 根据配置描述符选择匹配接口及 interrupt/bulk IN、OUT端点。
 - 仅处理明确支持的外部手柄；排除原装Sony手柄、内部蓝牙、Hub、存储等设备。不reset设备或detach已有系统驱动；接口占用、claim失败则退出该设备并记录原因，不继续读写。
 - Switch USB加入0x80/0x81握手、可选波特率、禁用USB超时，再复用Nintendo子命令和完整报告解析。ACK、步骤、重试、总初始化时间均受限，使用非阻塞状态机。
@@ -36,7 +36,7 @@ USB手柄 -> ugen接口/端点 -> Switch USB握手 或 XInput解析
 
 Switch握手等待ACK，单步250ms、最多3次、全程4.8秒，无sleep。已知XInput可发送LED激活，未知候选首帧前只读。连续3个无效输入报告拒绝该设备。USB接口只选择alt0、单interrupt IN/OUT对；不支持的布局暂时拒绝，不猜测端点。
 
-FreeBSD原生USB_FS收发只开选中设备的两个传输槽；USB_IFACE_DRIVER_ACTIVE、CLAIM_INTERFACE等所有权检查在PS5是否完整实现仍需实机。缺失/占用即拒绝，不通过detach绕过。未实现USB游戏震动回传。
+FreeBSD原生USB_FS收发只开选中设备的两个传输槽；USB_IFACE_DRIVER_ACTIVE、CLAIM_INTERFACE等所有权检查在PS5是否完整实现仍需实机。缺失/占用即拒绝，不通过detach绕过。已接入Switch及Xbox360/XInput游戏震动回传，初始化与震动共用输出调度，反馈超过500ms停止。具体型号需实机验证。
 
 ## FreeBSD、Linux参考
 

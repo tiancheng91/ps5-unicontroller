@@ -49,11 +49,31 @@ int sceKernelOpenEventFlag(intptr_t *, const char *);
 int sceKernelPollEventFlag(intptr_t, uint64_t, unsigned, uint64_t *);
 int sceKernelCloseEventFlag(intptr_t);
 static int (*bind_user)(uint64_t, int32_t);
+typedef int32_t (*remote_setting_fn)(int32_t, void *);
+static remote_setting_fn remote_setting;
+typedef struct {
+    int used, closing;
+    int32_t owner;
+    uint64_t device, token, feedback_at;
+    int feedback_polled, feedback_failed;
+} owned_output;
+static owned_output outputs[4];
+static int pending_slot = -1;
+static owned_output *find_output(uint64_t handle)
+{
+    if (!handle)
+        return NULL;
+    for (unsigned i = 0; i < 4; i++)
+        if (outputs[i].used && outputs[i].token == handle)
+            return &outputs[i];
+    return NULL;
+}
+
 static int ready, phase, fd = -1, matches, cancelled, discard_line, connection_pending, identified;
 static int raw_log, log_copy = -1;
 static size_t consumed;
 static int32_t owner = -1;
-static uint64_t device, started, matched, last_poll, serial = 1, token;
+static uint64_t device, started, matched, last_poll, serial = 1;
 static char line[1024];
 static size_t used;
 static uint64_t old_auth;
@@ -162,6 +182,13 @@ int uc_backend_init(void)
         backend_error(4, "scePadSetProcessPrivilege", rc);
         goto fail;
     }
+    void *pad = dlopen("/system/common/lib/libScePad.sprx", RTLD_NOW | RTLD_GLOBAL);
+    if (!pad)
+        pad = dlopen("libScePad.sprx", RTLD_NOW | RTLD_GLOBAL);
+    remote_setting =
+        pad ? (remote_setting_fn)dlsym(pad, "scePadVirtualDeviceGetRemoteSetting") : NULL;
+    fprintf(stderr, "UniController: game rumble feedback %s\n",
+            remote_setting ? "available" : "unavailable");
     ready = 1;
     last_poll = now_ms();
     return 0;
@@ -240,6 +267,11 @@ static void candidate(const char *text)
     }
     if (*p != ']' || !digits || !value)
         return;
+    /* Existing owned devices are never candidates for another creation. Raw
+     * ScePad handles use the low word, so reject that collision as well. */
+    for (unsigned i = 0; i < 4; i++)
+        if (outputs[i].used && (uint32_t)outputs[i].device == (uint32_t)value)
+            return;
     if (!matches) {
         device = value;
         matched = now_ms();
@@ -295,6 +327,16 @@ static int read_log(int identify)
     }
     return 0;
 }
+static void clear_pending(void)
+{
+    close_log();
+    phase = 0;
+    owner = -1;
+    device = 0;
+    identified = 0;
+    cancelled = 0;
+    pending_slot = -1;
+}
 int uc_backend_create(int32_t user, uint64_t *handle)
 {
     if (!handle)
@@ -308,46 +350,60 @@ int uc_backend_create(int32_t user, uint64_t *handle)
     }
     uint64_t current = now_ms();
     if (!working_since || current < working_since || current - working_since < 5000)
-        return 2; /* No AddDevice before five seconds of continuous working. */
+        return 2;
+    for (unsigned i = 0; i < 4; i++)
+        if (outputs[i].used && outputs[i].owner == user) {
+            if (outputs[i].closing)
+                return -1;
+            *handle = outputs[i].token;
+            if (phase == 4 && pending_slot == (int)i)
+                clear_pending(); /* Core has adopted this completed creation. */
+            return 0;
+        }
     if (phase && owner != user)
         return -2;
-    if (phase == 4) {
-        *handle = token;
-        return 0;
-    }
     if (phase == 5)
         return -1;
     if (!phase) {
+        int slot = -1;
+        for (unsigned i = 0; i < 4; i++)
+            if (!outputs[i].used) {
+                slot = (int)i;
+                break;
+            }
+        if (slot < 0 || serial == UINT64_MAX)
+            return -2;
         identified = 0;
         owner = user;
         cancelled = 0;
         matches = 0;
         device = 0;
+        pending_slot = slot;
         started = now_ms();
         if (open_log()) {
             backend_error(5, "open_identification_log", errno);
+            clear_pending();
             return -1;
         }
         phase = 1;
     }
     return 2;
 }
-static int neutral(void)
+static int neutral(uint64_t handle)
 {
     int16_t axes[4] = {0};
     uint16_t triggers[2] = {0};
-    return uc_backend_submit(token, 0, axes, triggers);
+    return uc_backend_submit(handle, 0, axes, triggers);
 }
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2])
 {
-    if (phase != 4 || !handle || handle != token || !axes || !triggers)
+    owned_output *output = find_output(handle);
+    if (!output || !axes || !triggers)
         return -1;
-    /* A logged-out user cannot receive new input. Exact owned-handle neutral
-     * frames remain legal so logout cannot prevent release and deletion. */
     int is_neutral = buttons == 0 && axes[0] == 0 && axes[1] == 0 && axes[2] == 0 && axes[3] == 0 &&
                      triggers[0] == 0 && triggers[1] == 0;
-    if (!is_neutral && !user_live(owner))
+    if (!is_neutral && (output->closing || !user_live(output->owner)))
         return -1;
     PadData d;
     memset(&d, 0, sizeof d);
@@ -361,53 +417,87 @@ int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
     d.connected = 1;
     d.count = 1;
     d.timestamp = now_ms() * 1000;
-    int32_t rc = scePadVirtualDeviceInsertData((int32_t)device, &d);
+    int32_t rc = scePadVirtualDeviceInsertData((int32_t)output->device, &d);
     if (rc != 0)
         backend_error(6, "scePadVirtualDeviceInsertData", rc);
     return rc == 0 ? 0 : -1;
 }
 int uc_backend_delete(uint64_t handle)
 {
+    if (handle) {
+        owned_output *output = find_output(handle);
+        if (!output)
+            return -1;
+        output->closing = 1;
+        (void)neutral(handle);
+        int32_t rc = scePadVirtualDeviceDeleteDevice((int32_t)output->device);
+        if (rc != 0) {
+            backend_error(7, "scePadVirtualDeviceDeleteDevice", rc);
+            return -1;
+        }
+        int completed_pending = phase == 4 && pending_slot >= 0 && output == &outputs[pending_slot];
+        memset(output, 0, sizeof(*output));
+        if (completed_pending)
+            clear_pending();
+        return 0;
+    }
+    /* Zero never names a ready output. It only cancels the shared creation. */
     if (!phase)
-        return handle ? -1 : 0;
-    if (phase == 5 && identified && handle == 0) {
-        int32_t rc = scePadVirtualDeviceDeleteDevice((int32_t)device);
-        if (rc != 0) {
-            backend_error(7, "scePadVirtualDeviceDeleteDevice", rc);
-            return -1;
-        }
-        identified = 0;
-        phase = 0;
-        device = 0;
-        owner = -1;
         return 0;
-    }
     if (phase == 4) {
-        if (handle != token && handle != 0)
+        if (pending_slot < 0 || pending_slot >= 4 || !outputs[pending_slot].used)
             return -1;
-        (void)neutral();
-        int32_t rc = scePadVirtualDeviceDeleteDevice((int32_t)device);
-        if (rc != 0) {
-            backend_error(7, "scePadVirtualDeviceDeleteDevice", rc);
-            return -1;
-        }
-        phase = 0;
-        token = 0;
-        device = 0;
-        identified = 0;
-        owner = -1;
-        return 0;
+        return uc_backend_delete(outputs[pending_slot].token);
     }
-    if (handle)
-        return -1;
     if (phase == 3) {
         cancelled = 1;
         return 2;
     }
-    close_log();
-    phase = 0;
-    owner = -1;
+    if (identified) {
+        int32_t rc = scePadVirtualDeviceDeleteDevice((int32_t)device);
+        if (rc != 0) {
+            backend_error(7, "scePadVirtualDeviceDeleteDevice", rc);
+            return -1;
+        }
+    }
+    clear_pending();
     return 0;
+}
+int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8_t *weak)
+{
+    if (strong)
+        *strong = 0;
+    if (weak)
+        *weak = 0;
+    owned_output *output = find_output(handle);
+    if (!output || !strong || !weak)
+        return -1;
+    if (output->closing || !user_live(output->owner) || power_status != 0)
+        return 0;
+    if (!remote_setting || output->feedback_failed)
+        return 0;
+    if (output->feedback_polled && now < output->feedback_at)
+        return -1;
+    if (output->feedback_polled && now - output->feedback_at < 16)
+        return 0;
+    output->feedback_polled = 1;
+    output->feedback_at = now;
+    /* Proven classic-motor layout from ps5_vpad.c c210fe6: keep the aligned
+     * 256-byte remote-setting buffer, read motor bytes 3/4, ignore transient
+     * update flags. No adaptive-trigger or haptic-audio ABI is inferred. */
+    union {
+        uint64_t align;
+        uint8_t bytes[256];
+    } setting = {0};
+    int32_t rc = remote_setting((int32_t)output->device, setting.bytes);
+    if (rc != 0) {
+        output->feedback_failed = 1;
+        backend_error(11, "scePadVirtualDeviceGetRemoteSetting", rc);
+        return -1;
+    }
+    *strong = setting.bytes[3];
+    *weak = setting.bytes[4];
+    return 1;
 }
 void uc_backend_poll(void)
 {
@@ -518,20 +608,31 @@ void uc_backend_poll(void)
                 device = 0;
                 identified = 0;
                 owner = -1;
+                pending_slot = -1;
             } else {
                 backend_error(7, "scePadVirtualDeviceDeleteDevice", -1);
                 phase = 5;
             }
             return;
         }
-        token = serial++;
-        if (!token) {
-            phase = 5;
+        if (pending_slot < 0 || pending_slot >= 4 || outputs[pending_slot].used ||
+            serial == UINT64_MAX) {
+            cancelled = 1;
+            (void)uc_backend_delete(0);
             return;
         }
-        phase = 4;
-        if (neutral())
-            (void)uc_backend_delete(token);
+        owned_output *output = &outputs[pending_slot];
+        memset(output, 0, sizeof(*output));
+        output->used = 1;
+        output->owner = owner;
+        output->device = device;
+        output->token = serial++;
+        uint64_t handle = output->token;
+        phase = 4; /* Still pending delivery until create returns the token. */
+        /* The core repeats neutral before publishing its session. Keep this
+         * owned handle discoverable if the first write fails, so that core
+         * cleanup can retain/retry deletion rather than orphaning it. */
+        (void)neutral(handle);
     }
 }
 int uc_backend_suspend(void)
@@ -554,6 +655,12 @@ void uc_backend_shutdown(void)
     (void)uc_backend_delete(0);
     if (phase == 5 && !identified)
         fprintf(stderr, "UniController: unidentified virtual device may require console restart\n");
+    for (unsigned i = 0; i < 4; i++)
+        if (outputs[i].used) {
+            uint64_t handle = outputs[i].token;
+            if (uc_backend_delete(handle) != 0)
+                fprintf(stderr, "UniController: owned virtual output cleanup failed\n");
+        }
     close_log();
     if (power_flag >= 0)
         sceKernelCloseEventFlag(power_flag);
@@ -568,7 +675,7 @@ void uc_backend_shutdown(void)
 
 int uc_backend_cancel_pending(void)
 {
-    return phase == 4 ? 0 : uc_backend_delete(0);
+    return uc_backend_delete(0);
 }
 
 int uc_backend_power_state(void)

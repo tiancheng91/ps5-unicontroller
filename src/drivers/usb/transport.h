@@ -32,4 +32,6 @@ typedef struct {
 } uc_usb_transport;
 /* PS5 native adapter. Host builds return unsupported (0), never fake devices. */
 int uc_usb_transport_open(uc_usb_transport *out);
+/* End a native transport lease; close() alone keeps its scan context reusable. */
+void uc_usb_transport_release(uc_usb_transport *transport);
 #endif

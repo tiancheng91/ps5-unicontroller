@@ -106,7 +106,7 @@ function btMessage(message, error = false) {
   $("bt-status").classList.toggle("error", error);
 }
 function usbRunning() {
-  return !!(usb && (usb.state === "on" || usb.pending || usb.bound));
+  return !!(usb && (["starting", "on"].includes(usb.state) || usb.pending || usb.bound));
 }
 function btRunning() {
   return !!(bluetooth && ["starting", "on"].includes(bluetooth.state));
@@ -121,7 +121,7 @@ function canStart(source) {
   if (!sourcesReady || !usb || !bluetooth || usbBusy || btBusy || enabling) return false;
   if (source === "test") return !usbRunning() && !btRunning();
   if (!stableUser() || virtualRunning()) return false;
-  return !usbRunning() && !btRunning();
+  return source === "usb" ? !usbRunning() : !btRunning();
 }
 function updateActionButtons() {
   $("enable").disabled = !canStart("test");
@@ -149,14 +149,14 @@ function usbMessage(message, error = false) {
 function renderUsb(data) {
   if (
     !data ||
-    !["off", "on", "failed"].includes(data.state) ||
+    !["off", "starting", "on", "failed"].includes(data.state) ||
     !Array.isArray(data.devices) ||
     typeof data.pending !== "boolean" ||
     typeof data.bound !== "boolean"
   )
     throw Error("USB 状态结构无效");
   usb = data;
-  const labels = { off: "已关闭", on: "运行中", failed: "USB 失败" };
+  const labels = { off: "已关闭", starting: "正在启动", on: "运行中", failed: "USB 失败" };
   usbMessage(
     labels[data.state] +
       (data.pending ? " · 输出绑定中" : "") +
@@ -176,11 +176,12 @@ function renderUsb(data) {
       "div",
       "输入帧 " + device.input_frames + " · " + (device.bound ? "已绑定账号" : "未绑定"),
     );
+    addAssignment(card, device, false);
   }
   if (!data.devices.length) addText($("usb-devices"), "p", "当前没有 USB 手柄。");
   updateActionButtons();
 }
-async function usbAction(path) {
+async function usbAction(path, body) {
   if (usbBusy || (path === "/start" && !canStart("usb"))) return;
   usbBusy = true;
   const operation = ++usbEpoch;
@@ -189,7 +190,7 @@ async function usbAction(path) {
     await api(
       "/usb" + path,
       "POST",
-      path === "/start" ? { user_id: Number($("user").value) } : undefined,
+      path === "/start" ? { user_id: Number($("user").value) } : body,
     );
     const latest = await api("/usb");
     if (operation === usbEpoch) renderUsb(latest);
@@ -213,6 +214,22 @@ function addText(parent, tag, text, className) {
   if (className) node.className = className;
   parent.append(node);
   return node;
+}
+function addAssignment(card, device, wireless) {
+  addText(
+    card,
+    "div",
+    "账号 " +
+      (device.user_id > 0 ? device.user_id : "待选择") +
+      (device.pending ? " · 绑定中" : ""),
+  );
+  const button = addText(card, "button", "绑定到上方所选账号");
+  button.disabled = !stableUser() || btBusy || usbBusy;
+  button.onclick = () => {
+    const body = { slot: device.slot, user_id: Number($("user").value) };
+    body[wireless ? "address" : "node"] = wireless ? device.address : device.node;
+    return wireless ? bluetoothAction("/assign", body) : usbAction("/assign", body);
+  };
 }
 function renderBluetooth(data) {
   if (
@@ -253,6 +270,7 @@ function renderBluetooth(data) {
       "div",
       "输入帧 " + device.input_frames + " · " + (device.bound ? "已绑定账号" : "未绑定"),
     );
+    addAssignment(card, device, true);
     addText(card, "div", Number(device.battery) >= 0 ? "电量 " + device.battery + "%" : "电量未知");
   }
   if (!data.devices.length) addText($("bt-devices"), "p", "当前没有连接的蓝牙手柄。");

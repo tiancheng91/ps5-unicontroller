@@ -127,10 +127,7 @@ const settle = () => new Promise((r) => setImmediate(r));
   assert(!get("usb-start").disabled);
   bt.state = "on";
   await vm.runInContext("refresh()", context);
-  assert(get("usb-start").disabled);
-  const count = calls.length;
-  await get("usb-start").onclick();
-  assert.equal(calls.length, count);
+  assert(!get("usb-start").disabled, "Bluetooth permits concurrent USB");
   bt.state = "off";
   virtualEnabled = true;
   await vm.runInContext("refresh()", context);
@@ -148,8 +145,8 @@ const settle = () => new Promise((r) => setImmediate(r));
   releaseStart();
   await starting;
   assert(
-    get("bt-start").disabled && get("enable").disabled && get("usb-start").disabled,
-    "pending binding remains exclusive",
+    !get("bt-start").disabled && get("enable").disabled && get("usb-start").disabled,
+    "physical transports coexist while phone output remains exclusive",
   );
   usb = {
     ...usb,
@@ -157,6 +154,8 @@ const settle = () => new Promise((r) => setImmediate(r));
     bound: true,
     devices: [
       {
+        slot: 0,
+        user_id: 1,
         node: "<img src=x>",
         vid: 123,
         pid: 456,
@@ -176,6 +175,9 @@ const settle = () => new Promise((r) => setImmediate(r));
     get("usb-devices").children[0].children[0].textContent,
     "GameSir Nova 2 Lite Receiver",
   );
+  await get("usb-devices").querySelectorAll("button")[0].onclick();
+  const assignment = calls.find((c) => c.url.endsWith("/usb/assign"));
+  assert.deepEqual(assignment.body, { slot: 0, user_id: 1, node: "<img src=x>" });
   await get("usb-stop").onclick();
   assert(!get("bt-start").disabled && !get("enable").disabled);
   failUsb = true;

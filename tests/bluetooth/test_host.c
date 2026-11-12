@@ -571,6 +571,26 @@ static void test_switch_pad(void)
             CHECK(memcmp(out + 3, motors, sizeof motors) == 0); /* Resume latest game values. */
             CHECK(sim_output_min_gap(sim) >= 60);
         }
+        printf("rumble disable: cancel test/game motors without changing lights\n");
+        {
+            pad_output lights = {.r = 1, .g = 2, .b = 3, .player = 2};
+            CHECK(host_set_output(h, s.slot, &lights));
+            CHECK(host_rumble_feedback(h, s.slot, 64, 32));
+            CHECK(host_rumble_pulse(h, s.slot, 500));
+            run(h, 100);
+            CHECK(!host_rumble_stop(NULL, s.slot));
+            CHECK(!host_rumble_stop(h, -1));
+            CHECK(host_rumble_stop(h, s.slot));
+            CHECK(h->links[s.slot].out.r == 1 && h->links[s.slot].out.g == 2 &&
+                  h->links[s.slot].out.b == 3 && h->links[s.slot].out.player == 2);
+            CHECK(!h->links[s.slot].game_until && !h->links[s.slot].rumble_until);
+            run(h, 400);
+            CHECK(sim_last_output(sim, out, sizeof out) == 11);
+            CHECK(memcmp(out + 3, neutral, sizeof neutral) == 0);
+            before = sim_output_attempts(sim);
+            run(h, 1000);
+            CHECK(sim_output_attempts(sim) == before); /* Old feedback cannot restart motors. */
+        }
         sim_disconnect(sim);
         run(h, 100);
         before = sim_output_attempts(sim);

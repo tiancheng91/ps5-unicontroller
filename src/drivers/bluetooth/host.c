@@ -1693,6 +1693,16 @@ int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak)
     return set_rumble(h, l, strong, weak);
 }
 
+int host_rumble_stop(host_t *h, int slot)
+{
+    if (!host_output_ready(h, slot))
+        return 0;
+    link_t *l = &h->links[slot];
+    l->game_until = l->rumble_until = 0;
+    l->game_strong = l->game_weak = 0;
+    return set_rumble(h, l, 0, 0);
+}
+
 int host_rumble_pulse(host_t *h, int slot, int ms)
 {
     link_t *l;

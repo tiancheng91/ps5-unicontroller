@@ -79,12 +79,14 @@ static void xbox(void)
 }
 typedef struct {
     int writes, block, short_write;
+    size_t length;
     uint8_t bytes[64];
 } mock;
 static int write_mock(void *context, const uint8_t *bytes, size_t length)
 {
     mock *m = context;
     ++m->writes;
+    m->length = length;
     memcpy(m->bytes, bytes, length);
     if (m->block)
         return 0;
@@ -193,8 +195,66 @@ static void switch_protocol(void)
     m.short_write = 1;
     assert(uc_usb_protocol_poll(&p, &transport, 0) < 0);
 }
+static void rumble_output(void)
+{
+    uc_usb_protocol p;
+    mock m = {0};
+    uc_usb_transport t = {&mock_ops, &m};
+    uc_usb_protocol_begin(&p, UC_USB_XINPUT, 0);
+    assert(uc_usb_protocol_rumble(&p, 100, 200, 0) < 0 && !m.writes);
+    p.ready = 1;
+    assert(!uc_usb_protocol_rumble(&p, 100, 200, 1));
+    assert(!uc_usb_protocol_poll(&p, &t, 1) && m.length == 3); /* LED owns first TX. */
+    assert(!uc_usb_protocol_poll(&p, &t, 2) && m.length == 8);
+    const uint8_t expected[8] = {0, 8, 0, 100, 200, 0, 0, 0};
+    assert(!memcmp(m.bytes, expected, sizeof(expected)));
+    int written = m.writes;
+    assert(!uc_usb_protocol_poll(&p, &t, 3) && m.writes == written);
+    assert(!uc_usb_protocol_rumble(&p, 100, 200, 450));
+    assert(!uc_usb_protocol_poll(&p, &t, 501) && m.bytes[3] == 100);
+    assert(!uc_usb_protocol_poll(&p, &t, 950) && m.bytes[3] == 0 && m.bytes[4] == 0);
+    assert(!uc_usb_protocol_poll(&p, &t, 1010));
+    assert(!uc_usb_protocol_poll(&p, &t, 1070));
+    written = m.writes;
+    assert(!uc_usb_protocol_poll(&p, &t, 1130) &&
+           m.writes == written); /* Three stops, not forever. */
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH, 0);
+    p.ready = 1;
+    m = (mock){0};
+    assert(!uc_usb_protocol_rumble(&p, 255, 128, 0));
+    m.block = 1;
+    assert(!uc_usb_protocol_poll(&p, &t, 0) && m.length == 64 && m.bytes[0] == 0x10);
+    uint8_t packet[64];
+    memcpy(packet, m.bytes, sizeof(packet));
+    assert(!uc_usb_protocol_poll(&p, &t, 20) && !memcmp(packet, m.bytes, sizeof(packet)));
+    m.block = 0;
+    assert(!uc_usb_protocol_poll(&p, &t, 40) && !memcmp(packet, m.bytes, sizeof(packet)));
+    for (unsigned i = 10; i < 64; i++)
+        assert(m.bytes[i] == 0);
+    assert(!uc_usb_protocol_rumble(&p, 0, 0, 41));
+    assert(!uc_usb_protocol_poll(&p, &t, 41)); /* Stop bypasses 60ms active refresh limit. */
+    const uint8_t neutral[4] = {0, 1, 0x40, 0x40};
+    assert(!memcmp(m.bytes + 2, neutral, 4) && !memcmp(m.bytes + 6, neutral, 4));
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH, 0);
+    p.ready = 1;
+    m.block = 1;
+    assert(!uc_usb_protocol_rumble(&p, 255, 255, 0));
+    assert(!uc_usb_protocol_poll(&p, &t, 0));
+    assert(!uc_usb_protocol_poll(&p, &t, 300) && p.rumble_failed && p.ready &&
+           !p.failed); /* Input survives feedback backpressure. */
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH, 0);
+    p.ready = 1;
+    m.block = 1;
+    assert(!uc_usb_protocol_rumble(&p, 255, 255, 0));
+    assert(!uc_usb_protocol_poll(&p, &t, 0));
+    m.block = 0;
+    assert(
+        !uc_usb_protocol_poll(&p, &t, 500)); /* Stale queued active output is replaced by stop. */
+    assert(!memcmp(m.bytes + 2, neutral, 4));
+}
 int main(void)
 {
+    rumble_output();
     selection();
     xbox();
     switch_protocol();

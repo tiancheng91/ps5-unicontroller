@@ -6,17 +6,22 @@
 extern int uc_backend_create(int32_t, uint64_t *);
 extern int uc_backend_submit(uint64_t, uint32_t, const int16_t[4], const uint16_t[2]);
 extern int uc_backend_delete(uint64_t);
+extern int uc_backend_read_rumble(uint64_t, uint64_t, uint8_t *, uint8_t *);
 #define LOG_COUNT 128u
 struct log_entry {
     uint64_t timestamp, generation, session;
     uint8_t level;
     const char *code;
 };
+struct core_session {
+    uint64_t id, handle, last_input, sequence;
+    int32_t user;
+    int physical, have_sequence, neutral, closing, pending;
+};
 static struct {
-    uint64_t session, serial, handle, last_input, clock, generation;
-    uint64_t sequence, dropped;
-    int have_sequence, neutral, closing, pending, suspended;
-    int32_t pending_user;
+    struct core_session sessions[UC_CORE_MAX_SESSIONS];
+    uint64_t serial, clock, generation, dropped;
+    int suspended;
     uint8_t recording, swap, mapping[32];
     int configured;
     struct log_entry logs[LOG_COUNT];
@@ -36,10 +41,14 @@ static void log_event(uint8_t level, const char *code, uint64_t session)
         index = (state.log_start + state.log_count++) % LOG_COUNT;
     state.logs[index] = (struct log_entry){state.clock, state.generation, session, level, code};
 }
+static int fail_session(const char *code, uint64_t session)
+{
+    log_event(UC_LOG_ERROR, code, session);
+    return -1;
+}
 static int fail(const char *code)
 {
-    log_event(UC_LOG_ERROR, code, state.session);
-    return -1;
+    return fail_session(code, 0);
 }
 static int observe(uint64_t now)
 {
@@ -48,69 +57,140 @@ static int observe(uint64_t now)
     state.clock = now;
     return 0;
 }
-static int neutralize(void)
+static struct core_session *find_session(uint64_t id)
+{
+    if (!id)
+        return NULL;
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id == id)
+            return &state.sessions[i];
+    return NULL;
+}
+static int occupied(void)
+{
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id)
+            return 1;
+    return 0;
+}
+static int neutralize(struct core_session *s)
 {
     const int16_t axes[4] = {0};
     const uint16_t triggers[2] = {0};
-    if (uc_backend_submit(state.handle, 0, axes, triggers))
-        return fail("neutral_failed");
-    state.neutral = 1;
+    if (uc_backend_submit(s->handle, 0, axes, triggers))
+        return fail_session("neutral_failed", s->id);
+    s->neutral = 1;
     return 0;
 }
-int uc_core_enable(int32_t user, uint64_t now, uint64_t *session)
+static int remove_session(struct core_session *s)
+{
+    s->closing = 1;
+    if (s->pending) {
+        /* Backend handle zero cancels only the single serialized creation. */
+        if (uc_backend_delete(0))
+            return fail_session("cancel_failed", s->id);
+        log_event(UC_LOG_INFO, "pending_cancelled", s->id);
+    } else {
+        /* Rest may invalidate input writes. Still attempt owned removal. */
+        if (!s->neutral)
+            (void)neutralize(s);
+        if (uc_backend_delete(s->handle))
+            return fail_session("delete_failed", s->id);
+        log_event(UC_LOG_INFO, "disabled", s->id);
+    }
+    memset(s, 0, sizeof *s);
+    return 0;
+}
+static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
 {
     if (!session)
         return fail("invalid_session_output");
+    uint64_t retry_token = physical ? *session : 0;
     *session = 0;
     if (observe(now))
         return -1;
     if (user <= 0)
         return fail("invalid_user");
-    if (state.session || state.closing || (state.pending && state.pending_user != user)) {
-        log_event(UC_LOG_WARN, "enable_busy", state.session);
-        return 2;
+    struct core_session *candidate = NULL, *free_slot = NULL;
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i) {
+        struct core_session *s = &state.sessions[i];
+        if (!s->id) {
+            if (!free_slot)
+                free_slot = s;
+            continue;
+        }
+        if (s->pending && s->user == user && s->physical == physical && !s->closing &&
+            (!physical || retry_token == s->id))
+            candidate = s;
+        else if (!physical || !s->physical || s->user == user || s->pending || state.suspended) {
+            log_event(UC_LOG_TRACE, "enable_busy", s->id);
+            return 2;
+        }
     }
-    if (state.serial == UINT64_MAX)
-        return fail("session_exhausted");
+    if (!candidate) {
+        if (physical && retry_token)
+            return fail_session("stale_creation_retry", retry_token);
+        if (!free_slot)
+            return 2;
+        if (state.serial == UINT64_MAX)
+            return fail("session_exhausted");
+        candidate = free_slot;
+        *candidate = (struct core_session){
+            .id = state.serial++, .user = user, .physical = physical, .pending = 1};
+    }
     uint64_t handle = 0;
     int result = uc_backend_create(user, &handle);
     if (result == 2) {
-        state.pending = 1;
-        state.pending_user = user;
+        if (physical)
+            *session = candidate->id;
         return 2;
     }
-    if (result)
-        return fail("create_failed");
-    state.pending = 0;
-    state.handle = handle;
-    state.session = state.serial++;
-    state.closing = 1;
-    state.neutral = 0;
-    state.have_sequence = 0;
-    state.last_input = now;
-    if (neutralize()) {
-        (void)uc_core_disable();
+    if (result) {
+        /* A backend may still own a failed partially created device. Reserve
+         * this user and block new creation until explicit cancellation succeeds. */
+        candidate->closing = 1;
+        if (physical)
+            *session = candidate->id;
+        return fail_session("create_failed", candidate->id);
+    }
+    candidate->pending = 0;
+    candidate->handle = handle;
+    candidate->closing = 1;
+    candidate->last_input = now;
+    if (neutralize(candidate)) {
+        (void)remove_session(candidate);
+        if (physical && candidate->id)
+            *session = candidate->id;
         return -1;
     }
-    state.closing = 0;
+    candidate->closing = 0;
     if (state.suspended)
-        log_event(UC_LOG_INFO, "resumed", state.session);
+        log_event(UC_LOG_INFO, "resumed", candidate->id);
     state.suspended = 0;
-    *session = state.session;
-    log_event(UC_LOG_INFO, "enabled", state.session);
+    *session = candidate->id;
+    log_event(UC_LOG_INFO, "enabled", candidate->id);
     return 0;
+}
+int uc_core_enable(int32_t user, uint64_t now, uint64_t *session)
+{
+    return enable(user, now, session, 0);
+}
+int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *session)
+{
+    return enable(user, now, session, 1);
 }
 int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16_t axes[4],
                    const uint16_t triggers[2], uint64_t now)
 {
     if (observe(now))
         return -1;
-    if (!session || session != state.session || (state.have_sequence && seq <= state.sequence)) {
+    struct core_session *s = find_session(session);
+    if (!s || (s->have_sequence && seq <= s->sequence)) {
         log_event(UC_LOG_WARN, "stale_input", session);
         return -1;
     }
-    if (state.closing || state.suspended || !axes || !triggers)
-        return fail("input_rejected");
+    if (s->closing || s->pending || state.suspended || !axes || !triggers)
+        return fail_session("input_rejected", session);
     if (state.swap) {
         uint32_t a = buttons & (UINT32_C(1) << 14), b = buttons & (UINT32_C(1) << 13);
         buttons = (buttons & ~((UINT32_C(1) << 14) | (UINT32_C(1) << 13))) | (a >> 1) | (b << 1);
@@ -119,68 +199,70 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
     for (unsigned i = 0; i < 32; ++i)
         if (buttons & (UINT32_C(1) << i))
             mapped |= UINT32_C(1) << (state.configured ? state.mapping[i] : i);
-    if (uc_backend_submit(state.handle, mapped, axes, triggers))
-        return fail("submit_failed");
-    state.sequence = seq;
-    state.have_sequence = 1;
-    state.last_input = now;
-    state.neutral =
+    if (uc_backend_submit(s->handle, mapped, axes, triggers))
+        return fail_session("submit_failed", session);
+    s->sequence = seq;
+    s->have_sequence = 1;
+    s->last_input = now;
+    s->neutral =
         !mapped && !axes[0] && !axes[1] && !axes[2] && !axes[3] && !triggers[0] && !triggers[1];
     log_event(UC_LOG_TRACE, "input_accepted", session);
     return 0;
 }
+int uc_core_disable_session(uint64_t session)
+{
+    struct core_session *s = find_session(session);
+    if (!s) {
+        (void)fail_session("stale_session", session);
+        return -2;
+    }
+    return remove_session(s);
+}
 int uc_core_disable(void)
 {
-    if (state.pending) {
-        state.closing = 1;
-        if (uc_backend_delete(0))
-            return fail("cancel_failed");
-        state.pending = 0;
-        state.closing = 0;
-        log_event(UC_LOG_INFO, "pending_cancelled", 0);
-    }
-    if (!state.session)
-        return 0;
-    state.closing = 1;
-    /* Rest may invalidate input submission before deletion. Always attempt
-     * removal of our owned device even when the final neutral frame fails. */
-    if (!state.neutral)
-        (void)neutralize();
-    if (uc_backend_delete(state.handle))
-        return fail("delete_failed");
-    log_event(UC_LOG_INFO, "disabled", state.session);
-    state.session = 0;
-    state.handle = 0;
-    state.closing = 0;
-    return 0;
+    int result = 0;
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id && remove_session(&state.sessions[i]))
+            result = -1;
+    return result;
 }
 int uc_core_refresh_source(uint64_t session, uint64_t now)
 {
     if (observe(now))
         return -1;
-    if (!session || session != state.session || !state.have_sequence || state.closing ||
-        state.suspended)
-        return fail("source_lease_rejected");
-    if (now - state.last_input >= 500) {
-        if (!state.neutral && neutralize())
+    struct core_session *s = find_session(session);
+    if (!s || !s->have_sequence || s->closing || s->pending || state.suspended)
+        return fail_session("source_lease_rejected", session);
+    if (now - s->last_input >= 500) {
+        if (!s->neutral && neutralize(s))
             return -1;
-        return fail("source_lease_expired");
+        return fail_session("source_lease_expired", session);
     }
-    state.last_input = now;
+    s->last_input = now;
     return 0;
 }
 int uc_core_tick(uint64_t now)
 {
     if (observe(now))
         return -1;
-    if (state.closing)
-        return uc_core_disable();
-    if (state.session && !state.neutral && now - state.last_input >= 500) {
-        if (neutralize())
-            return -1;
-        log_event(UC_LOG_INFO, "released", state.session);
+    int result = 0;
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i) {
+        struct core_session *s = &state.sessions[i];
+        if (!s->id)
+            continue;
+        if (s->closing) {
+            if (remove_session(s))
+                result = -1;
+            continue;
+        }
+        if (!s->pending && !s->neutral && now - s->last_input >= 500) {
+            if (neutralize(s))
+                result = -1;
+            else
+                log_event(UC_LOG_INFO, "released", s->id);
+        }
     }
-    return 0;
+    return result;
 }
 int uc_core_suspend(void)
 {
@@ -189,13 +271,43 @@ int uc_core_suspend(void)
             return fail("generation_exhausted");
         ++state.generation;
         state.suspended = 1;
-        log_event(UC_LOG_INFO, "suspended", state.session);
+        log_event(UC_LOG_INFO, "suspended", 0);
     }
     return uc_core_disable();
 }
 uint64_t uc_core_active_session(void)
 {
-    return state.session;
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id && !state.sessions[i].pending)
+            return state.sessions[i].id;
+    return 0;
+}
+int uc_core_session_active(uint64_t session)
+{
+    const struct core_session *s = find_session(session);
+    return s && !s->pending && !s->closing && !state.suspended;
+}
+int uc_core_read_rumble(uint64_t session, uint64_t now, uint8_t *strong, uint8_t *weak)
+{
+    if (strong)
+        *strong = 0;
+    if (weak)
+        *weak = 0;
+    if (!strong || !weak || observe(now))
+        return -1;
+    const struct core_session *s = find_session(session);
+    if (!s)
+        return fail_session("stale_rumble", session);
+    if (!uc_core_session_active(session))
+        return 0;
+    int result = uc_backend_read_rumble(s->handle, now, strong, weak);
+    if (result != 1) {
+        *strong = 0;
+        *weak = 0;
+    }
+    if (result < 0)
+        return fail_session("rumble_failed", session);
+    return result;
 }
 int uc_core_settings(uint8_t recording, uint8_t swap, const uint8_t mapping[32])
 {
@@ -204,7 +316,7 @@ int uc_core_settings(uint8_t recording, uint8_t swap, const uint8_t mapping[32])
     for (unsigned i = 0; i < 32; ++i)
         if (mapping[i] > 31)
             return fail("invalid_mapping");
-    if (state.session || state.pending || state.closing)
+    if (occupied())
         return 2;
     state.recording = recording;
     state.swap = swap;

@@ -1,4 +1,4 @@
-/* One physical source, one explicitly selected PS5 user, no synthetic input heartbeat. */
+/* Per-device physical sessions; only the first source inherits the start account. */
 #include "bt.h"
 #include "common/log.h"
 #include "protocols/profiles.h"
@@ -6,6 +6,7 @@
 #include "../ps5/uc_backend.h"
 #ifdef UC_PS5
 #include "bluetooth/hci_usb.h"
+#include "common/util.h"
 #endif
 #include <stdio.h>
 #include <string.h>
@@ -22,7 +23,9 @@ typedef struct {
     char profile[64];
     pad_state latest;
     uint64_t last_input, frames, connected_at;
-    int notice_pending;
+    int notice_pending, pending, closing, assigning;
+    int32_t user, next_user;
+    uint64_t session, sequence, submitted;
 } Slot;
 static struct {
     host_t *host;
@@ -30,8 +33,8 @@ static struct {
     char database[256];
     Slot slots[HOST_MAX_PADS];
     int32_t user;
-    int selected, stopping, pending, opening;
-    uint64_t now, session, sequence, submitted;
+    int selected, stopping, opening;
+    uint64_t now;
     const char *error;
 } bt = {.selected = -1, .user = -1};
 static int valid_slot(int slot)
@@ -44,8 +47,11 @@ void uc_bt_set_rumble_enabled(int enabled)
 {
     rumble_enabled = enabled != 0;
     if (!rumble_enabled) {
-        for (int i = 0; i < HOST_MAX_PADS; i++)
+        for (int i = 0; i < HOST_MAX_PADS; i++) {
             bt.slots[i].notice_pending = 0;
+            if (bt.host && bt.slots[i].connected)
+                (void)host_rumble_stop(bt.host, i);
+        }
     }
 }
 void uc_bt_set_log_level(unsigned level)
@@ -60,20 +66,31 @@ static void log_code(const char *code)
     if (recording_level >= 3)
         fprintf(stderr, "[bluetooth] %s\n", code);
 }
-static int own_output(void)
+static int own_output(const Slot *s)
 {
-    return bt.session && uc_core_active_session() == bt.session;
+    return s->session && !s->pending && uc_core_session_active(s->session);
 }
-static int cleanup_output(void)
+static int cleanup_output(Slot *s)
 {
-    if (bt.pending || own_output()) {
-        if (uc_core_disable())
+    if (s->session) {
+        int rc = uc_core_disable_session(s->session);
+        if (rc && rc != -2) {
+            s->closing = 1;
             return 2;
+        }
     }
-    bt.pending = 0;
-    bt.session = 0;
-    bt.sequence = 0;
-    bt.submitted = 0;
+    s->pending = 0;
+    s->closing = 0;
+    s->session = 0;
+    s->sequence = 0;
+    s->submitted = 0;
+    return 0;
+}
+static int any_output(void)
+{
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (bt.slots[i].session)
+            return 1;
     return 0;
 }
 static int16_t axis(uint8_t value)
@@ -84,24 +101,24 @@ static int16_t axis(uint8_t value)
 static int submit_latest(int slot)
 {
     Slot *s = &bt.slots[slot];
-    if (!own_output() || !s->valid || s->frames == bt.submitted || bt.now < s->last_input ||
-        bt.now - s->last_input > 500)
+    if (!own_output(s) || !s->valid || s->frames == s->submitted || bt.now < s->last_input ||
+        bt.now - s->last_input >= 500)
         return 0;
-    if (bt.sequence == UINT64_MAX) {
-        bt.stopping = 1;
+    if (s->sequence == UINT64_MAX) {
+        s->closing = 1;
         bt.error = "sequence_exhausted";
         return -1;
     }
     const pad_state *p = &s->latest;
     int16_t axes[4] = {axis(p->lx), axis(p->ly), axis(p->rx), axis(p->ry)};
     uint16_t triggers[2] = {(uint16_t)(p->l2 * 257u), (uint16_t)(p->r2 * 257u)};
-    if (uc_core_submit(bt.session, ++bt.sequence, p->buttons, axes, triggers, bt.now)) {
-        bt.stopping = 1;
+    if (uc_core_submit(s->session, ++s->sequence, p->buttons, axes, triggers, bt.now)) {
+        s->closing = 1;
         bt.error = "input_submit_failed";
         log_code(bt.error);
         return -1;
     }
-    bt.submitted = s->frames;
+    s->submitted = s->frames;
     return 0;
 }
 static void on_connect(void *unused, int slot, const pad_info *info)
@@ -110,7 +127,14 @@ static void on_connect(void *unused, int slot, const pad_info *info)
     if (!valid_slot(slot) || !info || bt.stopping)
         return;
     Slot *s = &bt.slots[slot];
+    if (s->session && cleanup_output(s)) {
+        bt.error = "slot_cleanup_pending";
+        return;
+    }
+    if (bt.selected == slot)
+        bt.selected = -1;
     memset(s, 0, sizeof(*s));
+    s->user = -1;
     s->connected = 1;
     s->connected_at = bt.now;
     s->notice_pending = rumble_enabled;
@@ -128,7 +152,7 @@ static void on_state(void *unused, int slot, const pad_state *state)
         return;
     Slot *s = &bt.slots[slot];
     if (s->frames == UINT64_MAX) {
-        bt.stopping = 1;
+        s->closing = 1;
         bt.error = "input_counter_exhausted";
         return;
     }
@@ -136,11 +160,18 @@ static void on_state(void *unused, int slot, const pad_state *state)
     s->last_input = bt.now;
     s->valid = 1;
     ++s->frames;
-    if (bt.selected == -1 && !bt.session && !bt.pending) {
-        bt.selected = slot;
-        log_code("first_valid_input");
+    if (bt.selected == -1 && s->user <= 0 && uc_backend_can_start(bt.user)) {
+        int taken = 0;
+        for (int i = 0; i < HOST_MAX_PADS; i++)
+            if (bt.slots[i].user == bt.user)
+                taken = 1;
+        if (!taken) {
+            bt.selected = slot;
+            s->user = bt.user;
+            log_code("first_valid_input");
+        }
     }
-    if (bt.selected == slot && own_output())
+    if (own_output(s) && uc_backend_can_start(s->user))
         (void)submit_latest(slot);
 }
 static void on_disconnect(void *unused, int slot)
@@ -151,13 +182,12 @@ static void on_disconnect(void *unused, int slot)
     bt.slots[slot].connected = 0;
     bt.slots[slot].valid = 0;
     bt.slots[slot].notice_pending = 0;
-    if (bt.selected == slot) {
-        /* Selection stays occupied until cleanup completes; another source must send a new frame.
-         */
-        if (cleanup_output()) {
-            bt.stopping = 1;
-            bt.error = "disconnect_cleanup_pending";
-        } else
+    Slot *s = &bt.slots[slot];
+    if (cleanup_output(s))
+        bt.error = "disconnect_cleanup_pending";
+    else {
+        s->user = -1;
+        if (bt.selected == slot)
             bt.selected = -1;
     }
     log_code("physical_disconnected");
@@ -182,7 +212,7 @@ static host_t *default_open(const char *path, const host_events *events, void *u
 }
 int uc_bt_set_factory(const uc_bt_factory *factory, const char *path)
 {
-    if (bt.host || bt.opening || bt.stopping || bt.session || bt.pending)
+    if (bt.host || bt.opening || bt.stopping || any_output())
         return 2;
     if (path && (!*path || strlen(path) >= sizeof(bt.database)))
         return -1;
@@ -198,12 +228,18 @@ static void startup_idle(void *unused)
     (void)unused;
     /* Keep power observation live during bounded HCI initialization waits. */
     uc_backend_poll();
+    /* Normal host_poll callbacks use the caller's captured bt.now. Advancing
+     * core's clock here would make that same poll's input appear regressed. */
+    if (bt.opening || bt.stopping) {
+        long current = now_ms();
+        if (current >= 0)
+            (void)uc_core_tick((uint64_t)current);
+    }
 }
 #endif
 int uc_bt_start(int32_t user)
 {
-    if (bt.host || bt.opening || bt.stopping || bt.session || bt.pending ||
-        uc_core_active_session())
+    if (bt.host || bt.opening || bt.stopping || any_output())
         return 2;
     if (user <= 0 || !uc_backend_can_start(user)) {
         bt.error = "start_not_ready";
@@ -240,7 +276,10 @@ int uc_bt_start(int32_t user)
 int uc_bt_stop(void)
 {
     bt.stopping = 1;
-    int cleanup_pending = cleanup_output();
+    int cleanup_pending = 0;
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (cleanup_output(&bt.slots[i]))
+            cleanup_pending = 1;
     /* Close shared HCI even if virtual-device deletion needs later retries. */
     host_t *host = bt.host;
     bt.host = NULL;
@@ -307,7 +346,11 @@ void uc_bt_poll(uint64_t now)
     }
     if (!bt.host)
         return;
-    if (!uc_backend_can_start(bt.user)) {
+    int working_user = uc_backend_can_start(bt.user);
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (bt.slots[i].user > 0 && uc_backend_can_start(bt.slots[i].user))
+            working_user = 1;
+    if (!working_user) {
         bt.error = "power_or_user_unavailable";
         (void)uc_bt_stop();
         return;
@@ -323,47 +366,80 @@ void uc_bt_poll(uint64_t now)
         return;
     }
     poll_connection_notice(now);
-    if (bt.selected < 0)
-        return;
-    Slot *s = &bt.slots[bt.selected];
-    if (!s->connected || !s->valid || now < s->last_input) {
-        /* Disconnect/corrupt time cancels creation. A slow identification may finish
-         * neutral; submit_latest separately refuses stale held-button data. */
-        if (bt.pending) {
-            if (cleanup_output())
-                bt.stopping = 1;
+    for (int slot = 0; slot < HOST_MAX_PADS; slot++) {
+        Slot *s = &bt.slots[slot];
+        if (s->closing || (!s->connected && s->session)) {
+            if (!cleanup_output(s)) {
+                if (s->assigning && s->connected) {
+                    s->user = s->next_user;
+                    s->assigning = 0;
+                    s->valid = 0;
+                } else {
+                    s->user = -1;
+                    s->assigning = 0;
+                    if (bt.selected == slot)
+                        bt.selected = -1;
+                }
+            }
+            continue;
         }
-        return;
+        if (!s->connected || s->user <= 0)
+            continue;
+        if (!uc_backend_can_start(s->user)) {
+            s->valid = 0;
+            if (cleanup_output(s))
+                s->closing = 1;
+            else {
+                s->user = -1;
+                if (bt.selected == slot)
+                    bt.selected = -1;
+            }
+            bt.error = "assigned_user_unavailable";
+            continue;
+        }
+        if (!s->valid || now < s->last_input) {
+            if (s->pending && cleanup_output(s))
+                s->closing = 1;
+            continue;
+        }
+        if (!s->session || s->pending) {
+            if (!s->session && now - s->last_input >= 500)
+                continue;
+            uint64_t session = s->session;
+            int rc = uc_core_enable_physical(s->user, now, &session);
+            if (session)
+                s->session = session;
+            if (rc == 2) {
+                s->pending = session != 0;
+                if (session)
+                    s->session = session;
+                continue;
+            }
+            if (rc || !session) {
+                bt.error = "virtual_enable_failed";
+                s->closing = 1;
+                continue;
+            }
+            s->pending = 0;
+            s->session = session;
+            s->sequence = 0;
+            s->submitted = 0;
+            log_code("virtual_bound");
+        } else if (!own_output(s)) {
+            bt.error = "session_lost_manual_assignment_required";
+            s->closing = 1;
+            continue;
+        }
+        (void)submit_latest(slot);
+        if (rumble_enabled && own_output(s)) {
+            uint8_t strong = 0, weak = 0;
+            int sample = uc_core_read_rumble(s->session, now, &strong, &weak);
+            if (sample == 1)
+                (void)host_rumble_feedback(bt.host, slot, strong, weak);
+        }
     }
-    if (!bt.session) {
-        if (uc_core_active_session()) {
-            bt.error = "foreign_output_busy";
-            (void)uc_bt_stop();
-            return;
-        }
-        uint64_t session = 0;
-        int rc = uc_core_enable(bt.user, now, &session);
-        if (rc == 2) {
-            bt.pending = 1;
-            return;
-        }
-        if (rc || !session) {
-            bt.error = "virtual_enable_failed";
-            (void)uc_bt_stop();
-            return;
-        }
-        bt.pending = 0;
-        bt.session = session;
-        bt.sequence = 0;
-        bt.submitted = 0;
-        log_code("virtual_bound");
-    } else if (!own_output()) {
-        bt.error = "session_lost_manual_restart_required";
-        (void)uc_bt_stop();
-        return;
-    }
-    (void)submit_latest(bt.selected);
 }
+
 int uc_bt_pair(unsigned seconds)
 {
     if (!bt.host || bt.stopping || seconds == 0 || seconds > 120)
@@ -410,6 +486,37 @@ static void address_text(const unsigned char a[6], char out[18])
 {
     snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", a[5], a[4], a[3], a[2], a[1], a[0]);
 }
+int uc_bt_assign(int slot, const char *address, int32_t user)
+{
+    if (!bt.host || bt.stopping || !valid_slot(slot) || !address || user <= 0)
+        return -1;
+    Slot *s = &bt.slots[slot];
+    char current[18];
+    address_text(s->addr, current);
+    if (!s->connected || strcmp(address, current))
+        return -1;
+    if (s->assigning)
+        return s->next_user == user ? 2 : -1;
+    if (s->user == user && !s->closing)
+        return 0;
+    if (!uc_backend_can_start(user))
+        return -1;
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (i != slot &&
+            (bt.slots[i].user == user || (bt.slots[i].assigning && bt.slots[i].next_user == user)))
+            return -1;
+    s->notice_pending = 0;
+    (void)host_rumble_stop(bt.host, slot);
+    if (cleanup_output(s)) {
+        s->next_user = user;
+        s->assigning = 1;
+        return 2;
+    }
+    s->user = user;
+    /* Require a new physical report after changing ownership. */
+    s->valid = 0;
+    return 0;
+}
 static void safe_profile(const char *input, char out[64])
 {
     size_t at = 0;
@@ -432,6 +539,16 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             return 0;                                                                              \
         }                                                                                          \
     } while (0)
+    const Slot *summary = valid_slot(bt.selected) ? &bt.slots[bt.selected] : NULL;
+    if (!summary)
+        for (int i = 0; i < HOST_MAX_PADS; i++)
+            if (bt.slots[i].session) {
+                summary = &bt.slots[i];
+                break;
+            }
+    int pending = 0;
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        pending |= bt.slots[i].pending || bt.slots[i].assigning;
     const char *state = bt.stopping || bt.opening ? "starting"
                         : bt.host                 ? "on"
                         : bt.error                ? "failed"
@@ -440,8 +557,9 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
         "\"selected_slot\":%d,\"bound\":%s,\"session_id\":%llu,\"pending\":%s,\"pairing_seconds\":%"
         "d,\"error\":",
         state, bt.error ? bt.error : "", uc_bt_running() ? "true" : "false",
-        bt.stopping ? "true" : "false", bt.user, bt.selected, own_output() ? "true" : "false",
-        (unsigned long long)bt.session, bt.pending ? "true" : "false",
+        bt.stopping ? "true" : "false", bt.user, bt.selected,
+        summary && own_output(summary) ? "true" : "false",
+        (unsigned long long)(summary ? summary->session : 0), pending ? "true" : "false",
         bt.host ? host_pairing_left(bt.host) : 0);
     if (bt.error)
         ADD("\"%s\"", bt.error);
@@ -458,11 +576,13 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
         safe_profile(s->profile, profile);
         safe_profile(pad_display_name_for_transport(s->transport, s->vid, s->pid, profile), model);
         ADD("%s{\"slot\":%d,\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"profile\":\"%"
-            "s\",\"model\":\"%s\",\"connected\":true,\"bound\":%s,\"input_frames\":%llu,\"last_"
+            "s\",\"model\":\"%s\",\"connected\":true,\"bound\":%s,\"user_id\":%d,\"session_id\":%"
+            "llu,\"pending\":%s,\"input_frames\":%llu,\"last_"
             "input_ms\":%llu,"
             "\"battery\":",
             count++ ? "," : "", i, addr, s->vid, s->pid, profile, model,
-            bt.selected == i && own_output() ? "true" : "false", (unsigned long long)s->frames,
+            own_output(s) ? "true" : "false", s->user, (unsigned long long)s->session,
+            (s->pending || s->assigning) ? "true" : "false", (unsigned long long)s->frames,
             (unsigned long long)s->last_input);
         if (s->valid && s->latest.has_battery)
             ADD("%u", s->latest.battery_pct <= 100 ? s->latest.battery_pct : 100);

@@ -61,6 +61,8 @@ int host_rumble_pulse(host_t *h, int slot, int ms);
  * Call with every successful feedback sample, including unchanged values.
  * Non-zero rumble expires after 500 ms without a sample. Returns 0 if unavailable. */
 int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak);
+/* Cancel both connection pulses and game feedback without changing LEDs. */
+int host_rumble_stop(host_t *h, int slot);
 /* Whether a connected pad is ready for output; avoids querying unsupported pads. */
 int host_output_ready(const host_t *h, int slot);
 

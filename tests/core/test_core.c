@@ -2,26 +2,35 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-static int write_failure, delete_failure, create_pending;
-static unsigned writes, deletes;
+static int write_failure, delete_failure, create_pending, create_failure;
+static unsigned writes, deletes, create_calls, cancel_calls;
+static uint64_t fail_write_handle, fail_delete_handle, rumble_handle;
+static uint32_t buttons_by_handle[4];
+static unsigned deletes_by_handle[4];
+static int rumble_result = 1;
 static uint32_t last_buttons;
 static int16_t last_axes[4];
 static uint16_t last_triggers[2];
 int uc_backend_create(int32_t user, uint64_t *handle)
 {
     assert(user > 0);
+    ++create_calls;
+    if (create_failure)
+        return -1;
     if (create_pending)
         return 2;
-    *handle = 99;
+    assert(user <= 4);
+    *handle = 98 + (uint64_t)user;
     return 0;
 }
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2])
 {
-    assert(handle == 99);
-    if (write_failure)
+    assert(handle >= 99 && handle <= 102);
+    if (write_failure || handle == fail_write_handle)
         return -1;
     ++writes;
+    buttons_by_handle[handle - 99] = buttons;
     last_buttons = buttons;
     memcpy(last_axes, axes, sizeof last_axes);
     memcpy(last_triggers, triggers, sizeof last_triggers);
@@ -29,12 +38,25 @@ int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
 }
 int uc_backend_delete(uint64_t handle)
 {
-    assert(handle == 99 || handle == 0);
-    if (delete_failure)
+    assert((handle >= 99 && handle <= 102) || handle == 0);
+    if (delete_failure || (fail_delete_handle && handle == fail_delete_handle))
         return -1;
     ++deletes;
+    if (handle)
+        ++deletes_by_handle[handle - 99];
+    else
+        ++cancel_calls;
     return 0;
 }
+int uc_backend_read_rumble(uint64_t handle, uint64_t now, uint8_t *strong, uint8_t *weak)
+{
+    assert(now >= 6000);
+    rumble_handle = handle;
+    *strong = (uint8_t)handle;
+    *weak = (uint8_t)(handle + 1);
+    return rumble_result;
+}
+static void test_multiple_sessions(void);
 int main(void)
 {
     const int16_t axes[4] = {123, -456, 0, 0}, zero[4] = {0};
@@ -139,6 +161,110 @@ int main(void)
     assert(uc_core_tick(5004) == 0 && last_buttons == 0); /* Phone still expires. */
     assert(uc_core_suspend() == 0);
     assert(uc_core_refresh_source(next, 5005) < 0);
+    test_multiple_sessions();
     puts("core: cleanup, stale, timeout, mapping, lifecycle, pending, logs PASS");
     return 0;
+}
+
+static void test_multiple_sessions(void)
+{
+    const int16_t axes[4] = {0};
+    const uint16_t triggers[2] = {0};
+    uint8_t mapping[32];
+    for (unsigned i = 0; i < 32; ++i)
+        mapping[i] = (uint8_t)i;
+    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 0);
+    uint64_t ids[4] = {0}, duplicate = 0;
+    for (unsigned i = 0; i < 4; ++i)
+        assert(uc_core_enable_physical((int32_t)i + 1, 6000, &ids[i]) == 0);
+    for (unsigned i = 0; i < 4; ++i)
+        assert(uc_core_session_active(ids[i]));
+    unsigned calls = create_calls;
+    assert(uc_core_enable_physical(1, 6001, &duplicate) == 2 && duplicate == 0);
+    assert(uc_core_enable_physical(5, 6001, &duplicate) == 2 && create_calls == calls);
+    assert(uc_core_enable(1, 6001, &duplicate) == 2);
+    assert(uc_core_submit(ids[0], 5, 1, axes, triggers, 6010) == 0);
+    assert(uc_core_submit(ids[1], 1, 2, axes, triggers, 6200) == 0);
+    assert(uc_core_submit(ids[0], 5, 0, axes, triggers, 6201) < 0);
+    assert(uc_core_submit(ids[1], 2, 4, axes, triggers, 6201) == 0);
+    assert(uc_core_tick(6510) == 0 && buttons_by_handle[0] == 0 && buttons_by_handle[1] == 4);
+    uint8_t strong = 0, weak = 0;
+    assert(uc_core_read_rumble(ids[1], 6511, &strong, &weak) == 1 && rumble_handle == 100 &&
+           strong == 100 && weak == 101);
+    rumble_result = 0;
+    assert(uc_core_read_rumble(ids[0], 6512, &strong, &weak) == 0 && strong == 0 && weak == 0);
+    rumble_result = -1;
+    assert(uc_core_read_rumble(ids[0], 6513, &strong, &weak) < 0 && strong == 0 && weak == 0);
+    rumble_result = 1;
+    unsigned other_deleted = deletes_by_handle[1];
+    assert(uc_core_disable_session(ids[0]) == 0);
+    assert(!uc_core_session_active(ids[0]) && uc_core_session_active(ids[1]));
+    assert(deletes_by_handle[1] == other_deleted);
+    assert(uc_core_read_rumble(ids[0], 6514, &strong, &weak) < 0 && !strong && !weak);
+    assert(uc_core_disable_session(ids[0]) < 0);
+    uint64_t replacement = 0;
+    assert(uc_core_enable_physical(1, 6515, &replacement) == 0 && replacement != ids[0]);
+    assert(uc_core_submit(ids[0], 100, 1, axes, triggers, 6516) < 0);
+    assert(uc_core_submit(replacement, 1, 1, axes, triggers, 6516) == 0);
+    assert(uc_core_submit(ids[1], 3, 2, axes, triggers, 6517) == 0);
+    fail_delete_handle = 99;
+    assert(uc_core_disable_session(replacement) < 0);
+    assert(!uc_core_session_active(replacement) && uc_core_session_active(ids[1]));
+    fail_write_handle = 100;
+    assert(uc_core_submit(ids[2], 1, 8, axes, triggers, 6518) == 0);
+    assert(uc_core_tick(7018) < 0); /* One failed cleanup/write does not skip other outputs. */
+    assert(buttons_by_handle[2] == 0);
+    fail_write_handle = 0;
+    fail_delete_handle = 0;
+    assert(uc_core_tick(7019) == 0 && uc_core_session_active(ids[1]));
+    assert(uc_core_disable() == 0 && uc_core_active_session() == 0);
+
+    /* Only one backend creation may be pending; cancellation must not remove an active sibling. */
+    ids[0] = 0;
+    assert(uc_core_enable_physical(1, 7100, &ids[0]) == 0);
+    create_pending = 1;
+    ids[1] = 0;
+    assert(uc_core_enable_physical(2, 7101, &ids[1]) == 2 && ids[1] != 0);
+    uint64_t pending = ids[1];
+    calls = create_calls;
+    uint64_t foreign_retry = 0;
+    assert(uc_core_enable_physical(2, 7101, &foreign_retry) == 2 && foreign_retry == 0);
+    assert(create_calls == calls); /* Cannot adopt another source's same-user reservation. */
+    assert(uc_core_enable_physical(3, 7102, &duplicate) == 2 && duplicate == 0 &&
+           create_calls == calls);
+    assert(uc_core_enable_physical(2, 7103, &ids[1]) == 2 && ids[1] == pending);
+    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 2);
+    unsigned cancellation = cancel_calls;
+    other_deleted = deletes_by_handle[0];
+    assert(uc_core_disable_session(pending) == 0 && cancel_calls == cancellation + 1);
+    assert(deletes_by_handle[0] == other_deleted && uc_core_session_active(ids[0]));
+    create_pending = 0;
+    ids[1] = 0;
+    assert(uc_core_enable_physical(2, 7104, &ids[1]) == 0 && ids[1] != pending);
+    assert(uc_core_suspend() == 0 && !uc_core_session_active(ids[0]) &&
+           !uc_core_session_active(ids[1]));
+    assert(uc_core_tick(8000) == 0 && uc_core_active_session() == 0);
+    assert(uc_core_enable(1, 8001, &ids[0]) == 0);
+    calls = create_calls;
+    assert(uc_core_enable_physical(2, 8002, &duplicate) == 2 && create_calls == calls);
+    assert(uc_core_disable() == 0);
+    ids[0] = 0;
+    assert(uc_core_enable_physical(1, 8100, &ids[0]) == 0);
+    create_failure = 1;
+    ids[1] = 0;
+    assert(uc_core_enable_physical(2, 8101, &ids[1]) < 0 && ids[1] != 0);
+    assert(!uc_core_session_active(ids[1]) && uc_core_session_active(ids[0]));
+    create_failure = 0;
+    assert(uc_core_disable_session(ids[1]) == 0 && uc_core_session_active(ids[0]));
+    fail_write_handle = fail_delete_handle = 100;
+    ids[1] = 0;
+    assert(uc_core_enable_physical(2, 8102, &ids[1]) < 0 && ids[1] != 0);
+    assert(!uc_core_session_active(ids[1]) && uc_core_session_active(ids[0]));
+    fail_write_handle = fail_delete_handle = 0;
+    assert(uc_core_disable_session(ids[1]) == 0 && uc_core_session_active(ids[0]));
+    fail_write_handle = 100;
+    ids[1] = 0;
+    assert(uc_core_enable_physical(2, 8103, &ids[1]) < 0 && ids[1] == 0);
+    fail_write_handle = 0;
+    assert(uc_core_disable() == 0);
 }

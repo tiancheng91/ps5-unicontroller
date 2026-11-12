@@ -67,15 +67,15 @@ make preview PREVIEW_BIND=0.0.0.0
 
 ## 蓝牙手柄
 
-控制面选择独立已登录账号，手动启动蓝牙，再开启限时配对。Switch Pro使用Classic专用协议；已知Xbox蓝牙型号使用对应协议，未知手柄根据HID描述符解析。非Switch不能统一视为XInput。单个实体输入源与手机测试手柄互斥。休眠后默认关闭，不自动重开蓝牙。
+控制面选择独立已登录账号，手动启动蓝牙，再开启限时配对。Switch Pro使用Classic专用协议；已知Xbox蓝牙型号使用对应协议，未知手柄根据HID描述符解析。非Switch不能统一视为XInput。最多四个实体输入源分别绑定独立账号，手机测试手柄仍需单独使用。休眠后默认关闭，不自动重开蓝牙。
 
-当前尚未完成PS5实体设备验证；游戏震动回传尚未接通。详细范围、配对记录与验证步骤见[蓝牙接入](docs/bluetooth.md)。
+当前尚未完成PS5实体设备验证；游戏震动回传已接入，需实机验证。详细范围、配对记录与验证步骤见[蓝牙接入](docs/bluetooth.md)。
 
 项目许可证及第三方来源声明见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 ## USB有线输入
 
-控制面选择独立已登录账号，手动启动USB，接入Switch Pro或有线Xbox360/XInput设备。蓝牙、USB、网页测试先保持互斥与单输出；休眠后不会自动恢复。协议、接口占用限制及FreeBSD/Linux差异见[USB说明](docs/usb.md)。源码分层见[架构](docs/architecture.md)。
+控制面选择独立已登录账号，手动启动USB，接入Switch Pro或有线Xbox360/XInput设备。蓝牙与USB可同时运行，总计最多四个实体输出；网页测试手柄保持独占；休眠后不会自动恢复。协议、接口占用限制及FreeBSD/Linux差异见[USB说明](docs/usb.md)。源码分层见[架构](docs/architecture.md)。
 
 ## 手柄设备配置
 
@@ -85,6 +85,6 @@ make preview PREVIEW_BIND=0.0.0.0
 
 规则按 exact transport（classic/ble/usb）与 VID/PID 匹配，可设置显示别名、选择既有 profile，或配置原始通用 HID 按键/轴字段。USB hint 不绕过接口描述符、Sony 或系统驱动保护，别名不认证真实型号；新协议仍需 C 实现，不支持脚本、原始命令或组合键。
 
-settings.json 继续保存 UI/core 偏好，包括 A/B 翻转和全局 32 位按键映射；当前没有新增每会话轴方向反转。Touchpad 映射仅是点击位；Switch Capture 已有默认映射，背键必须独立上报才能单独映射。游戏震动回传仍未实现。
+settings.json 继续保存 UI/core 偏好，包括 A/B 翻转和全局 32 位按键映射；当前没有新增每会话轴方向反转。Touchpad 映射仅是点击位；Switch Capture 已有默认映射，背键必须独立上报才能单独映射。游戏震动受全局震动开关控制，依赖具体协议的输出支持。
 
 示例见 [examples/controllers.json](examples/controllers.json)，详细字段与边界见[配置说明](docs/controller-config.md)。

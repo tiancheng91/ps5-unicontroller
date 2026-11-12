@@ -66,34 +66,76 @@ with tempfile.TemporaryDirectory() as directory:
             assert response.read() == asset.read_bytes(), url
             connection.close()
         assert len(token) == 64
+        # The host mock exposes four distinct signed-in users, matching backend
+        # capacity without pretending that native physical adapters exist.
+        status, users = request("GET", "/api/v1/users")
+        assert status == 200
+        assert [user["user_id"] for user in users["users"]] == [1, 2, 3, 4]
         assert request("GET", "/api/v1/usb")[1]["state"] == "off"
         assert (
             request("POST", "/api/v1/usb/start", {"user_id": 1}, auth=False)[0] == 403
         )
-        assert request("POST", "/api/v1/usb/start", {"user_id": 2})[0] == 409
+        assert request("POST", "/api/v1/usb/start", {"user_id": 5})[0] == 409
         assert request("POST", "/api/v1/usb/start", {"user_id": 0})[0] == 400
         assert (
             request("POST", "/api/v1/usb/start", {"user_id": 1, "extra": True})[0]
             == 400
         )
         assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 202
-        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 409
+        # Independent physical transports may start together. Host-native
+        # adapters then fail explicitly; no synthetic device/input is invented.
+        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 2})[0] == 202
         assert request("POST", "/api/v1/test-controller", {"user_id": 1})[0] == 409
         time.sleep(0.15)
         assert request("GET", "/api/v1/usb")[1]["state"] == "failed"
         assert request("POST", "/api/v1/usb/stop")[0] == 200
-        assert request("GET", "/api/v1/bluetooth")[1]["state"] == "off"
+        assert request("GET", "/api/v1/bluetooth")[1]["state"] == "failed"
+        assert request("POST", "/api/v1/bluetooth/stop")[0] == 200
+        assert request("GET", "/api/v1/bluetooth")[1]["running"] is False
         assert (
             request("POST", "/api/v1/bluetooth/start", {"user_id": 1}, auth=False)[0]
             == 403
         )
         assert request("POST", "/api/v1/bluetooth/pair", {"seconds": 60})[0] == 409
-        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 2})[0] == 409
+        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 5})[0] == 409
         assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 202
         assert request("POST", "/api/v1/test-controller", {"user_id": 1})[0] == 409
         time.sleep(0.15)
         assert request("GET", "/api/v1/bluetooth")[1]["state"] == "failed"
         assert request("POST", "/api/v1/bluetooth/stop")[0] == 200
+
+        # Assignments require exactly the source-specific identity plus a
+        # bounded slot and signed-in user. No route opens a supplied pathname.
+        for source, identity, value in (
+            ("bluetooth", "address", "01:02:03:04:05:06"),
+            ("usb", "node", "/dev/ugen1.2"),
+        ):
+            endpoint = f"/api/v1/{source}/assign"
+            assignment = {"slot": 0, identity: value, "user_id": 4}
+            assert request("POST", endpoint, assignment, auth=False)[0] == 403
+            for malformed in (
+                {},
+                dict(assignment, slot=-1),
+                dict(assignment, slot=4),
+                dict(assignment, slot=True),
+                dict(assignment, user_id=0),
+                dict(assignment, user_id="4"),
+                dict(assignment, extra=True),
+                {"slot": 0, "user_id": 4},
+                dict(assignment, **{identity: 123}),
+                dict(assignment, **{identity: ""}),
+                dict(assignment, **{identity: "x" * 128}),
+            ):
+                assert request("POST", endpoint, malformed)[0] == 400, malformed
+            assert request("POST", endpoint, dict(assignment, user_id=5))[0] == 409
+            assert (
+                request(
+                    "POST", endpoint, dict(assignment, **{identity: "bad\\identity"})
+                )[0]
+                == 409
+            )
+            # A well-formed assignment still cannot bind an absent/stale device.
+            assert request("POST", endpoint, assignment)[0] == 409
 
         for page in ["/", "/controller", "/settings"]:
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
@@ -131,6 +173,26 @@ with tempfile.TemporaryDirectory() as directory:
         status, state = request("POST", "/api/v1/test-controller", {"user_id": 1})
         assert status == 200 and state["enabled"]
         assert request("POST", "/api/v1/settings", settings)[0] == 409
+        # Stopping an unrelated physical transport must not tear down the
+        # manually enabled test-controller session or accept a stale assignment.
+        assert request("POST", "/api/v1/bluetooth/stop")[0] == 200
+        assert request("POST", "/api/v1/usb/stop")[0] == 200
+        assert (
+            request("GET", "/api/v1/test-controller")[1]["session_id"]
+            == state["session_id"]
+        )
+        assert (
+            request(
+                "POST",
+                "/api/v1/usb/assign",
+                {"slot": 0, "node": "/dev/ugen1.2", "user_id": 2},
+            )[0]
+            == 409
+        )
+        assert (
+            request("GET", "/api/v1/test-controller")[1]["session_id"]
+            == state["session_id"]
+        )
         assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 409
         frame = dict(
             session_id=state["session_id"],
@@ -145,6 +207,23 @@ with tempfile.TemporaryDirectory() as directory:
         frame["axes"] = [999999] * 4
         assert request("POST", "/api/v1/test-controller/input", frame)[0] == 400
         assert request("DELETE", "/api/v1/test-controller")[0] == 200
+        previous_session = state["session_id"]
+        for user_id in (2, 3, 4):
+            status, next_state = request(
+                "POST", "/api/v1/test-controller", {"user_id": user_id}
+            )
+            assert status == 200 and next_state["user_id"] == user_id
+            assert next_state["session_id"] != previous_session
+            stale_frame = dict(
+                frame, session_id=previous_session, sequence=99, axes=[0] * 4
+            )
+            assert (
+                request("POST", "/api/v1/test-controller/input", stale_frame)[0] == 409
+            )
+            assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 409
+            assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 409
+            assert request("DELETE", "/api/v1/test-controller")[0] == 200
+            previous_session = next_state["session_id"]
         assert request("GET", "/api/v1/logs?level=trace")[0] == 200
         assert request("GET", "/api/v1/logs?level=unknown")[0] == 400
         assert request("POST", "/api/v1/settings", {"padding": "x" * 9000})[0] == 413

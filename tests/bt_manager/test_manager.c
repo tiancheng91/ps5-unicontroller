@@ -10,7 +10,12 @@ static struct host fake;
 static host_events callbacks;
 static int opens, closes, gate = 1, lost, enable_calls, disable_calls, submissions,
                           pending_attempts, cleanup_fail;
-static uint64_t active, next_session = 1;
+static uint64_t active, next_session = 1, sessions[5];
+static int ready[5], unavailable_user, busy_user, error_user;
+static unsigned submissions_by_user[5];
+static uint64_t feedback_session;
+static int feedback_calls, feedback_slot;
+static uint8_t feedback_strong, feedback_weak;
 static int output_ready, pulse_calls, pulse_slot, pulse_accept = 1;
 static int16_t submitted_axes[4];
 static uint16_t submitted_triggers[2];
@@ -30,27 +35,64 @@ static pad_state frame = {.buttons = 0x4000,
                           .battery_pct = 80};
 int uc_backend_can_start(int32_t user)
 {
-    return gate && user == 1;
+    return gate && user >= 1 && user <= 4 && user != unavailable_user;
 }
-int uc_core_enable(int32_t user, uint64_t now, uint64_t *out)
+int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
 {
     (void)now;
-    assert(user == 1);
+    assert(user >= 1 && user <= 4);
     enable_calls++;
+    if (user == busy_user) {
+        *out = 0;
+        return 2;
+    }
+    if (sessions[user] && !ready[user])
+        assert(*out == sessions[user]);
+    if (!sessions[user])
+        sessions[user] = next_session++;
+    *out = sessions[user];
+    if (user == error_user)
+        return -1;
     if (pending_attempts) {
         pending_attempts--;
         return 2;
     }
-    *out = active = next_session++;
+    ready[user] = 1;
+    active = *out;
     return 0;
 }
-int uc_core_disable(void)
+int uc_core_disable_session(uint64_t session)
 {
+    assert(session);
     disable_calls++;
     if (cleanup_fail)
         return -1;
-    active = 0;
+    for (int user = 1; user <= 4; user++)
+        if (sessions[user] == session) {
+            sessions[user] = 0;
+            ready[user] = 0;
+            if (active == session)
+                active = 0;
+            return 0;
+        }
+    return -2;
+}
+int uc_core_session_active(uint64_t session)
+{
+    for (int user = 1; user <= 4; user++)
+        if (sessions[user] == session && ready[user])
+            return 1;
     return 0;
+}
+int uc_core_read_rumble(uint64_t session, uint64_t now, uint8_t *strong, uint8_t *weak)
+{
+    (void)now;
+    assert(uc_core_session_active(session));
+    if (session != feedback_session)
+        return 0;
+    *strong = 70;
+    *weak = 30;
+    return 1;
 }
 uint64_t uc_core_active_session(void)
 {
@@ -60,7 +102,10 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
                    const uint16_t triggers[2], uint64_t now)
 {
     (void)now;
-    assert(session == active && seq);
+    assert(uc_core_session_active(session) && seq);
+    for (int user = 1; user <= 4; user++)
+        if (sessions[user] == session)
+            ++submissions_by_user[user];
     submissions++;
     submitted_buttons = buttons;
     memcpy(submitted_axes, axes, sizeof(submitted_axes));
@@ -117,6 +162,19 @@ int host_rumble_pulse(host_t *h, int slot, int ms)
     pulse_slot = slot;
     return pulse_accept;
 }
+int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak)
+{
+    assert(h == &fake && slot >= 0 && slot < HOST_MAX_PADS);
+    ++feedback_calls;
+    feedback_slot = slot;
+    feedback_strong = strong;
+    feedback_weak = weak;
+    return 1;
+}
+int host_rumble_stop(host_t *h, int slot)
+{
+    return host_rumble_feedback(h, slot, 0, 0);
+}
 int host_transport_lost(const host_t *h)
 {
     assert(h == &fake);
@@ -171,7 +229,8 @@ int main(void)
     assert(uc_bt_start(1) == -1 && opens == 0);
     gate = 1;
     active = 99;
-    assert(uc_bt_start(1) == 2);
+    assert(uc_bt_start(1) == 0); /* An unrelated USB output does not block HCI. */
+    assert(uc_bt_stop() == 0 && active == 99);
     active = 0;
     assert(uc_bt_start(1) == 0 && uc_bt_running());
     assert(uc_bt_start(2) == 2);
@@ -303,6 +362,92 @@ int main(void)
     assert(uc_bt_start(1) == -1); /* Non-PS5 is explicitly unsupported. */
     uc_bt_set_log_level(0);
     assert(uc_bt_stop() == 0);
+    install();
+    assert(uc_bt_start(1) == 0);
+    event(1, 0, 23000);
+    event(2, 0, 23001);
+    uint64_t first = sessions[1];
+    assert(first && ready[1]);
+    event(1, 1, 23002);
+    event(2, 1, 23003);
+    assert(!sessions[2]);
+    assert(uc_bt_assign(1, "00:00:00:00:00:00", 2) < 0);   /* Address guards recycled slots. */
+    assert(uc_bt_assign(1, "06:05:04:03:02:01", 1) == -1); /* Duplicate user refused. */
+    assert(uc_bt_assign(1, "06:05:04:03:02:01", 2) == 0);
+    uc_bt_poll(23004);
+    assert(!sessions[2]); /* Ownership change needs a fresh report. */
+    event(2, 1, 23005);
+    uint64_t second = sessions[2];
+    assert(second && second != first && ready[1] && ready[2]);
+    assert(uc_bt_status_json(json, sizeof json) > 0 && strstr(json, "\"user_id\":2") &&
+           strstr(json, "\"pending\":false"));
+    feedback_session = second;
+    int feedback_before = feedback_calls;
+    uc_bt_poll(23006);
+    assert(feedback_calls == feedback_before + 1 && feedback_slot == 1 && feedback_strong == 70 &&
+           feedback_weak == 30);
+    uc_bt_set_rumble_enabled(0);
+    assert(feedback_strong == 0 && feedback_weak == 0);
+    feedback_before = feedback_calls;
+    uc_bt_poll(23007);
+    assert(feedback_calls == feedback_before);
+    uc_bt_set_rumble_enabled(1);
+    unsigned second_frames = submissions_by_user[2];
+    event(3, 0, 23008);
+    assert(!ready[1] && ready[2] && sessions[2] == second);
+    event(2, 1, 23009);
+    assert(submissions_by_user[2] == second_frames + 1);
+    event(1, 0, 23010);
+    event(2, 0, 23011);
+    assert(ready[1] && ready[2]);
+    unavailable_user = 1;
+    uc_bt_poll(23012);
+    assert(uc_bt_running() && !ready[1] && ready[2]);
+    unavailable_user = 0;
+    cleanup_fail = 1;
+    event(3, 1, 23013);
+    assert(uc_bt_running());
+    cleanup_fail = 0;
+    sessions[2] = 0;
+    ready[2] = 0;
+    active = 0; /* Core tick completed the earlier removal. */
+    uc_bt_poll(23014);
+    assert(!ready[2]);
+    assert(uc_bt_stop() == 0);
+    assert(uc_bt_start(1) == 0);
+    event(1, 0, 24000);
+    event(2, 0, 24001);
+    assert(ready[1]);
+    cleanup_fail = 1;
+    int stops_before = feedback_calls;
+    assert(uc_bt_assign(0, "06:05:04:03:02:01", 2) == 2);
+    assert(feedback_calls == stops_before + 1 && !feedback_strong && !feedback_weak);
+    uc_bt_poll(24002);
+    assert(ready[1] && !ready[2]);
+    cleanup_fail = 0;
+    uc_bt_poll(24003);
+    assert(!ready[1] && !ready[2]);
+    event(2, 0, 24004);
+    assert(ready[2]); /* Queued reassignment is retained across cleanup failure. */
+    event(1, 1, 24005);
+    assert(uc_bt_assign(1, "06:05:04:03:02:01", 3) == 0);
+    busy_user = 3;
+    event(2, 1, 24006);
+    enabled = enable_calls;
+    uc_bt_poll(24600);
+    assert(enable_calls == enabled &&
+           !sessions[3]); /* No token: stale input cannot start output. */
+    busy_user = 0;
+    event(2, 1, 24601);
+    assert(ready[3] && ready[2]);
+    assert(uc_bt_stop() == 0);
+    assert(uc_bt_start(1) == 0);
+    error_user = 1;
+    event(1, 0, 25000);
+    event(2, 0, 25001);
+    assert(sessions[1] && !ready[1]); /* Enable error still carries an owned cleanup token. */
+    assert(uc_bt_stop() == 0 && !sessions[1]);
+    error_user = 0;
     puts("Bluetooth manager checks passed");
     return 0;
 }
