@@ -1,3 +1,4 @@
+#include "../logging.h"
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "launcher.h"
 #include <errno.h>
@@ -147,7 +148,7 @@ void uc_launcher_startup(unsigned short port)
         pending_port = port;
         state = "pending";
     }
-    fprintf(stderr, "[launcher] startup state=%s port=%u\n", state, (unsigned)port);
+    uc_log_info("[launcher] startup state=%s port=%u", state, (unsigned)port);
 }
 int uc_launcher_pending(void)
 {
@@ -158,8 +159,7 @@ void uc_launcher_cancel(void)
     if (pending) {
         pending = timing = 0;
         state = "deferred";
-        fprintf(stderr,
-                "[launcher] startup install cancelled; manual retry or next load required\n");
+        uc_log_info("[launcher] startup install cancelled; manual retry or next load required");
     }
 }
 void uc_launcher_poll(uint64_t now, int ready, int idle)
@@ -179,7 +179,7 @@ void uc_launcher_poll(uint64_t now, int ready, int idle)
         return;
     pending = timing = 0; /* One attempt, even if registration fails. */
     if (uc_launcher_install(pending_port, 0))
-        fprintf(stderr, "[launcher] automatic registration failed; no automatic retry\n");
+        uc_log_error("[launcher] automatic registration failed; no automatic retry");
 }
 
 int sceAppInstUtilInitialize(void);
@@ -208,7 +208,7 @@ int uc_launcher_install(unsigned short port, int force)
     int changed =
         uc_launcher_write(UC_LAUNCHER_ROOT, port, uc_launcher_icon, sizeof uc_launcher_icon);
     if (changed < 0) {
-        fprintf(stderr, "[launcher] resource_write_failed errno=%d\n", errno);
+        uc_log_error("[launcher] resource_write_failed errno=%d", errno);
         return -1;
     }
     int rc = 0;
@@ -220,15 +220,15 @@ int uc_launcher_install(unsigned short port, int force)
             if (!kernel_dynlib_handle(-1, "libSceAppInstUtil.sprx", &handle))
                 install = (int (*)(const char *, const char *, void *))kernel_dynlib_resolve(
                     -1, handle, "Wudg3Xe3heE");
-            fprintf(stderr, "[launcher] register method=%s title=%s port=%u\n",
-                    install ? "TitleDir" : "InstallAll", UC_LAUNCHER_TITLE_ID, (unsigned)port);
+            uc_log_info("[launcher] register method=%s title=%s port=%u",
+                        install ? "TitleDir" : "InstallAll", UC_LAUNCHER_TITLE_ID, (unsigned)port);
             char base[384];
             snprintf(base, sizeof base, "%s/", UC_LAUNCHER_ROOT);
             rc = install ? install(UC_LAUNCHER_TITLE_ID, base, NULL)
                          : sceAppInstUtilAppInstallAll(NULL);
             (void)sceAppInstUtilTerminate();
         }
-        fprintf(stderr, "[launcher] registration_result=0x%08x\n", (unsigned)rc);
+        uc_log_at(rc ? 1 : 3, "[launcher] registration_result=0x%08x", (unsigned)rc);
         if (rc && (uint32_t)rc != UINT32_C(0x80990002))
             return -1;
     }
@@ -247,7 +247,7 @@ int uc_launcher_remove(void)
         rc = sceAppInstUtilAppUnInstall(UC_LAUNCHER_TITLE_ID);
         (void)sceAppInstUtilTerminate();
     }
-    fprintf(stderr, "[launcher] uninstall_result=0x%08x\n", (unsigned)rc);
+    uc_log_at(rc ? 1 : 3, "[launcher] uninstall_result=0x%08x", (unsigned)rc);
     if (rc)
         return -1; /* Keep files if system removal failed. */
     if (put_file(UC_LAUNCHER_DISABLED, (const unsigned char *)"1\n", 2))

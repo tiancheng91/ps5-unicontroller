@@ -1,3 +1,4 @@
+#include "../logging.h"
 #include "usb.h"
 #include "usb/protocol.h"
 #include "../core/uc_core.h"
@@ -39,7 +40,7 @@ static int active(const usb_slot *s)
 static void log_code(unsigned level, unsigned slot, const char *code)
 {
     if (usb.level >= level)
-        fprintf(stderr, "[usb] slot=%u %s\n", slot, code);
+        uc_log_at(level, "[usb] slot=%u %s", slot, code);
 }
 void uc_usb_set_log_level(unsigned level)
 {

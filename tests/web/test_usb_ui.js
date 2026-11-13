@@ -1,205 +1,82 @@
 "use strict";
-const fs = require("fs"),
-  vm = require("vm"),
-  assert = require("assert"),
-  path = require("path");
-const elements = new Map();
-class Element {
-  constructor(id) {
-    this.id = id;
-    this.value = id === "level" ? "info" : "";
-    this.options = [];
-    this.children = [];
-    this.disabled = false;
-    this.checked = false;
-    this.classList = { toggle() {} };
-    this.textContent = "";
-  }
-  append(child) {
-    this.children.push(child);
-    if (child.tag === "option") {
-      this.options.push(child);
-      if (!this.value) this.value = String(child.value);
-    }
-  }
-  replaceChildren() {
-    this.children = [];
-    this.options = [];
-    this.value = "";
-  }
-  querySelectorAll(tag) {
-    return this.children.flatMap((c) => [
-      ...(c.tag === tag ? [c] : []),
-      ...c.querySelectorAll(tag),
-    ]);
-  }
-}
-function get(id) {
-  if (!elements.has(id)) elements.set(id, new Element(id));
-  return elements.get(id);
-}
-let now = 1000,
-  bt = {
-    state: "off",
-    reason: "",
-    user_id: 1,
-    pairing_seconds: 0,
-    devices: [],
-    paired: [],
-  };
-let usb = { state: "off", reason: "", user_id: 1, devices: [], pending: false, bound: false };
-let failUsb = false,
-  failQuery = false,
-  virtualEnabled = false;
-const calls = [];
-let releaseStart = null;
-let failPair = false;
-const context = {
-  console,
-  AbortController,
-  Date: { now: () => now },
-  setTimeout: () => 1,
-  clearTimeout() {},
-  setInterval() {},
-  clearInterval() {},
-  document: {
-    hidden: false,
-    getElementById: get,
-    createElement(tag) {
-      const e = new Element();
-      e.tag = tag;
-      return e;
-    },
-  },
-  window: { confirm: () => false },
-  fetch: async (url, options) => {
-    const method = options.method,
-      body = options.body ? JSON.parse(options.body) : undefined;
-    calls.push({ url, method, body });
-    let data = {};
-    let ok = true,
-      status = 200;
-    if (url.endsWith("/usb/start")) {
-      if (failUsb) {
-        ok = false;
-        status = 409;
-        data = { error: "usb_busy" };
-      } else {
-        await new Promise((r) => (releaseStart = r));
-        usb = { ...usb, state: "on", pending: true };
-        data = { pending: true };
-      }
-    } else if (url.endsWith("/usb/stop"))
-      usb = { ...usb, state: "off", pending: false, bound: false };
-    else if (url.endsWith("/bluetooth") && failQuery) throw Error("source_unavailable");
-    else if (url.endsWith("/session")) data = { token: "redacted" };
-    else if (url.endsWith("/users")) data = { users: [{ user_id: 1, display_name: "Player" }] };
-    else if (url.endsWith("/usb")) data = usb;
-    else if (url.endsWith("/test-controller"))
-      data = { enabled: virtualEnabled, session_id: virtualEnabled ? 9 : null };
-    else if (url.endsWith("/bluetooth/start")) {
-      await new Promise((r) => (releaseStart = r));
-      bt = { ...bt, state: "starting" };
-      data = { pending: true };
-    } else if (url.endsWith("/bluetooth/pair")) {
-      if (failPair) {
-        ok = false;
-        status = 409;
-        data = { error: "hardware_pair_failed" };
-      } else bt = { ...bt, pairing_seconds: 60 };
-    } else if (url.endsWith("/bluetooth/stop")) bt = { ...bt, state: "off" };
-    else if (url.endsWith("/bluetooth")) data = JSON.parse(JSON.stringify(bt));
-    return { ok, status, text: async () => JSON.stringify(data) };
-  },
-};
-vm.createContext(context);
-vm.runInContext(
-  fs.readFileSync(path.join(__dirname, "../../web/control/control.js"), "utf8"),
-  context,
-);
-const settle = () => new Promise((r) => setImmediate(r));
+const assert = require("assert"),
+  { harness, settle } = require("./model_harness");
 (async () => {
+  const h = harness(),
+    m = h.model;
+  await m.refresh();
+  assert(m.usbStartDisabled);
+  h.advance(5001);
+  await m.refresh();
+  assert(!m.usbStartDisabled);
+  h.state.bt.state = "on";
+  await m.refresh();
+  assert(!m.usbStartDisabled);
+  h.state.session.enabled = true;
+  await m.refresh();
+  assert(m.usbStartDisabled);
+  h.state.session.enabled = false;
+  await m.refresh();
+  let release;
+  h.responder(async (route, method, body, previous) => {
+    if (route === "/usb/start")
+      await new Promise((r) => {
+        release = r;
+      });
+    return previous(route, method, body);
+  });
+  const starting = m.startUSB();
   await settle();
-  assert.equal(calls.filter((c) => c.method === "POST").length, 0, "page must not auto-start USB");
-  assert(get("usb-start").disabled, "account must stabilize");
-  now += 5001;
-  await vm.runInContext("refresh()", context);
-  assert(!get("usb-start").disabled);
-  bt.state = "on";
-  await vm.runInContext("refresh()", context);
-  assert(!get("usb-start").disabled, "Bluetooth permits concurrent USB");
-  bt.state = "off";
-  virtualEnabled = true;
-  await vm.runInContext("refresh()", context);
-  assert(get("usb-start").disabled);
-  virtualEnabled = false;
-  await vm.runInContext("refresh()", context);
-  const starting = get("usb-start").onclick();
-  await settle();
-  assert(
-    get("bt-start").disabled && get("enable").disabled,
-    "awaiting USB POST excludes other sources",
-  );
-  await get("usb-start").onclick();
-  assert.equal(calls.filter((c) => c.url.endsWith("/usb/start")).length, 1);
-  releaseStart();
+  assert(m.btStartDisabled && m.usbBusy);
+  await m.startUSB();
+  release();
   await starting;
+  assert(m.usbRunning);
+  const event = { currentTarget: { dataset: { slot: "0", identity: "/dev/ugen1.2" } } };
+  await m.assignUSB(event);
+  assert.deepEqual(h.calls.find((c) => c.route === "/usb/assign").body, {
+    slot: 0,
+    user_id: 1,
+    node: "/dev/ugen1.2",
+  });
+  await m.stopUSB();
+  h.responder((route, method, body, previous) => {
+    if (route === "/usb") throw Error("query_failed");
+    return previous(route, method, body);
+  });
+  await m.refresh();
+  assert(!m.ready && m.btStartDisabled && m.usbStartDisabled);
+  const malformed = harness();
+  malformed.state.bt.state = "unknown";
+  await malformed.model.refresh();
   assert(
-    !get("bt-start").disabled && get("enable").disabled && get("usb-start").disabled,
-    "physical transports coexist while phone output remains exclusive",
+    !malformed.model.ready && malformed.model.btStartDisabled && malformed.model.usbStartDisabled,
+    "unknown source state must fail closed",
   );
-  usb = {
-    ...usb,
-    pending: false,
-    bound: true,
-    devices: [
-      {
-        slot: 0,
-        user_id: 1,
-        node: "<img src=x>",
-        vid: 123,
-        pid: 456,
-        profile: "<script>unsafe</script>",
-        connected: true,
-        input_frames: 27,
-        bound: true,
-      },
-    ],
-  };
-  await vm.runInContext("refresh()", context);
-  assert.equal(get("usb-devices").children[0].children[0].textContent, "<script>unsafe</script>");
-  assert.equal(get("usb-devices").children[0].children[1].textContent, "<img src=x>");
-  usb.devices[0].model = "GameSir Nova 2 Lite Receiver";
-  await vm.runInContext("refresh()", context);
-  assert.equal(
-    get("usb-devices").children[0].children[0].textContent,
-    "GameSir Nova 2 Lite Receiver",
-  );
-  await get("usb-devices").querySelectorAll("button")[0].onclick();
-  const assignment = calls.find((c) => c.url.endsWith("/usb/assign"));
-  assert.deepEqual(assignment.body, { slot: 0, user_id: 1, node: "<img src=x>" });
-  await get("usb-stop").onclick();
-  assert(!get("bt-start").disabled && !get("enable").disabled);
-  failUsb = true;
-  await get("usb-start").onclick();
-  assert(get("usb-status").textContent.includes("usb_busy"));
-  assert(
-    get("usb-start").disabled && get("bt-start").disabled && get("enable").disabled,
-    "failed operation requires fresh source status",
-  );
-  failUsb = false;
-  await vm.runInContext("refresh()", context);
-  assert(!get("usb-start").disabled);
-  failQuery = true;
-  await vm.runInContext("refresh()", context);
-  assert(
-    get("usb-start").disabled && get("bt-start").disabled && get("enable").disabled,
-    "any source query failure must fail closed",
-  );
+  // An in-flight GET cannot roll back a later operation's result.
+  const a = harness(),
+    n = a.model;
+  await n.refresh();
+  a.advance(6000);
+  await n.refresh();
+  let finish;
+  a.responder(async (route, method, body, previous) => {
+    if (route === "/usb" && method === "GET" && !finish)
+      return new Promise((r) => {
+        finish = () => r({ state: "off", devices: [], bound: false, pending: false });
+      });
+    return previous(route, method, body);
+  });
+  const refreshing = n.refresh();
+  await settle();
+  await n.startUSB();
+  finish();
+  await refreshing;
+  assert.equal(n.usb.state, "on");
   console.log(
-    "USB UI: no auto-start, stable account, source conflicts, duplicate/pending start, safe DOM, errors and fail-closed polling PASS",
+    "USB model: coexistence, account gate, assignment identity, failures and stale polling PASS",
   );
-})().catch((error) => {
-  console.error(error);
+})().catch((e) => {
+  console.error(e);
   process.exitCode = 1;
 });

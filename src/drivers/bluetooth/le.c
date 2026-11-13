@@ -1,9 +1,9 @@
 /* Bluetooth LE game controllers: HID over GATT (HOGP), as current Xbox
  * controllers and many others speak it.
  *
- *   scanning    pads advertise; in the pairing window any that looks like a
- *               gamepad is taken, otherwise only paired ones (also behind
- *               resolvable private addresses, through their IRK)
+ *   scanning    unknown pads are recorded only; a user must select one.
+ *               Stored bonds reconnect normally, also behind resolvable
+ *               private addresses through their IRK.
  *   pairing     SMP as initiator, "Just Works": LE Secure Connections when
  *               both sides can (the controller does the P-256 maths), LE
  *               legacy otherwise. The keys the pad hands out are stored.
@@ -55,7 +55,7 @@
 #define SMP_DHKEY_CHECK 0x0D
 
 /* Connecting, one LE link at a time (le_link.cstate). */
-enum { LC_NONE, LC_SCAN_OFF, LC_CREATING, LC_PENDING, LC_CANCELLING, LC_BACKOFF };
+enum { LC_NONE, LC_SCAN_OFF, LC_CREATING, LC_PENDING, LC_BACKOFF };
 
 /* Pairing as initiator. */
 enum {
@@ -101,8 +101,6 @@ enum {
 #define T_LE_CONNECT 8000   /* LE Create Connection to Connection Complete */
 #define T_LE_SCAN_OFF 300   /* scan disable answered, or taken as done */
 #define T_LE_STATUS 1000    /* Create Connection's status, or taken as accepted */
-#define T_LE_CANCEL 1000    /* Create Connection Cancel answered */
-#define T_LE_CANCEL_END 300 /* then its Connection Complete (status 0x02) */
 #define T_LE_ADDR_GAP 2000  /* one attempt per address at most this often */
 #define T_LE_ADDR_REST 5000 /* after every retry was refused */
 #define LE_RETRIES 3        /* after a refusal (0x0c) */
@@ -371,8 +369,7 @@ static void le_scan_off(host_t *h, link_t *l, long now)
     h->le_scan_last = 0;
     h->le_scanning = 0;
     l->le_s.cstate = LC_SCAN_OFF;
-    l->le_s.st_scan = l->le_s.st_create = l->le_s.st_cancel = -1;
-    l->le_s.cancel_done = l->le_s.saw02 = 0;
+    l->le_s.st_scan = l->le_s.st_create = -1;
     l->le_s.t_cstate = now;
 }
 
@@ -431,63 +428,52 @@ static void le_connect(host_t *h, uint8_t type, const uint8_t *addr, db_rec *bon
     le_scan_off(h, l, now);
 }
 
+int le_pair_selected(host_t *h, uint8_t type, const unsigned char *addr)
+{
+    if (!h->le_ok || type > 1 || link_by_addr(h, addr) || le_held(h, addr, now_ms()))
+        return 0;
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (h->links[i].used && h->links[i].le && !h->links[i].connected)
+            return 0;
+    le_connect(h, type, addr, NULL);
+    return link_by_addr(h, addr) != NULL;
+}
+
 /* One try refused: a line on what each command answered, then wait and
  * try again, or give the address a rest. */
 static void le_try_again(host_t *h, link_t *l, long now)
 {
     le_link *e = &l->le_s;
-    char b1[12], b2[12], b3[12], who[48];
-
-    if (e->saw02 && memcmp(e->addr02, l->addr, 6) != 0)
-        snprintf(who, sizeof who, "ended a pending one to %s", addr_str(e->addr02));
-    else
-        snprintf(who, sizeof who, "%s", e->saw02 ? "ended a pending one (0x02)" : "nothing ended");
+    char scan_status[12], create_status[12];
     if (e->ctries > LE_RETRIES) {
-        log_line("le pad %s: connection refused (status %#04x) on %d tries, cancel needed; "
-                 "next attempt in %d s",
-                 addr_str(l->addr), e->st_create, e->ctries, T_LE_ADDR_REST / 1000);
+        log_line("le pad %s: radio busy after %d tries; foreign initiator preserved; retry allowed "
+                 "in %d s",
+                 addr_str(l->addr), e->ctries, T_LE_ADDR_REST / 1000);
         le_hold(h, l->addr, now + T_LE_ADDR_REST);
         link_free(h, l);
         return;
     }
-    LE_DIAG(h,
-            "le pad %s: try %d refused: scan off 0x200C %s, create 0x200D %s, "
-            "cancel 0x200E %s, %s; again in %ld ms",
-            addr_str(l->addr), e->ctries, st_str(e->st_scan, b1, sizeof b1),
-            st_str(e->st_create, b2, sizeof b2), st_str(e->st_cancel, b3, sizeof b3), who,
-            k_le_backoff[e->ctries - 1]);
+    LE_DIAG(h, "le pad %s: try %d refused: scan=%s create=%s; no foreign cancel, backoff=%ld ms",
+            addr_str(l->addr), e->ctries, st_str(e->st_scan, scan_status, sizeof scan_status),
+            st_str(e->st_create, create_status, sizeof create_status), k_le_backoff[e->ctries - 1]);
     e->cstate = LC_BACKOFF;
     e->t_retry = now + k_le_backoff[e->ctries - 1];
 }
 
-/* Command Complete: scan enable and Create Connection Cancel. */
+/* Only the scan operation needs its Command Complete reply here. */
 void le_on_cmd_complete(host_t *h, unsigned op, int status)
 {
-    link_t *l;
-    long now = now_ms();
-
-    if (op == OP_LE_SET_SCAN_ENABLE) {
-        if (h->le_scan_out > 0)
-            h->le_scan_out--;
-        l = le_connecting(h);
-        if (l && l->le_s.cstate == LC_SCAN_OFF) {
-            l->le_s.st_scan = status;
-            if (h->le_scan_out == 0)
-                le_create(h, l, now);
-        } else if (status != 0) {
-            LE_DIAG(h, "le: scan %s (0x200C) answered status %#04x", h->le_scan_last ? "on" : "off",
-                    status);
-        }
-    } else if (op == OP_LE_CREATE_CONN_CANCEL) {
-        l = le_connecting(h);
-        if (!l || l->le_s.cstate != LC_CANCELLING)
-            return;
-        l->le_s.st_cancel = status;
-        l->le_s.cancel_done = 1;
-        l->le_s.t_cstate = now;
-        /* 0x0c: nothing was pending, so no Connection Complete follows. */
-        if (status != 0 || l->le_s.saw02)
-            le_try_again(h, l, now);
+    if (op != OP_LE_SET_SCAN_ENABLE)
+        return;
+    if (h->le_scan_out > 0)
+        h->le_scan_out--;
+    link_t *l = le_connecting(h);
+    if (l && l->le_s.cstate == LC_SCAN_OFF) {
+        l->le_s.st_scan = status;
+        if (h->le_scan_out == 0)
+            le_create(h, l, now_ms());
+    } else if (status != 0) {
+        LE_DIAG(h, "le: scan %s answered status %#04x", h->le_scan_last ? "on" : "off", status);
     }
 }
 
@@ -510,13 +496,10 @@ void le_on_create_status(host_t *h, int status)
         return;
     }
     if (status == 0x0C) {
-        /* Command Disallowed: a connection is already being made, by a
-         * stale attempt or the system. It is cancelled, and ours tried
-         * again shortly. */
-        send_cmd(h, OP_LE_CREATE_CONN_CANCEL, NULL, 0);
-        l->le_s.cancel_needed = 1;
-        l->le_s.cstate = LC_CANCELLING;
-        l->le_s.t_cstate = now;
+        /* The busy initiator can belong to the system. Never cancel it.
+         * Keep only our bounded backoff; a new user click is required after
+         * these attempts are exhausted. */
+        le_try_again(h, l, now);
         return;
     }
     log_line("pad %s: connection refused (status %#04x)", addr_str(l->addr), status);
@@ -528,7 +511,7 @@ void le_on_create_status(host_t *h, int status)
  * pending in the controller would refuse every later one (0x0c). */
 void le_abandon(host_t *h, link_t *l)
 {
-    if (!l->connected && (l->le_s.cstate == LC_CREATING || l->le_s.cstate == LC_PENDING))
+    if (!l->connected && l->le_s.cstate == LC_PENDING && l->le_s.st_create == 0)
         send_cmd(h, OP_LE_CREATE_CONN_CANCEL, NULL, 0);
 }
 
@@ -589,14 +572,16 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
 
     bond = known_pad(h, type, addr);
     if (bond) {
+        if (profile_system_bluetooth(bond->vid, bond->pid))
+            return;
         for (i = 0; i < HOST_MAX_PADS; i++)
             if (h->links[i].used && h->links[i].le &&
                 memcmp(link_id_addr(&h->links[i]), bond->addr, 6) == 0)
                 return;
         le_connect(h, type, addr, bond);
-    } else if (now_ms() < h->pair_until && looks_like_gamepad(data, dlen)) {
-        log_line("found LE gamepad %s", addr_str(addr));
-        le_connect(h, type, addr, NULL);
+    } else if (now_ms() < h->scan_until && type <= 1 && looks_like_gamepad(data, dlen)) {
+        host_found(h, 1, type, addr, data, dlen, NULL, 9 + dlen < n,
+                   9 + dlen < n ? (int8_t)r[9 + dlen] : 0);
     }
 }
 
@@ -607,7 +592,7 @@ void le_poll(host_t *h, long now)
 
     if (!h->le_ok)
         return;
-    if (now < h->pair_until)
+    if (now < h->scan_until)
         want = 1;
     for (i = 0; i < h->ndb && !want; i++) {
         int linked = 0;
@@ -647,14 +632,6 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
     case 0x0A: /* Enhanced Connection Complete */
         if (len < 12)
             break;
-        if (ev[1] == 0x02 && (l = le_connecting(h)) && l->le_s.cstate == LC_CANCELLING) {
-            /* The end of the attempt our cancel stopped, whoever's. */
-            l->le_s.saw02 = 1;
-            memcpy(l->le_s.addr02, ev + 6, 6);
-            if (l->le_s.cancel_done)
-                le_try_again(h, l, now_ms());
-            break;
-        }
         l = link_by_addr(h, ev + 6);
         if (!l || !l->le || l->connected)
             break;
@@ -672,11 +649,8 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
         l->connected = 1;
         l->handle = le16(ev + 2) & 0x0FFF;
         l->t_conn = now_ms();
-        if (l->le_s.cancel_needed)
-            log_line("le pad %s: connected, handle %#05x (try %d, after a cancel)",
-                     addr_str(l->addr), l->handle, l->le_s.ctries);
-        else
-            log_line("le pad %s: connected, handle %#05x", addr_str(l->addr), l->handle);
+        log_line("le pad %s: connected, handle %#05x (try %d)", addr_str(l->addr), l->handle,
+                 l->le_s.ctries);
         l->le_s.cstate = LC_NONE;
         break;
 
@@ -1503,10 +1477,6 @@ void le_step(host_t *h, link_t *l, long now)
             if (now - e->t_cstate > T_LE_STATUS)
                 e->cstate = LC_PENDING;
             return;
-        case LC_CANCELLING:
-            if (now - e->t_cstate > (e->cancel_done ? T_LE_CANCEL_END : T_LE_CANCEL))
-                le_try_again(h, l, now);
-            return;
         case LC_BACKOFF:
             if (now >= e->t_retry) {
                 e->ctries++;
@@ -1518,8 +1488,10 @@ void le_step(host_t *h, link_t *l, long now)
         }
         if (now - l->t_create > T_LE_CONNECT) {
             char b1[12], b2[12];
-            send_cmd(h, OP_LE_CREATE_CONN_CANCEL, NULL, 0);
-            log_line("le pad %s: did not connect (scan off 0x200C %s, create 0x200D %s), cancelled",
+            if (e->st_create == 0)
+                send_cmd(h, OP_LE_CREATE_CONN_CANCEL, NULL, 0);
+            log_line("le pad %s: did not connect (scan off 0x200C %s, create 0x200D %s); only "
+                     "acknowledged own create may cancel",
                      addr_str(l->addr), st_str(e->st_scan, b1, sizeof b1),
                      st_str(e->st_create, b2, sizeof b2));
             le_hold(h, l->addr, now + T_LE_ADDR_GAP);

@@ -1,0 +1,198 @@
+.touch-view {
+  max-width: 920px;
+}
+.touch-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.touch-toolbar .stacked {
+  font-size: 0.85rem;
+}
+.touch-toolbar select {
+  max-width: 260px;
+}
+.controller-stage {
+  max-width: 740px;
+  margin: 28px auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.shoulders {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.padbutton {
+  touch-action: none;
+  min-width: 0;
+  padding: 8px;
+  font-weight: 600;
+  background: var(--raised);
+  min-height: 48px;
+}
+.padbutton.pressed {
+  color: var(--canvas);
+  background: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.pad-layout {
+  display: grid;
+  grid-template-columns: 1fr 160px 1fr;
+  align-items: center;
+  gap: 20px;
+}
+.dpad,
+.face-buttons {
+  display: grid;
+  grid-template: repeat(3, 48px) / repeat(3, minmax(0, 48px));
+  justify-content: center;
+  gap: 5px;
+}
+.key-up {
+  grid-area: 1 / 2;
+}
+.key-left {
+  grid-area: 2 / 1;
+}
+.key-right {
+  grid-area: 2 / 3;
+}
+.key-down {
+  grid-area: 3 / 2;
+}
+.face-buttons .padbutton {
+  font-size: 26px;
+  font-weight: 400;
+}
+.dpad .padbutton {
+  font-size: 22px;
+}
+.system-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.system-keys .row {
+  flex-wrap: nowrap;
+}
+.system-keys .row button {
+  flex: 1;
+  font-size: 12px;
+}
+.ps-key {
+  width: 56px;
+  align-self: center;
+  border-color: var(--accent);
+}
+.stick-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 24px;
+}
+.stick-area {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: center;
+}
+.stick {
+  width: 120px;
+  height: 120px;
+  position: relative;
+  border: 1px solid #555555;
+  border-radius: 50%;
+  background: var(--canvas);
+  touch-action: none;
+}
+.stick span {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  left: calc(50% - 25px);
+  top: calc(50% - 25px);
+  border: 1px solid #777777;
+  border-radius: 50%;
+  background: #383838;
+  pointer-events: none;
+}
+.stick[aria-disabled="true"] {
+  opacity: 0.4;
+}
+.touch-hint {
+  font-size: 0.85rem;
+  margin: 10px 0;
+}
+.focus-mode .app-header,
+.focus-mode .navigation,
+.focus-mode .page-heading,
+.focus-mode .touch-toolbar .stacked,
+.focus-mode #enable,
+.focus-mode .touch-hint,
+.focus-mode details,
+.focus-mode .preview-notice {
+  display: none;
+}
+.focus-mode .app-shell {
+  display: block;
+  min-height: 0;
+}
+.focus-mode main {
+  padding: 12px;
+}
+.focus-mode .controller-stage {
+  margin: 12px auto;
+}
+@media (max-width: 640px) {
+  .controller-stage {
+    padding: 14px;
+  }
+  .pad-layout {
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .system-keys {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .system-keys .touchpad-key {
+    flex: 1 1 100%;
+  }
+  .dpad,
+  .face-buttons {
+    grid-template: repeat(3, 44px) / repeat(3, minmax(0, 44px));
+    gap: 3px;
+  }
+  .padbutton {
+    min-height: 44px;
+    padding: 4px;
+  }
+  .shoulders {
+    gap: 8px;
+  }
+  .stick-area {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .stick {
+    width: 110px;
+    height: 110px;
+  }
+  .stick-area > button {
+    width: 80px;
+  }
+}

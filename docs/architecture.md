@@ -65,10 +65,14 @@ settings.json 仍保存 UI/core 偏好，当前支持 翻转 ABXY 按键与全�
 
 ## HTTP、存储与日志
 
-/api/v1/system、session、users、settings、logs、diagnostics、test-controller、bluetooth、usb；写操作使用随机令牌及精确Origin/Host校验，无通配CORS。静态页 /、/controller、/settings；暂用有界HTTP轮询。
+/api/v1/system、session、users、settings、logs、diagnostics、test-controller、bluetooth、usb；蓝牙scan只发现、pair只接受用户选择的discovery_id，停止发现不关闭连接；写操作使用随机令牌及精确Origin/Host校验，无通配CORS。静态页 /、/controller、/settings；暂用有界HTTP轮询。
 
 settings.json版本1，完整校验后私有临时文件+sync+rename。蓝牙bonds.db独立保存，0600权限，不修改系统配对数据库。USB不保存配对密钥。
 
-记录级别与页面过滤级别独立，Off/Error/Warn/Info/Debug/Trace。输入源启停、协议匹配、初始化、设备识别、账号绑定、清理与错误需可追踪，不记录令牌、密钥或无限量原始载荷。
+运行日志统一经过离线 vendored rxi/log.c 和 `src/logging.c` 薄适配，核心事件同时保留 API 环形快照。记录级别与页面过滤级别独立，Off/Error/Warn/Info/Debug/Trace。输入源启停、协议匹配、初始化、设备识别、账号绑定、清理与错误需可追踪，不记录令牌、密钥或无限量原始载荷。
 
 主机测试与CI编译不能证明原生游戏输入和原装手柄共存。验收见validation.md与usb.md。
+
+## 管理界面
+
+控制面和设置共用管理文档，以 `#controllers` / `#logs` / `#settings` 切换；旧 `/settings` 为兼容入口。Alpine CSP固定离线打包，列表按稳定身份复用节点，HTTP传输、页面状态、文案及导航分层。手机 `/controller` 保持独立文档和原生输入生命周期。H5按已确认骨架重写为根目录 `web/index.html`、`controller.html` 与各自逻辑文件，旧页面目录已移除。外观偏好只在浏览器存储，后端手柄配置与配对存储不变；详见根目录 design.md。

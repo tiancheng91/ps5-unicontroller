@@ -1,0 +1,10 @@
+{
+  "name": "ps5-unicontroller-ui-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "node tests/web/test_browser.cjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.2"
+  }
+}

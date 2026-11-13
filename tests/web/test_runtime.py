@@ -77,6 +77,7 @@ with tempfile.TemporaryDirectory() as directory:
         status, users = request("GET", "/api/v1/users")
         assert status == 200
         assert [user["user_id"] for user in users["users"]] == [1, 2, 3, 4]
+        assert users["preferred_user_id"] == 1
         assert request("GET", "/api/v1/usb")[1]["state"] == "off"
         assert (
             request("POST", "/api/v1/usb/start", {"user_id": 1}, auth=False)[0] == 403
@@ -102,7 +103,11 @@ with tempfile.TemporaryDirectory() as directory:
             request("POST", "/api/v1/bluetooth/start", {"user_id": 1}, auth=False)[0]
             == 403
         )
-        assert request("POST", "/api/v1/bluetooth/pair", {"seconds": 60})[0] == 409
+        assert request("POST", "/api/v1/bluetooth/scan", {"seconds": 60})[0] == 409
+        assert request("POST", "/api/v1/bluetooth/pair", {"seconds": 60})[0] == 400
+        assert request("POST", "/api/v1/bluetooth/pair", {"discovery_id": 7})[0] == 409
+        assert request("POST", "/api/v1/bluetooth/pair", {"discovery_id": 0})[0] == 400
+        assert request("POST", "/api/v1/bluetooth/scan/stop")[0] == 409
         assert request("POST", "/api/v1/bluetooth/start", {"user_id": 5})[0] == 409
         assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 202
         assert request("POST", "/api/v1/test-controller", {"user_id": 1})[0] == 409
@@ -149,6 +154,29 @@ with tempfile.TemporaryDirectory() as directory:
             result = connection.getresponse()
             assert result.status == 200 and result.read().startswith(b"<!doctype html>")
             connection.close()
+        for removed in [
+            "/assets/control/control.js",
+            "/assets/controller/controller.js",
+            "/assets/shared/ui.js",
+        ]:
+            assert request("GET", removed)[0] == 404
+        # Production embeds binary icons and pinned scripts intact; demo data stays outside.
+        for resource, local_path, mime in [
+            ("/assets/icon.png", "web/icon.png", "image/png"),
+            ("/assets/brand.svg", "web/brand.svg", "image/svg+xml"),
+            (
+                "/assets/vendor/alpine-csp-3.14.9.min.js",
+                "web/vendor/alpine-csp-3.14.9.min.js",
+                "application/javascript",
+            ),
+        ]:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            c.request("GET", resource)
+            response = c.getresponse()
+            assert response.status == 200 and mime in response.getheader("Content-Type")
+            assert response.read() == Path(local_path).read_bytes()
+            c.close()
+        assert request("GET", "/__preview__.js")[0] == 404
         assert (
             request("POST", "/api/v1/test-controller", {"user_id": 1}, auth=False)[0]
             == 403

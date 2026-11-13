@@ -5,6 +5,7 @@ struct uc_asset {
     const char *path;
     const char *type;
     const char *body;
+    size_t size;
 };
 extern const struct uc_asset uc_assets[];
 extern const size_t uc_assets_count;

@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>UniController · 布局骨架评审</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --canvas: #111111;
+        --panel: #1c1c1c;
+        --line: #383838;
+        --ink: #f2f2f2;
+        --muted: #a4a4a4;
+        font:
+          15px/1.5 "DIN Alternate",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      select {
+        min-height: 44px;
+        padding: 9px 15px;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover,
+      select:hover {
+        border-color: var(--muted);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--ink);
+        outline-offset: 4px;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.primary {
+        background: var(--ink);
+        color: var(--canvas);
+        border-color: var(--ink);
+        font-weight: 700;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 28px;
+        letter-spacing: -0.04em;
+      }
+      h2 {
+        font-size: 16px;
+      }
+      h3 {
+        font-size: 16px;
+        font-weight: 600;
+      }
+      p {
+        color: var(--muted);
+      }
+      small,
+      .small {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .review-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 28px;
+        border-bottom: 1px dashed var(--line);
+        background: #222222;
+      }
+      .review-bar strong {
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+      }
+      .scenarios {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-size: 12px;
+      }
+      .scenarios legend {
+        float: left;
+        margin-right: 12px;
+        color: var(--muted);
+      }
+      .scenarios label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        min-height: 32px;
+      }
+      input[type="radio"],
+      input[type="checkbox"] {
+        accent-color: var(--ink);
+        width: 17px;
+        height: 17px;
+      }
+      .app-header {
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 32px;
+        border-bottom: 1px solid var(--line);
+      }
+      .wordmark {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.05em;
+      }
+      .wordmark span {
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--muted);
+        letter-spacing: 0.03em;
+        margin-left: 14px;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 196px minmax(0, 1fr);
+        min-height: calc(100vh - 140px);
+      }
+      .navigation {
+        padding: 26px 16px;
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .navigation button {
+        text-align: left;
+        border-color: transparent;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .navigation .index {
+        font:
+          11px Consolas,
+          monospace;
+        color: var(--muted);
+      }
+      .navigation button[aria-current="page"] {
+        background: #292929;
+        border-color: var(--line);
+      }
+      .navigation .secondary-nav {
+        margin-top: auto;
+        padding: 32px 14px 4px;
+      }
+      main {
+        min-width: 0;
+        padding: 30px 36px 48px;
+      }
+      .view {
+        max-width: 1050px;
+      }
+      .page-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+      .page-heading p {
+        margin-top: 5px;
+        font-size: 13px;
+      }
+      .service-strip {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 24px;
+        margin-bottom: 30px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+      .service-strip span {
+        color: var(--muted);
+      }
+      .text-button {
+        min-height: 36px;
+        padding: 4px 0;
+        border: 0;
+        text-decoration: underline;
+        text-underline-offset: 4px;
+      }
+      .section-heading {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 0 14px;
+      }
+      .device-list {
+        display: grid;
+        gap: 12px;
+      }
+      .device-row {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--panel);
+      }
+      .device-placeholder {
+        width: 58px;
+        height: 58px;
+        border: 1px dashed #666666;
+        background: #292929;
+        display: grid;
+        place-content: center;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .device-title {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+      }
+      .tag {
+        padding: 2px 7px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+        border-radius: 3px;
+      }
+      .device-metadata {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px 18px;
+        margin-top: 7px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .device-state {
+        color: var(--ink);
+      }
+      .device-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .device-actions button {
+        font-size: 13px;
+      }
+      .paired-group {
+        margin-top: 30px;
+      }
+      .paired-row {
+        padding: 16px 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .paired-row p {
+        margin-top: 3px;
+        font-size: 12px;
+      }
+      .paired-row button {
+        border: 0;
+        font-size: 13px;
+      }
+      .empty-state {
+        border: 1px dashed var(--line);
+        padding: 60px 24px;
+        text-align: center;
+      }
+      .empty-state h2 {
+        margin: 14px 0 8px;
+        font-size: 19px;
+      }
+      .empty-state p {
+        max-width: 350px;
+        margin: 0 auto 20px;
+        font-size: 13px;
+      }
+      .empty-state .ghost {
+        height: 42px;
+        width: 100px;
+        border-radius: 8px;
+        background: #303030;
+        margin: auto;
+      }
+      .review-note {
+        margin-top: 36px;
+        border-top: 1px dashed var(--line);
+        padding-top: 14px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .settings-group {
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--panel);
+        margin-bottom: 24px;
+        padding: 0 20px;
+      }
+      .setting {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .setting:last-child {
+        border: 0;
+      }
+      .setting p {
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .setting label {
+        flex-shrink: 0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .settings-title {
+        margin-bottom: 12px;
+      }
+      .switch {
+        width: 42px;
+        height: 24px;
+        appearance: none;
+        border: 1px solid #666666;
+        border-radius: 20px;
+        background: #292929;
+        cursor: pointer;
+        position: relative;
+      }
+      .switch::before {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        top: 3px;
+        left: 3px;
+        background: #999999;
+        border-radius: 50%;
+      }
+      .switch:checked {
+        background: #dddddd;
+      }
+      .switch:checked::before {
+        left: 21px;
+        background: #222222;
+      }
+      .log-toolbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+      }
+      .log-skeleton {
+        padding: 20px;
+        border: 1px solid var(--line);
+        background: #171717;
+        min-height: 300px;
+      }
+      .bone {
+        height: 10px;
+        border-radius: 3px;
+        background: #343434;
+        margin-bottom: 16px;
+      }
+      .bone:nth-child(3n) {
+        width: 64%;
+      }
+      .bone:nth-child(3n + 1) {
+        width: 91%;
+      }
+      .bone:nth-child(3n + 2) {
+        width: 78%;
+      }
+      .touch-placeholder {
+        min-height: 280px;
+        display: grid;
+        place-content: center;
+        border: 1px dashed var(--line);
+        text-align: center;
+        background: var(--panel);
+      }
+      .touch-placeholder strong {
+        font-size: 20px;
+        color: #888888;
+      }
+      .touch-placeholder p {
+        margin-top: 10px;
+        font-size: 13px;
+      }
+      dialog {
+        position: fixed;
+        inset: 0 0 0 auto;
+        margin: 0;
+        padding: 0;
+        width: min(450px, 100%);
+        height: 100%;
+        max-height: 100%;
+        max-width: 100%;
+        background: var(--panel);
+        color: var(--ink);
+        border: 0;
+        border-left: 1px solid var(--line);
+      }
+      dialog::backdrop {
+        background: #00000099;
+      }
+      .drawer-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+      .drawer-header h2 {
+        font-size: 20px;
+      }
+      .drawer-body {
+        padding: 24px;
+      }
+      .drawer-body > p {
+        font-size: 13px;
+        margin-bottom: 20px;
+      }
+      .search-state {
+        border: 1px dashed var(--line);
+        padding: 20px;
+        margin-bottom: 24px;
+      }
+      .search-state p {
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .search-state button {
+        margin-top: 16px;
+        width: 100%;
+      }
+      .found-device {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .found-device p {
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .drawer-footer {
+        margin-top: 28px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      @media (min-width: 1500px) {
+        main {
+          padding-left: 56px;
+        }
+      }
+      @media (max-width: 760px) {
+        .review-bar {
+          align-items: flex-start;
+          flex-direction: column;
+          padding: 10px 16px;
+          gap: 4px;
+        }
+        .scenarios {
+          flex-wrap: wrap;
+          gap: 4px 14px;
+        }
+        .app-header {
+          height: 68px;
+          padding: 0 16px;
+        }
+        .wordmark {
+          font-size: 21px;
+        }
+        .wordmark span {
+          display: none;
+        }
+        .shell {
+          display: block;
+        }
+        .navigation {
+          position: sticky;
+          top: 0;
+          z-index: 1;
+          flex-direction: row;
+          padding: 8px 12px;
+          gap: 4px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          background: var(--canvas);
+        }
+        .navigation button {
+          flex: 1;
+          justify-content: center;
+          padding: 8px 4px;
+          font-size: 13px;
+          white-space: nowrap;
+        }
+        .navigation .index,
+        .navigation .secondary-nav {
+          display: none;
+        }
+        main {
+          padding: 24px 16px 32px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+        .page-heading {
+          gap: 12px;
+          align-items: flex-start;
+        }
+        .page-heading > button {
+          font-size: 13px;
+          padding: 10px 12px;
+        }
+        .page-heading p {
+          max-width: 180px;
+        }
+        .service-strip {
+          margin-bottom: 22px;
+          gap: 6px 16px;
+        }
+        .device-row {
+          grid-template-columns: 42px minmax(0, 1fr);
+          gap: 14px;
+          padding: 16px;
+        }
+        .device-placeholder {
+          width: 42px;
+          height: 48px;
+        }
+        .device-actions {
+          grid-column: 2;
+        }
+        .device-actions button {
+          flex: 1;
+        }
+        .device-metadata {
+          gap: 4px 14px;
+        }
+        .setting {
+          align-items: flex-start;
+          gap: 14px;
+        }
+        .setting select {
+          max-width: 125px;
+        }
+        .settings-group {
+          padding: 0 16px;
+        }
+        .drawer-header,
+        .drawer-body {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="review-bar">
+      <strong>布局骨架 01 · 仅供评审 · 不接 API，不操作设备</strong>
+      <fieldset class="scenarios">
+        <legend>示例状态</legend>
+        <label><input type="radio" name="scenario" value="connected" checked />有设备</label>
+        <label><input type="radio" name="scenario" value="empty" />无设备</label>
+        <label><input type="radio" name="scenario" value="off" />蓝牙未启用</label>
+      </fieldset>
+    </div>
+    <header class="app-header">
+      <div class="wordmark">unicontroller<span>FOR PS5</span></div>
+      <span class="small">控制面 / 布局预览</span>
+    </header>
+    <div class="shell">
+      <nav class="navigation" aria-label="主要导航">
+        <button data-view="devices" aria-current="page"><span class="index">01</span>手柄</button>
+        <button data-view="test"><span class="index">02</span>模拟手柄</button>
+        <button data-view="logs"><span class="index">03</span>日志</button>
+        <button data-view="settings"><span class="index">04</span>设置</button>
+        <div class="secondary-nav small">UniController for PS5<br />本地设备管理</div>
+      </nav>
+      <main>
+        <section class="view" id="devices">
+          <div class="page-heading">
+            <div>
+              <h1 tabindex="-1">手柄</h1>
+              <p>查看连接状态，管理你的手柄。</p>
+            </div>
+            <button class="primary" data-action="add">新增蓝牙设备</button>
+          </div>
+          <div class="service-strip">
+            <div>蓝牙 <span data-bt-state>已启用</span></div>
+            <div>USB <span>已启用</span></div>
+            <button class="text-button" data-view="settings">连接服务设置</button>
+          </div>
+          <div id="connected-content">
+            <div class="section-heading">
+              <h2>已连接</h2>
+              <span class="small" id="device-count">2 个设备</span>
+            </div>
+            <div class="device-list">
+              <article class="device-row" id="bt-device">
+                <div class="device-placeholder" aria-hidden="true">占位</div>
+                <div>
+                  <div class="device-title">
+                    <h3>Switch Pro Controller</h3>
+                    <span class="tag">蓝牙</span>
+                  </div>
+                  <div class="device-metadata">
+                    <span class="device-state">已连接</span><span>电量 75%</span
+                    ><span>输入正常</span>
+                  </div>
+                </div>
+                <div class="device-actions">
+                  <button data-device="Switch Pro Controller">设备设置</button>
+                </div>
+              </article>
+              <article class="device-row">
+                <div class="device-placeholder" aria-hidden="true">占位</div>
+                <div>
+                  <div class="device-title">
+                    <h3>Xbox Controller</h3>
+                    <span class="tag">USB</span>
+                  </div>
+                  <div class="device-metadata">
+                    <span class="device-state">已连接</span><span>有线连接</span
+                    ><span>输入正常</span>
+                  </div>
+                </div>
+                <div class="device-actions">
+                  <button data-device="Xbox Controller">设备设置</button>
+                </div>
+              </article>
+            </div>
+          </div>
+          <div class="empty-state" id="empty-content" hidden>
+            <div class="ghost" aria-hidden="true"></div>
+            <h2>还没有连接手柄</h2>
+            <p>蓝牙手柄可通过下方入口添加；USB 手柄使用数据线连接。</p>
+            <button class="primary" data-action="add">新增蓝牙设备</button>
+          </div>
+          <div class="paired-group">
+            <div class="section-heading">
+              <h2>已配对，未连接</h2>
+              <span class="small">蓝牙设备</span>
+            </div>
+            <div class="paired-row">
+              <div>
+                <h3>GameSir Nova Lite</h3>
+                <p>开启手柄后可尝试回连</p>
+              </div>
+              <button data-action="saved">管理</button>
+            </div>
+          </div>
+          <p class="review-note">
+            评审说明：蓝牙与 USB 共用设备列表；首屏不展示账号选择、技术 JSON
+            或协议参数。连接服务与新增配对是不同操作，服务开关放在设置。
+          </p>
+        </section>
+        <section class="view" id="test" hidden>
+          <div class="page-heading">
+            <div>
+              <h1 tabindex="-1">模拟手柄</h1>
+              <p>独立的测试入口，默认关闭。</p>
+            </div>
+            <button class="primary" data-action="test">启用模拟手柄</button>
+          </div>
+          <div class="touch-placeholder">
+            <strong>触控操作区域占位</strong>
+            <p>本轮不设计手柄外形与按键样式</p>
+          </div>
+          <p class="review-note">
+            评审说明：实体手柄管理与测试输入分开；确认布局后再决定触控页的实际呈现。
+          </p>
+        </section>
+        <section class="view" id="logs" hidden>
+          <div class="page-heading">
+            <div>
+              <h1 tabindex="-1">日志</h1>
+              <p>连接与输入故障的诊断入口。</p>
+            </div>
+            <button data-action="mock">导出诊断</button>
+          </div>
+          <div class="log-toolbar">
+            <select aria-label="页面日志级别">
+              <option>Info</option>
+              <option>Debug</option>
+              <option>Trace</option>
+              <option>Warn</option>
+              <option>Error</option></select
+            ><button data-action="pause">暂停刷新</button><button data-action="mock">复制</button>
+          </div>
+          <div class="log-skeleton" aria-label="日志行占位">
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+            <div class="bone"></div>
+          </div>
+          <details class="review-note">
+            <summary>高级诊断</summary>
+            <p>系统信息、蓝牙与 USB 状态快照放在这里，不占首页空间。</p>
+          </details>
+        </section>
+        <section class="view" id="settings" hidden>
+          <div class="page-heading">
+            <div>
+              <h1 tabindex="-1">设置</h1>
+              <p>连接服务、默认手柄行为与页面偏好。</p>
+            </div>
+          </div>
+          <h2 class="settings-title">连接服务</h2>
+          <div class="settings-group">
+            <div class="setting">
+              <div>
+                <h3>蓝牙服务</h3>
+                <p>启用连接与已配对设备回连；新增设备从“手柄”页进入。</p>
+              </div>
+              <label
+                ><input
+                  class="switch"
+                  id="bt-service"
+                  type="checkbox"
+                  role="switch"
+                  aria-label="蓝牙服务"
+                  checked
+              /></label>
+            </div>
+            <div class="setting">
+              <div>
+                <h3>USB 服务</h3>
+                <p>启用有线设备检测与输入。</p>
+              </div>
+              <label
+                ><input class="switch" type="checkbox" role="switch" aria-label="USB 服务" checked
+              /></label>
+            </div>
+            <div class="setting">
+              <div>
+                <h3>自动启动蓝牙</h3>
+                <p>启用后仍保留 5 秒延迟。</p>
+              </div>
+              <select aria-label="自动启动蓝牙">
+                <option>关闭</option>
+                <option>登录后启动</option>
+                <option>休眠恢复（实验）</option>
+              </select>
+            </div>
+          </div>
+          <h2 class="settings-title">默认手柄设置</h2>
+          <div class="settings-group">
+            <div class="setting">
+              <div>
+                <h3>震动</h3>
+                <p>允许支持的手柄接收震动反馈。</p>
+              </div>
+              <label
+                ><input class="switch" type="checkbox" role="switch" aria-label="震动" checked
+              /></label>
+            </div>
+            <div class="setting">
+              <div>
+                <h3>翻转 ABXY 按键</h3>
+                <p>同时交换 A/B 与 X/Y。</p>
+              </div>
+              <label
+                ><input class="switch" type="checkbox" role="switch" aria-label="翻转 ABXY 按键"
+              /></label>
+            </div>
+            <div class="setting">
+              <div><h3>按键映射</h3></div>
+              <button data-action="mapping">配置</button>
+            </div>
+          </div>
+          <h2 class="settings-title">界面与应用</h2>
+          <div class="settings-group">
+            <div class="setting">
+              <h3>语言</h3>
+              <select aria-label="语言">
+                <option>简体中文</option>
+                <option>English</option>
+              </select>
+            </div>
+            <div class="setting">
+              <h3>主题</h3>
+              <select aria-label="主题">
+                <option>主题色占位</option>
+              </select>
+            </div>
+            <div class="setting">
+              <h3>记录日志级别</h3>
+              <select aria-label="记录日志级别">
+                <option>Info</option>
+                <option>Debug</option>
+                <option>Trace</option>
+                <option>Warn</option>
+                <option>Error</option>
+                <option>Off</option>
+              </select>
+            </div>
+            <div class="setting">
+              <h3>主屏幕图标</h3>
+              <button data-action="mock">管理</button>
+            </div>
+            <div class="setting">
+              <div>
+                <h3>停止 UniController</h3>
+                <p>关闭本应用的连接服务与虚拟输入。</p>
+              </div>
+              <button data-action="mock">停止应用</button>
+            </div>
+          </div>
+          <p class="review-note">
+            评审说明：这些控件仅展示布局和分组，不保存配置。设备设置是否支持逐设备覆盖，需要先核对现有后端范围。
+          </p>
+        </section>
+      </main>
+    </div>
+    <dialog id="add-drawer" aria-labelledby="add-title">
+      <div class="drawer-header">
+        <h2 id="add-title">新增蓝牙设备</h2>
+        <button data-close>关闭</button>
+      </div>
+      <div class="drawer-body">
+        <p>让手柄进入蓝牙配对模式，然后选择搜索到的设备。</p>
+        <div class="search-state">
+          <strong id="search-title">搜索蓝牙设备</strong>
+          <p id="search-description">每次搜索持续 60 秒，可手动停止。</p>
+          <button class="primary" id="search-button">开始搜索</button>
+        </div>
+        <div id="search-results" hidden>
+          <h3>发现的设备</h3>
+          <div class="found-device">
+            <div>
+              <strong>GameSir Controller</strong>
+              <p>设备标识占位 · 蓝牙</p>
+            </div>
+            <button id="pair-button">配对</button>
+          </div>
+        </div>
+        <p class="drawer-footer">
+          骨架示例：搜索与配对只改变本页状态，不发出任何请求。蓝牙关闭时，这里提供“启用蓝牙并搜索”，不用先去设置页。
+        </p>
+      </div>
+    </dialog>
+    <dialog id="device-drawer" aria-labelledby="device-title">
+      <div class="drawer-header">
+        <h2 id="device-title">设备设置</h2>
+        <button data-close>关闭</button>
+      </div>
+      <div class="drawer-body">
+        <h3 id="selected-device">设备名称占位</h3>
+        <p>连接状态、设备标识与协议等详细信息集中在此处。</p>
+        <div class="log-skeleton" style="min-height: 180px">
+          <div class="bone"></div>
+          <div class="bone"></div>
+          <div class="bone"></div>
+          <div class="bone"></div>
+        </div>
+        <p class="drawer-footer">
+          本轮只确认详情入口和面板位置，具体设置项与生效范围待 review。这里不推定已实现逐设备配置。
+        </p>
+      </div>
+    </dialog>
+    <dialog id="placeholder-drawer" aria-labelledby="placeholder-title">
+      <div class="drawer-header">
+        <h2 id="placeholder-title">功能区域占位</h2>
+        <button data-close>关闭</button>
+      </div>
+      <div class="drawer-body">
+        <p id="placeholder-description"></p>
+        <div class="log-skeleton" style="min-height: 200px">
+          <div class="bone"></div>
+          <div class="bone"></div>
+          <div class="bone"></div>
+          <div class="bone"></div>
+        </div>
+        <p class="drawer-footer">仅供布局评审，不调用接口或保存数据。</p>
+      </div>
+    </dialog>
+    <script>
+      "use strict";
+      const $ = (selector) => document.querySelector(selector);
+      let bluetoothEnabled = true;
+      let opener = null;
+      function showView(id) {
+        document.querySelectorAll(".view").forEach((view) => {
+          view.hidden = view.id !== id;
+        });
+        document.querySelectorAll(".navigation button").forEach((button) => {
+          if (button.dataset.view === id) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+        $("#" + id + " h1").focus();
+      }
+      function openDrawer(id, button) {
+        opener = button;
+        $("#" + id).showModal();
+      }
+      function prepareSearch() {
+        $("#search-title").textContent = bluetoothEnabled ? "搜索蓝牙设备" : "蓝牙尚未启用";
+        $("#search-description").textContent = bluetoothEnabled
+          ? "每次搜索持续 60 秒，可手动停止。"
+          : "先启用蓝牙服务，再进入限时搜索。";
+        $("#search-button").textContent = bluetoothEnabled ? "开始搜索" : "启用蓝牙并搜索";
+        $("#search-results").hidden = true;
+        $("#pair-button").textContent = "配对";
+        $("#pair-button").disabled = false;
+      }
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        if (button.dataset.view) {
+          showView(button.dataset.view);
+          return;
+        }
+        if (button.hasAttribute("data-close")) {
+          button.closest("dialog").close();
+          return;
+        }
+        if (button.dataset.action === "add") {
+          prepareSearch();
+          openDrawer("add-drawer", button);
+          return;
+        }
+        if (button.dataset.device) {
+          $("#selected-device").textContent = button.dataset.device;
+          openDrawer("device-drawer", button);
+          return;
+        }
+        if (button.dataset.action === "pause") {
+          button.textContent = button.textContent === "暂停刷新" ? "继续刷新" : "暂停刷新";
+          return;
+        }
+        if (button.dataset.action) {
+          const text = {
+            saved: "已配对设备的详细信息、忘记设备入口。",
+            test: "测试输入的启用与释放控制。",
+            mapping: "按键映射编辑区域。",
+            mock: "此操作仅为入口占位，未执行实际功能。",
+          };
+          $("#placeholder-description").textContent = text[button.dataset.action];
+          openDrawer("placeholder-drawer", button);
+        }
+      });
+      $("#search-button").addEventListener("click", () => {
+        if (!$("#search-results").hidden) {
+          prepareSearch();
+          return;
+        }
+        bluetoothEnabled = true;
+        $("#bt-service").checked = true;
+        $("[data-bt-state]").textContent = "已启用";
+        $("#search-title").textContent = "正在搜索 · 60 秒（示例）";
+        $("#search-description").textContent = "结果区展示待配对设备，不与已连接列表混排。";
+        $("#search-button").textContent = "停止搜索";
+        $("#search-results").hidden = false;
+      });
+      $("#pair-button").addEventListener("click", (event) => {
+        event.target.textContent = "已配对（示例）";
+        event.target.disabled = true;
+      });
+      $("#bt-service").addEventListener("change", (event) => {
+        bluetoothEnabled = event.target.checked;
+        $("[data-bt-state]").textContent = bluetoothEnabled ? "已启用" : "未启用";
+      });
+      document.querySelectorAll('[name="scenario"]').forEach((radio) =>
+        radio.addEventListener("change", () => {
+          const empty = radio.value === "empty";
+          $("#empty-content").hidden = !empty;
+          $("#connected-content").hidden = empty;
+          $("#bt-device").hidden = radio.value === "off";
+          $("#device-count").textContent = radio.value === "off" ? "1 个设备" : "2 个设备";
+          bluetoothEnabled = radio.value !== "off";
+          $("#bt-service").checked = bluetoothEnabled;
+          $("[data-bt-state]").textContent = bluetoothEnabled ? "已启用" : "未启用";
+        }),
+      );
+      document.querySelectorAll("dialog").forEach((dialog) =>
+        dialog.addEventListener("close", () => {
+          if (opener) opener.focus();
+        }),
+      );
+    </script>
+  </body>
+</html>

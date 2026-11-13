@@ -128,10 +128,6 @@ const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid
     (void)pid;
     return profile ? profile : "Controller";
 }
-void log_set_level(int level)
-{
-    assert(level >= 0 && level <= 5);
-}
 static host_t *open_host(const char *path, const host_events *events, void *userdata)
 {
     assert(!strcmp(path, "/tmp/test-bonds.db"));
@@ -188,9 +184,27 @@ int host_transport_lost(const host_t *h)
     assert(h == &fake);
     return lost;
 }
-int host_pair(host_t *h, int seconds)
+int host_scan(host_t *h, int seconds)
 {
-    assert(h == &fake && seconds == 30);
+    assert(h == &fake && (seconds == 30 || seconds == 0));
+    return 1;
+}
+int host_pair_device(host_t *h, uint32_t id)
+{
+    assert(h == &fake);
+    return id == 7;
+}
+int host_discovered_count(const host_t *h)
+{
+    assert(h == &fake);
+    return 1;
+}
+int host_discovered_get(const host_t *h, int index, host_discovered_info *out)
+{
+    assert(h == &fake && index == 0);
+    *out = (host_discovered_info){.id = 7, .state = "discovered", .has_rssi = 1, .rssi = -45};
+    memcpy(out->addr, info.addr, 6);
+    snprintf(out->name, sizeof out->name, "pad\"\nname");
     return 1;
 }
 int host_forget(host_t *h, const unsigned char addr[6])
@@ -199,7 +213,12 @@ int host_forget(host_t *h, const unsigned char addr[6])
     memcpy(forgotten, addr, 6);
     return 1;
 }
-int host_pairing_left(const host_t *h)
+uint32_t host_scan_id(const host_t *h)
+{
+    assert(h == &fake);
+    return 1;
+}
+int host_scan_left(const host_t *h)
 {
     assert(h == &fake);
     return 7;
@@ -262,9 +281,12 @@ int main(void)
     assert(len && strlen(json) == len);
     assert(strstr(json, "\"state\":\"on\"") && strstr(json, "\"vid\":\"054C\"") &&
            strstr(json, "\"battery\":80") && strstr(json, "DualSense_unsafe_"));
+    assert(strstr(json, "\"discovered\":[") && strstr(json, "\"scan_seconds\":7") &&
+           strstr(json, "pad\\\"\\u000aname"));
     char small[8];
     assert(uc_bt_status_json(small, sizeof(small)) == 0 && !small[0]);
-    assert(uc_bt_pair(30) == 0 && uc_bt_pair(121) == -1);
+    assert(uc_bt_scan(30) == 0 && uc_bt_scan(121) == -1 && uc_bt_scan(0) == 0);
+    assert(uc_bt_pair(7) == 0 && uc_bt_pair(8) == -1);
     assert(uc_bt_forget("06:05:04:03:02:01") == 0 && !memcmp(forgotten, info.addr, 6));
     assert(uc_bt_forget("06:05:04:03:02:GG") == -1);
     event(3, 0, 160);
@@ -453,8 +475,31 @@ int main(void)
     error_user = 1;
     event(1, 0, 25000);
     event(2, 0, 25001);
-    assert(sessions[1] && !ready[1]); /* Enable error still carries an owned cleanup token. */
+    assert(!uc_bt_running() && !sessions[1]); /* Fail closed and release shared HCI. */
+    enabled = enable_calls;
+    for (int i = 0; i < 100; i++)
+        uc_bt_poll(25003 + (uint64_t)i);
+    assert(enable_calls == enabled && !sessions[1]);
+    error_user = 0;
+    assert(uc_bt_start(1) == 0); /* Only explicit restart retries creation. */
+    event(1, 0, 25200);
+    event(2, 0, 25201);
+    assert(ready[1] && enable_calls == enabled + 1);
     assert(uc_bt_stop() == 0 && !sessions[1]);
+    error_user = 0;
+    assert(uc_bt_start(1) == 0);
+    error_user = 1;
+    cleanup_fail = 1;
+    int closed_before_failure = closes;
+    event(1, 0, 25300);
+    event(2, 0, 25301);
+    assert(closes == closed_before_failure + 1 && uc_bt_running());
+    enabled = enable_calls;
+    uc_bt_poll(25302);
+    assert(enable_calls == enabled); /* Cleanup retries must never create. */
+    cleanup_fail = 0;
+    uc_bt_poll(25303);
+    assert(!uc_bt_running() && !sessions[1]);
     error_user = 0;
     /* Experimental resume injects before login, without choosing an account. */
     unavailable_user = 1;

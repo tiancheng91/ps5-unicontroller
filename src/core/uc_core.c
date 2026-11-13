@@ -1,3 +1,4 @@
+#include "../logging.h"
 #include "uc_core.h"
 #include <stdio.h>
 #include <string.h>
@@ -40,6 +41,9 @@ static void log_event(uint8_t level, const char *code, uint64_t session)
     } else
         index = (state.log_start + state.log_count++) % LOG_COUNT;
     state.logs[index] = (struct log_entry){state.clock, state.generation, session, level, code};
+    uc_log_at(level, "[core] %s mono_ms=%llu generation=%llu session=%llu", code,
+              (unsigned long long)state.clock, (unsigned long long)state.generation,
+              (unsigned long long)session);
 }
 static int fail_session(const char *code, uint64_t session)
 {
@@ -329,6 +333,7 @@ int uc_core_settings(uint8_t recording, uint8_t swap, const uint8_t mapping[32])
     if (occupied())
         return 2;
     state.recording = recording;
+    uc_log_set_level(recording);
     state.swap = swap;
     memcpy(state.mapping, mapping, 32);
     state.configured = 1;

@@ -1,3 +1,4 @@
+#include "../logging.h"
 #include "uc_backend.h"
 #include "../drivers/bt.h"
 #include "../drivers/usb.h"
@@ -19,7 +20,8 @@ static void shutdown_payload(void)
     (void)uc_bt_stop();
     (void)uc_usb_stop();
     uc_backend_shutdown();
-    fprintf(stderr, "UniController: stopped; owned output cleanup attempted\n");
+    uc_log_info("UniController: stopped; owned output cleanup attempted");
+    uc_log_close();
     if (instance_fd >= 0) {
         close(instance_fd);
         instance_fd = -1;
@@ -30,13 +32,12 @@ int main(void)
 {
     (void)umask(077); /* Pairing keys and temporary files remain private. */
     if (mkdir("/data/unicontroller", 0700) != 0 && errno != EEXIST) {
-        fprintf(stderr, "UniController: data directory unavailable errno=%d\n", errno);
+        uc_log_warn("UniController: data directory unavailable errno=%d", errno);
         return 1;
     }
     instance_fd = open("/data/unicontroller/instance.lock", O_RDWR | O_CREAT, 0600);
     if (instance_fd < 0 || flock(instance_fd, LOCK_EX | LOCK_NB) != 0) {
-        fprintf(stderr, "UniController: already running or instance lock unavailable errno=%d\n",
-                errno);
+        uc_log_warn("UniController: already running or instance lock unavailable errno=%d", errno);
         if (instance_fd >= 0)
             close(instance_fd);
         return 1;
@@ -54,21 +55,25 @@ int main(void)
     if (log_fd != STDERR_FILENO)
         close(log_fd);
     setvbuf(stderr, NULL, _IONBF, 0);
-    fprintf(
-        stderr,
-        "UniController 0.1.0: starting time=%lld pid=%d; physical inputs require manual start\n",
+    if (!uc_log_open("/data/unicontroller/runtime.log")) {
+        uc_log_error("runtime log open failed errno=%d", errno);
+        close(instance_fd);
+        return 1;
+    }
+    uc_log_info(
+        "UniController 0.1.0: starting time=%lld pid=%d; physical inputs require manual start",
         (long long)time(NULL), (int)getpid());
     if (atexit(shutdown_payload) != 0) {
         close(instance_fd);
         return 1;
     }
     if (uc_backend_init() != 0) {
-        fprintf(stderr, "UniController: virtual output initialization failed\n");
+        uc_log_error("UniController: virtual output initialization failed");
         return 1;
     }
     (void)signal(SIGPIPE, SIG_IGN);
     int result = uc_runtime_run("0.0.0.0", 7456, "/data/unicontroller/settings.json");
     if (result != 0)
-        fprintf(stderr, "UniController: HTTP startup/run failed errno=%d\n", errno);
+        uc_log_error("UniController: HTTP startup/run failed errno=%d", errno);
     return result == 0 ? 0 : 1;
 }

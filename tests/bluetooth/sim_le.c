@@ -966,3 +966,8 @@ int sim_le_cancels(const sim_le_t *s)
 {
     return s->cancels;
 }
+
+void sim_le_finish_foreign(sim_le_t *s)
+{
+    s->pad.foreign_pending = 0;
+}

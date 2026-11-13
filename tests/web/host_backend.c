@@ -53,6 +53,10 @@ int uc_backend_cancel_pending(void)
 {
     return 0;
 }
+int32_t uc_backend_preferred_user(void)
+{
+    return 1;
+}
 int uc_backend_users(int32_t ids[4])
 {
     if (!ids)

@@ -1,3 +1,4 @@
+#include "../logging.h"
 /* Per-device physical sessions; only the first source inherits the start account. */
 #include "bt.h"
 #include "common/log.h"
@@ -23,7 +24,7 @@ typedef struct {
     char profile[64];
     pad_state latest;
     uint64_t last_input, frames, connected_at;
-    int notice_pending, pending, closing, assigning;
+    int notice_pending, pending, closing, assigning, failed;
     int32_t user, next_user;
     uint64_t session, sequence, submitted;
 } Slot;
@@ -58,13 +59,12 @@ void uc_bt_set_log_level(unsigned level)
 {
     if (level <= 5) {
         recording_level = level;
-        log_set_level((int)level);
+        uc_log_set_level(level);
     }
 }
 static void log_code(const char *code)
 {
-    if (recording_level >= 3)
-        fprintf(stderr, "[bluetooth] %s\n", code);
+    uc_log_info("[bluetooth] %s", code);
 }
 static int own_output(const Slot *s)
 {
@@ -115,7 +115,7 @@ static int submit_latest(int slot)
     if (uc_core_submit(s->session, ++s->sequence, p->buttons, axes, triggers, bt.now)) {
         s->closing = 1;
         bt.error = "input_submit_failed";
-        log_code(bt.error);
+        uc_log_error("[bluetooth] %s", bt.error);
         return -1;
     }
     s->submitted = s->frames;
@@ -160,11 +160,11 @@ static void on_state(void *unused, int slot, const pad_state *state)
     s->last_input = bt.now;
     s->valid = 1;
     ++s->frames;
-    if (bt.system_assignment && bt.selected == -1 && s->user < 0) {
+    if (!s->failed && bt.system_assignment && bt.selected == -1 && s->user < 0) {
         bt.selected = slot;
         s->user = 0;
         log_code("system_choice_source_selected");
-    } else if (!bt.system_assignment && bt.selected == -1 && s->user <= 0 &&
+    } else if (!s->failed && !bt.system_assignment && bt.selected == -1 && s->user <= 0 &&
                uc_backend_can_start(bt.user)) {
         int taken = 0;
         for (int i = 0; i < HOST_MAX_PADS; i++)
@@ -175,8 +175,8 @@ static void on_state(void *unused, int slot, const pad_state *state)
             s->user = bt.user;
             log_code("first_valid_input");
             if (recording_level >= 3)
-                fprintf(stderr, "[bluetooth] binding saved user=%d slot=%d after fresh input\n",
-                        s->user, slot);
+                uc_log_info("[bluetooth] binding saved user=%d slot=%d after fresh input", s->user,
+                            slot);
         }
     }
     if (own_output(s) &&
@@ -278,7 +278,7 @@ static int start_transport(int32_t user, int system_assignment)
     if (!bt.host) {
         bt.user = -1;
         bt.error = "transport_open_failed_or_unsupported";
-        log_code(bt.error);
+        uc_log_error("[bluetooth] %s", bt.error);
         return -1;
     }
     log_code(bt.system_assignment ? "started_system_choice_experiment" : "started");
@@ -352,8 +352,8 @@ static void poll_connection_notice(uint64_t now)
         s->notice_pending = 0;
         int accepted = host_rumble_pulse(bt.host, slot, 200);
         if (recording_level >= 3)
-            fprintf(stderr, "[bluetooth] connection_rumble slot=%d duration_ms=200 accepted=%d\n",
-                    slot, accepted != 0);
+            uc_log_info("[bluetooth] connection_rumble slot=%d duration_ms=200 accepted=%d", slot,
+                        accepted != 0);
     }
 }
 void uc_bt_poll(uint64_t now)
@@ -402,7 +402,7 @@ void uc_bt_poll(uint64_t now)
             }
             continue;
         }
-        if (!s->connected || s->user < 0 || (s->user == 0 && !bt.system_assignment))
+        if (s->failed || !s->connected || s->user < 0 || (s->user == 0 && !bt.system_assignment))
             continue;
         if (bt.system_assignment ? !uc_backend_transport_ready() : !uc_backend_can_start(s->user)) {
             s->valid = 0;
@@ -436,9 +436,19 @@ void uc_bt_poll(uint64_t now)
                 continue;
             }
             if (rc || !session) {
-                bt.error = "virtual_enable_failed";
+                bt.error = "virtual_enable_failed_manual_retry_required";
+                s->failed = 1;
                 s->closing = 1;
-                continue;
+                if (recording_level >= 1)
+                    uc_log_error(
+                        "[bluetooth] virtual_create_failed slot=%d user=%d session=%llu rc=%d; "
+                        "automatic retry disabled",
+                        slot, s->user, (unsigned long long)s->session, rc);
+                /* A failed virtual output must not keep competing with the
+                 * console for shared HCI packets. Stop all owned links and
+                 * release HCI even when virtual cleanup needs later polls. */
+                (void)uc_bt_stop();
+                return;
             }
             s->pending = 0;
             s->session = session;
@@ -448,6 +458,7 @@ void uc_bt_poll(uint64_t now)
                                           : "virtual_bound");
         } else if (!own_output(s)) {
             bt.error = "session_lost_manual_assignment_required";
+            s->failed = 1;
             s->closing = 1;
             continue;
         }
@@ -461,11 +472,17 @@ void uc_bt_poll(uint64_t now)
     }
 }
 
-int uc_bt_pair(unsigned seconds)
+int uc_bt_scan(unsigned seconds)
 {
-    if (!bt.host || bt.stopping || seconds == 0 || seconds > 120)
+    if (!bt.host || bt.stopping || seconds > 120)
         return -1;
-    return host_pair(bt.host, (int)seconds) ? 0 : -1;
+    return host_scan(bt.host, (int)seconds) ? 0 : -1;
+}
+int uc_bt_pair(uint32_t discovery_id)
+{
+    if (!bt.host || bt.stopping || !discovery_id)
+        return -1;
+    return host_pair_device(bt.host, discovery_id) ? 0 : -1;
 }
 int uc_bt_forget(const char *address)
 {
@@ -503,6 +520,19 @@ static int append(char *b, size_t cap, size_t *used, const char *format, ...)
     *used += (size_t)n;
     return 0;
 }
+static int json_text(char *buffer, size_t capacity, size_t *used, const char *text)
+{
+    if (append(buffer, capacity, used, "\""))
+        return -1;
+    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) {
+        int result = *p == '"' || *p == '\\' ? append(buffer, capacity, used, "\\%c", *p)
+                     : *p < 32               ? append(buffer, capacity, used, "\\u%04x", *p)
+                                             : append(buffer, capacity, used, "%c", *p);
+        if (result)
+            return -1;
+    }
+    return append(buffer, capacity, used, "\"");
+}
 static void address_text(const unsigned char a[6], char out[18])
 {
     snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", a[5], a[4], a[3], a[2], a[1], a[0]);
@@ -519,7 +549,7 @@ int uc_bt_assign(int slot, const char *address, int32_t user)
         return -1;
     if (s->assigning)
         return s->next_user == user ? 2 : -1;
-    if (s->user == user && !s->closing)
+    if (s->user == user && !s->closing && !s->failed)
         return 0;
     if (!uc_backend_can_start(user))
         return -1;
@@ -527,6 +557,7 @@ int uc_bt_assign(int slot, const char *address, int32_t user)
         if (i != slot &&
             (bt.slots[i].user == user || (bt.slots[i].assigning && bt.slots[i].next_user == user)))
             return -1;
+    s->failed = 0; /* Explicit assignment permits one new creation attempt. */
     s->notice_pending = 0;
     (void)host_rumble_stop(bt.host, slot);
     if (cleanup_output(s)) {
@@ -576,17 +607,18 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
                         : bt.error                ? "failed"
                                                   : "off";
     ADD("{\"state\":\"%s\",\"reason\":\"%s\",\"running\":%s,\"stopping\":%s,\"user_id\":%d,"
-        "\"selected_slot\":%d,\"bound\":%s,\"session_id\":%llu,\"pending\":%s,\"pairing_seconds\":%"
+        "\"selected_slot\":%d,\"bound\":%s,\"session_id\":%llu,\"pending\":%s,\"scan_seconds\":%"
         "d,\"error\":",
         state, bt.error ? bt.error : "", uc_bt_running() ? "true" : "false",
         bt.stopping ? "true" : "false", bt.user, bt.selected,
         summary && summary->user > 0 && own_output(summary) ? "true" : "false",
         (unsigned long long)(summary ? summary->session : 0), pending ? "true" : "false",
-        bt.host ? host_pairing_left(bt.host) : 0);
+        bt.host ? host_scan_left(bt.host) : 0);
     if (bt.error)
         ADD("\"%s\"", bt.error);
     else
         ADD("null");
+    ADD(",\"scan_id\":%u", bt.host ? host_scan_id(bt.host) : 0);
     ADD(",\"system_assignment\":%s,\"output_active\":%s",
         bt.system_assignment && bt.host ? "true" : "false",
         summary && own_output(summary) ? "true" : "false");
@@ -615,7 +647,32 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             ADD("-1");
         ADD(",\"system_assignment\":%s,\"output_active\":%s",
             bt.system_assignment ? "true" : "false", own_output(s) ? "true" : "false");
+        ADD(",\"output_failed\":%s", s->failed ? "true" : "false");
         ADD(",\"charging\":%s}", s->valid && s->latest.charging ? "true" : "false");
+    }
+    ADD("],\"discovered\":[");
+    int found_count = bt.host ? host_discovered_count(bt.host) : 0;
+    for (int i = 0; i < found_count; ++i) {
+        host_discovered_info found;
+        if (!host_discovered_get(bt.host, i, &found))
+            continue;
+        char address[18];
+        address_text(found.addr, address);
+        ADD("%s{\"id\":%u,\"address\":\"%s\",\"transport\":\"%s\",\"address_type\":%d,\"state\":\"%"
+            "s\",\"rssi\":",
+            i ? "," : "", found.id, address, found.le ? "ble" : "classic", found.addr_type,
+            found.state);
+        if (found.has_rssi)
+            ADD("%d", found.rssi);
+        else
+            ADD("null");
+        ADD(",\"name\":");
+        if (json_text(buffer, capacity, &used, found.name))
+            return 0;
+        ADD(",\"reason\":");
+        if (json_text(buffer, capacity, &used, found.reason))
+            return 0;
+        ADD("}");
     }
     ADD("],\"paired\":[");
     count = 0;

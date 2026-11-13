@@ -10,3 +10,8 @@ __pycache__/
 /.local/
 /.agents/
 /.codex/
+
+/node_modules/
+
+# Local diagnostics exported from a console
+/unicontroller-logs*.txt

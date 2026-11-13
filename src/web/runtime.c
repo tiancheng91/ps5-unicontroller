@@ -1,3 +1,4 @@
+#include "../logging.h"
 #include "../drivers/config/overrides.h"
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
@@ -80,7 +81,7 @@ static void close_client(Client *c)
     close(c->fd);
     c->fd = -1;
 }
-static void response(Client *c, int status, const char *type, const char *body)
+static void response_bytes(Client *c, int status, const char *type, const char *body, size_t len)
 {
     const char *reason = status == 200   ? "OK"
                          : status == 202 ? "Accepted"
@@ -90,7 +91,6 @@ static void response(Client *c, int status, const char *type, const char *body)
                          : status == 413 ? "Payload Too Large"
                          : status == 409 ? "Conflict"
                                          : "Service Unavailable";
-    size_t len = strlen(body);
     int n = snprintf(
         c->out, sizeof(c->out),
         "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: "
@@ -105,6 +105,10 @@ static void response(Client *c, int status, const char *type, const char *body)
     memcpy(c->out + n, body, len);
     c->total = (size_t)n + len;
     c->sent = 0;
+}
+static void response(Client *c, int status, const char *type, const char *body)
+{
+    response_bytes(c, status, type, body, strlen(body));
 }
 static void error_response(Client *c, int code, const char *message)
 {
@@ -316,7 +320,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
     if (!strcmp(method, "GET")) {
         for (size_t i = 0; i < uc_assets_count; i++)
             if (!strcmp(path, uc_assets[i].path)) {
-                response(c, 200, uc_assets[i].type, uc_assets[i].body);
+                response_bytes(c, 200, uc_assets[i].type, uc_assets[i].body, uc_assets[i].size);
                 return;
             }
     }
@@ -396,7 +400,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         if (bt_start_queued) {
             response(c, 200, "application/json",
                      "{\"state\":\"starting\",\"reason\":\"\",\"devices\":[],\"paired\":[],"
-                     "\"pairing_seconds\":0}");
+                     "\"scan_seconds\":0,\"scan_id\":0,\"discovered\":[]}");
             return;
         }
         char body_json[32768];
@@ -438,19 +442,41 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                  rc ? "{\"pending\":true}" : "{\"stopped\":true}");
         return;
     }
-    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/pair")) {
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/scan")) {
         Json j;
         int64_t seconds;
         const char *keys[] = {"seconds"};
         if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 1) ||
             jint(&j, jget(&j, "seconds"), 1, 120, &seconds)) {
-            error_response(c, 400, "invalid_pairing_window");
+            error_response(c, 400, "invalid_scan_window");
             return;
         }
-        if (uc_bt_pair((unsigned)seconds))
+        if (uc_bt_scan((unsigned)seconds))
+            error_response(c, 409, "bluetooth_not_ready_or_pairing");
+        else
+            response(c, 200, "application/json", "{\"scanning\":true}");
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/scan/stop")) {
+        if (uc_bt_scan(0))
             error_response(c, 409, "bluetooth_not_ready");
         else
-            response(c, 200, "application/json", "{\"pairing\":true}");
+            response(c, 200, "application/json", "{\"scanning\":false}");
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/pair")) {
+        Json j;
+        int64_t id;
+        const char *keys[] = {"discovery_id"};
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 1) ||
+            jint(&j, jget(&j, "discovery_id"), 1, UINT32_MAX, &id)) {
+            error_response(c, 400, "invalid_discovery_id");
+            return;
+        }
+        if (uc_bt_pair((uint32_t)id))
+            error_response(c, 409, "device_not_available_or_pairing");
+        else
+            response(c, 202, "application/json", "{\"pairing\":true}");
         return;
     }
     if (!strcmp(method, "POST") &&
@@ -564,12 +590,13 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         int n = snprintf(b, sizeof(b), "{\"users\":[");
         int count = 0;
         for (int i = 0; i < 4; i++)
-            if (ids[i] >= 0) {
+            if (ids[i] > 0) {
                 n += snprintf(b + n, sizeof(b) - (size_t)n,
                               "%s{\"user_id\":%d,\"display_name\":\"User %d\"}", count++ ? "," : "",
                               ids[i], ids[i]);
             }
-        snprintf(b + n, sizeof(b) - (size_t)n, "]}");
+        snprintf(b + n, sizeof(b) - (size_t)n, "],\"preferred_user_id\":%d}",
+                 uc_backend_preferred_user());
         response(c, 200, "application/json", b);
         return;
     }
@@ -589,7 +616,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             next.bt_auto_user = settings.bt_auto_user;
             if (save_settings(&next)) {
                 if (settings.recording >= 1)
-                    fprintf(stderr, "[error] settings_persist_failed\n");
+                    uc_log_error("settings_persist_failed");
                 error_response(c, 503, "settings_persist_failed");
                 return;
             }
@@ -599,7 +626,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             if (uc_core_settings((uint8_t)settings.recording, (uint8_t)settings.swap,
                                  settings.map)) {
                 if (settings.recording >= 1)
-                    fprintf(stderr, "[error] settings_apply_failed\n");
+                    uc_log_error("settings_apply_failed");
                 error_response(c, 503, "settings_apply_failed");
                 return;
             }
@@ -608,7 +635,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             uc_usb_set_log_level((unsigned)settings.recording);
             uc_usb_set_rumble_enabled(settings.rumble);
             if (settings.recording >= 3)
-                fprintf(stderr, "[info] settings_saved\n");
+                uc_log_info("settings_saved");
         } else if (strcmp(method, "GET")) {
             error_response(c, 404, "not_found");
             return;
@@ -880,15 +907,15 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                            slash ? settings_path : ".");
     uc_controller_overrides_clear();
     if (written < 0 || (size_t)written >= sizeof override_path) {
-        fprintf(stderr, "[warning] controller override path too long; using builtins\n");
+        uc_log_warn("controller override path too long; using builtins");
     } else {
         int loaded =
             uc_controller_overrides_load(override_path, override_error, sizeof override_error);
         if (loaded < 0)
-            fprintf(stderr, "[warning] controller overrides ignored: %s\n", override_error);
+            uc_log_warn("controller overrides ignored: %s", override_error);
         else if (settings.recording >= 3)
-            fprintf(stderr, "[info] controller registry: %s\n",
-                    loaded ? "custom overrides loaded" : "builtins active");
+            uc_log_info("controller registry: %s",
+                        loaded ? "custom overrides loaded" : "builtins active");
     }
     struct sockaddr_in address;
     memset(&address, 0, sizeof(address));
@@ -902,7 +929,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         port = (unsigned short)(first_port + attempt);
         listener = socket(AF_INET, SOCK_STREAM, 0);
         if (listener < 0) {
-            fprintf(stderr, "[error] HTTP socket failed port=%u errno=%d\n", (unsigned)port, errno);
+            uc_log_error("HTTP socket failed port=%u errno=%d", (unsigned)port, errno);
             return -1;
         }
         int yes = 1;
@@ -913,13 +940,13 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         int bind_error = errno;
         close(listener);
         listener = -1;
-        fprintf(stderr, "[warn] HTTP bind failed port=%u errno=%d%s\n", (unsigned)port, bind_error,
-                attempt + 1 < attempts ? "; trying 7457" : "; no ports left");
+        uc_log_warn("HTTP bind failed port=%u errno=%d%s", (unsigned)port, bind_error,
+                    attempt + 1 < attempts ? "; trying 7457" : "; no ports left");
     }
     if (listener < 0)
         return -1;
     if (listen(listener, CLIENTS) || nonblock(listener)) {
-        fprintf(stderr, "[error] HTTP listen failed port=%u errno=%d\n", (unsigned)port, errno);
+        uc_log_error("HTTP listen failed port=%u errno=%d", (unsigned)port, errno);
         close(listener);
         return -1;
     }
@@ -939,8 +966,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
 #ifndef UC_PS5
     signal(SIGPIPE, SIG_IGN);
 #endif
-    fprintf(stderr, "UniController HTTP listening on %s:%u (no TLS; trusted LAN only)\n",
-            bind_address, (unsigned)port);
+    uc_log_info("UniController HTTP listening on %s:%u (no TLS; trusted LAN only)", bind_address,
+                (unsigned)port);
     signal(SIGTERM, request_stop);
     signal(SIGINT, request_stop);
     while (!stop_requested) {
@@ -975,8 +1002,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             if (uc_backend_auto_due(settings.bt_auto_user, idle)) {
                 int rc = settings.bt_auto_resume ? uc_bt_start_system_assigned()
                                                  : uc_bt_start(settings.bt_auto_user);
-                fprintf(stderr, "[bluetooth-auto] start result=%d user=%d; no automatic retry\n",
-                        rc, settings.bt_auto_user);
+                uc_log_info("[bluetooth-auto] start result=%d user=%d; no automatic retry", rc,
+                            settings.bt_auto_user);
             }
         }
         if (bt_start_queued && millis() >= bt_start_at) {
@@ -987,10 +1014,10 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                 next.bt_auto_user = bt_start_user;
                 if (save_settings(&next) == 0) {
                     settings = next;
-                    fprintf(stderr, "[bluetooth-auto] remembered user=%d\n", bt_start_user);
+                    uc_log_info("[bluetooth-auto] remembered user=%d", bt_start_user);
                 } else {
-                    fprintf(stderr,
-                            "[bluetooth-auto] could not persist user; previous account retained\n");
+                    uc_log_warn(
+                        "[bluetooth-auto] could not persist user; previous account retained");
                 }
             }
         }

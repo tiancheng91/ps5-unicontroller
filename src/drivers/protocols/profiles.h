@@ -65,6 +65,8 @@ int profile_usb_xinput_activation(uint16_t vid, uint16_t pid);
 /* Receiver-backed modes require real reports; USB presence cannot renew held input. */
 int profile_usb_input_watchdog(uint16_t vid, uint16_t pid);
 const pad_profile *profile_find(uint16_t vid, uint16_t pid);
+/* Native PS5 controllers belong to the system Bluetooth stack. */
+int profile_system_bluetooth(uint16_t vid, uint16_t pid);
 int profile_ble_allowed(uint16_t vid, uint16_t pid);
 /* Builtin resolver is separate so override validation cannot recursively query itself. */
 const pad_profile *profile_builtin_named(const char *key);

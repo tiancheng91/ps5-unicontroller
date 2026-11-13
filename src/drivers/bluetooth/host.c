@@ -101,6 +101,12 @@ void link_disconnect(host_t *h, link_t *l, const char *why)
 {
     unsigned char p[3];
 
+    for (int i = 0; i < h->discovered_count; i++) {
+        if (h->discovered[i].attempted && h->discovered[i].info.le == l->le &&
+            memcmp(h->discovered[i].info.addr, l->addr, 6) == 0) {
+            snprintf(h->discovered[i].info.reason, sizeof h->discovered[i].info.reason, "%s", why);
+        }
+    }
     if (!l->connected) {
         log_line("pad %s: dropped (%s)", addr_str(l->addr), why);
         if (l->le)
@@ -1100,21 +1106,20 @@ static void on_acl(host_t *h, const unsigned char *pkt, int len)
 
 /* ---- HCI events ----------------------------------------------------------- */
 
-static void pair_with(host_t *h, const unsigned char *rec)
+static int pair_with(host_t *h, const unsigned char *rec)
 {
     unsigned char p[13];
     link_t *l;
 
     if (link_by_addr(h, rec))
-        return;
-    if (db_find(h, rec)) {
-        log_line("pad %s: in pairing mode again, forgetting its old key", addr_str(rec));
-        db_forget(h, rec);
-    }
+        return 0;
+    db_rec *bond = db_find(h, rec);
+    if (bond && (profile_system_bluetooth(bond->vid, bond->pid) || !bond->le))
+        return 0;
     l = link_new(h, rec);
     if (!l) {
         log_line("pairing: no free slot");
-        return;
+        return 0;
     }
     l->pairing = 1;
     if (h->inquiring)
@@ -1127,49 +1132,119 @@ static void pair_with(host_t *h, const unsigned char *rec)
     p[9] = 0;
     put16(p + 10, le16(rec + 11) | 0x8000); /* clock offset, valid */
     p[12] = 1;                              /* allow role switch */
-    send_cmd(h, OP_CREATE_CONNECTION, p, 13);
-    log_line("pad %s: connecting to pair", addr_str(rec));
+    if (!send_cmd(h, OP_CREATE_CONNECTION, p, 13)) {
+        link_free(h, l);
+        return 0;
+    }
+    log_line("pad %s: connecting to pair after user selection", addr_str(rec));
+    return 1;
 }
 
-/* An inquiry record: addr 6, page scan mode 1, reserved 1, class 3,
- * clock offset 2, RSSI 1. */
-static void on_found(host_t *h, const unsigned char *rec)
+/* Copy a bounded broadcast name. Non-ASCII names are retained as UTF-8;
+ * API encoding escapes JSON metacharacters and browser decoding replaces invalid
+ * byte sequences. A cut-off partial UTF-8 character is removed below. */
+static void discovery_name(char out[HOST_DISCOVERY_NAME], const unsigned char *data, int length)
+{
+    int shortened = 0;
+    for (int offset = 0; data && offset + 1 < length;) {
+        int size = data[offset];
+        if (size < 1 || size > length - offset - 1)
+            break;
+        int type = data[offset + 1];
+        if ((type == 0x09 || (type == 0x08 && !shortened)) && size > 1) {
+            int count = size - 1;
+            if (count >= HOST_DISCOVERY_NAME)
+                count = HOST_DISCOVERY_NAME - 1;
+            memcpy(out, data + offset + 2, (size_t)count);
+            out[count] = 0;
+            /* If truncated, drop any incomplete trailing UTF-8 sequence. */
+            if (count < size - 1) {
+                int start = count - 1;
+                while (start >= 0 && ((unsigned char)out[start] & 0xc0) == 0x80)
+                    --start;
+                if (start >= 0 && (unsigned char)out[start] >= 0xc0)
+                    out[start] = 0;
+            }
+            shortened = type == 0x08;
+            if (type == 0x09)
+                return;
+        }
+        offset += size + 1;
+    }
+}
+/* Classic EIR Device ID (0x10): USB vendor source, VID, PID, version.
+ * Do not interpret BLE Security Manager TK data (also type 0x10) as Device ID. */
+static int discovery_system_device(const unsigned char *data, int length)
+{
+    for (int offset = 0; data && offset + 1 < length;) {
+        int size = data[offset];
+        if (size < 1 || size > length - offset - 1)
+            break;
+        if (data[offset + 1] == 0x10 && size == 9 && le16(data + offset + 2) == 2 &&
+            profile_system_bluetooth(le16(data + offset + 4), le16(data + offset + 6)))
+            return 1;
+        offset += size + 1;
+    }
+    return 0;
+}
+static uint32_t next_discovery_id = 1, next_scan_id = 1;
+void host_found(host_t *h, int le, uint8_t addr_type, const unsigned char *addr,
+                const unsigned char *advert, int advert_length, const unsigned char *classic,
+                int has_rssi, int rssi)
+{
+    long now = now_ms();
+    if (!h || now >= h->scan_until || h->clearing || link_by_addr(h, addr))
+        return;
+    db_rec *bond = db_find(h, addr);
+    if (bond && (profile_system_bluetooth(bond->vid, bond->pid) || bond->le == le))
+        return; /* Reconnection is independent of new-device discovery. */
+    if (!le)
+        for (int i = 0; i < h->system_addr_count; i++)
+            if (!memcmp(h->system_addrs[i], addr, 6))
+                return;
+    int index;
+    int system_device = !le && discovery_system_device(advert, advert_length);
+    for (index = 0; index < h->discovered_count; index++)
+        if (h->discovered[index].info.le == le &&
+            h->discovered[index].info.addr_type == addr_type &&
+            !memcmp(h->discovered[index].info.addr, addr, 6))
+            break;
+    if (system_device) {
+        if (h->system_addr_count < HOST_DISCOVERY_MAX)
+            memcpy(h->system_addrs[h->system_addr_count++], addr, 6);
+        log_line("discovery: native PS5 controller %s left to system Bluetooth", addr_str(addr));
+        if (index < h->discovered_count) {
+            memmove(&h->discovered[index], &h->discovered[index + 1],
+                    (size_t)(h->discovered_count - index - 1) * sizeof h->discovered[0]);
+            --h->discovered_count;
+        }
+        return;
+    }
+    if (index == h->discovered_count) {
+        if (index == HOST_DISCOVERY_MAX || next_discovery_id == UINT32_MAX)
+            return;
+        ++h->discovered_count;
+        memset(&h->discovered[index], 0, sizeof h->discovered[index]);
+        h->discovered[index].info.id = next_discovery_id++;
+        memcpy(h->discovered[index].info.addr, addr, 6);
+        h->discovered[index].info.le = le;
+        h->discovered[index].info.addr_type = addr_type;
+        log_line("discovery: id=%u transport=%s address=%s; waiting for user selection",
+                 h->discovered[index].info.id, le ? "ble" : "classic", addr_str(addr));
+    }
+    h->discovered[index].seen = now;
+    h->discovered[index].info.has_rssi = has_rssi;
+    h->discovered[index].info.rssi = rssi;
+    discovery_name(h->discovered[index].info.name, advert, advert_length);
+    if (classic)
+        memcpy(h->discovered[index].classic_record, classic, 14);
+}
+static void on_found(host_t *h, const unsigned char *rec, const unsigned char *eir, int eir_len,
+                     int has_rssi)
 {
     uint32_t cod = (uint32_t)rec[8] | (uint32_t)rec[9] << 8 | (uint32_t)rec[10] << 16;
-
-    if (now_ms() >= h->pair_until)
-        return;
-    if (!profile_class_is_gamepad(cod)) {
-        log_line("inquiry: %s class %06x is not a gamepad, ignored", addr_str(rec), (unsigned)cod);
-        return;
-    }
-    log_line("found gamepad %s (class %06x)", addr_str(rec), (unsigned)cod);
-    pair_with(h, rec);
-}
-
-/* "Connection already exists" while paging a pad means this controller still
- * holds a link to it from an earlier run that ended without closing it (the
- * payload was started again over a running one, or crashed). Nothing else
- * uses this controller, and the pad would otherwise stay unreachable until
- * the chip is reset. Handles are small numbers: ask to close each; the
- * controller answers "unknown handle" to all but the real ones. Once a
- * minute at most. */
-static void purge_stale_links(host_t *h)
-{
-    unsigned char p[3];
-    unsigned handle;
-
-    if (h->purge_at && now_ms() - h->purge_at < 60000)
-        return;
-    h->purge_at = now_ms();
-    log_line("an earlier run left a link open on the controller; closing stale links");
-    for (handle = 0; handle < 0x100; handle++) {
-        if (link_by_handle(h, handle))
-            continue; /* ours, in use */
-        put16(p, handle);
-        p[2] = 0x13; /* remote user terminated */
-        send_cmd(h, OP_DISCONNECT, p, 3);
-    }
+    if (profile_class_is_gamepad(cod))
+        host_found(h, 0, 0, rec, eir, eir_len, rec, has_rssi, (int8_t)rec[13]);
 }
 
 static void on_event(host_t *h, const unsigned char *ev, int len)
@@ -1194,18 +1269,18 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             rec[7] = 0;
             memcpy(rec + 8, r + 9, 5);
             rec[13] = 0;
-            on_found(h, rec);
+            on_found(h, rec, NULL, 0, 0);
         }
         break;
 
     case 0x22: /* Inquiry Result with RSSI */
         for (i = 0; i < ev[2] && 3 + (i + 1) * 14 <= len; i++)
-            on_found(h, ev + 3 + i * 14);
+            on_found(h, ev + 3 + i * 14, NULL, 0, 1);
         break;
 
     case 0x2F: /* Extended Inquiry Result */
         if (len >= 17)
-            on_found(h, ev + 3);
+            on_found(h, ev + 3, ev + 17, len - 17, 1);
         break;
 
     case 0x04: /* Connection Request: addr, class, link type */
@@ -1213,7 +1288,7 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             break;
         {
             db_rec *r = db_find(h, ev + 2);
-            if (!r || r->le || link_by_addr(h, ev + 2))
+            if (!r || r->le || profile_system_bluetooth(r->vid, r->pid) || link_by_addr(h, ev + 2))
                 break; /* not ours */
         }
         l = link_new(h, ev + 2);
@@ -1318,7 +1393,7 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         if (len < 6 || ev[2] == 0)
             break;
         if (le16(ev + 4) == OP_CREATE_CONNECTION && ev[2] == 0x0B)
-            purge_stale_links(h);
+            uc_log_warn("pairing conflict: unknown existing link left untouched");
         if (le16(ev + 4) == OP_CREATE_CONNECTION) {
             for (i = 0; i < HOST_MAX_PADS; i++) {
                 l = &h->links[i];
@@ -1486,6 +1561,10 @@ static void link_step(host_t *h, link_t *l, long now)
             sdp_start(l, SDP_Q_IDS);
         }
     }
+    if (l->ids_known && profile_system_bluetooth(l->vid, l->pid)) {
+        link_disconnect(h, l, "native PS5 controller belongs to system Bluetooth");
+        return;
+    }
     if (l->ids_known && !l->prof && !l->sdp_query) {
         l->prof = profile_find_for_transport(PAD_TRANSPORT_CLASSIC, l->vid, l->pid);
         if (l->prof && l->prof->setup)
@@ -1548,6 +1627,7 @@ static void start_inquiry(host_t *h)
     /* General inquiry, ~10 s, unlimited responses. */
     static const unsigned char inq[5] = {0x33, 0x8B, 0x9E, 0x08, 0x00};
 
+    h->inquiry_next = now_ms() + 1000;
     if (send_cmd(h, OP_INQUIRY, inq, 5)) {
         h->inquiring = 1;
         log_line("inquiry: started");
@@ -1625,16 +1705,29 @@ void host_poll(host_t *h, int timeout_ms)
     }
 
     /* Keep searching through the pairing window, one pad at a time. */
-    if (now < h->pair_until && !h->inquiring && !linking)
+    if (now < h->scan_until && !h->inquiring && !linking && now >= h->inquiry_next)
         start_inquiry(h);
-    if (now >= h->pair_until && h->inquiring) {
+    if (now >= h->scan_until && h->inquiring) {
         send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
         h->inquiring = 0;
     }
 }
 
-int host_pair(host_t *h, int seconds)
+int host_scan(host_t *h, int seconds)
 {
+    if (!h || h->dead || seconds < 0 || seconds > 120)
+        return 0;
+    if (seconds == 0) {
+        h->scan_until = 0;
+        if (h->inquiring)
+            send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
+        h->inquiring = 0;
+        log_line("discovery: stopped; selected/existing links preserved");
+        return 1;
+    }
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (h->links[i].used && h->links[i].pairing && !h->links[i].ready)
+            return 0;
     if (h->clearing) {
         for (int i = 0; i < HOST_MAX_PADS; i++)
             if (h->links[i].used) {
@@ -1643,9 +1736,71 @@ int host_pair(host_t *h, int seconds)
             }
         h->clearing = 0;
     }
-    h->pair_until = now_ms() + (long)seconds * 1000;
-    log_line("pairing: searching for %d s", seconds);
+    if (next_scan_id == UINT32_MAX)
+        return 0;
+    h->scan_id = next_scan_id++;
+    h->discovered_count = 0;
+    h->inquiry_next = now_ms();
+    h->scan_until = now_ms() + (long)seconds * 1000;
+    log_line("discovery: scanning for %d s; no automatic pairing", seconds);
     return 1;
+}
+
+int host_discovered_count(const host_t *h)
+{
+    return h ? h->discovered_count : 0;
+}
+int host_discovered_get(const host_t *h, int index, host_discovered_info *out)
+{
+    if (!h || !out || index < 0 || index >= h->discovered_count)
+        return 0;
+    *out = h->discovered[index].info;
+    out->state = "discovered";
+    long now = now_ms();
+    if (now < h->discovered[index].seen || now - h->discovered[index].seen >= 120000)
+        out->state = "expired";
+    else if (h->discovered[index].attempted) {
+        int paired = 0;
+        for (int i = 0; i < h->ndb; i++)
+            paired |= h->db[i].le == out->le && !memcmp(h->db[i].addr, out->addr, 6);
+        out->state = paired ? "paired" : "failed";
+        for (int i = 0; i < HOST_MAX_PADS; i++) {
+            const link_t *l = &h->links[i];
+            if (l->used && l->le == out->le && !memcmp(l->addr, out->addr, 6)) {
+                out->state = l->ready           ? "connected"
+                             : l->disconnecting ? (paired ? "paired" : "failed")
+                                                : "pairing";
+                break;
+            }
+        }
+    }
+    if (!strcmp(out->state, "failed") && !out->reason[0])
+        snprintf(out->reason, sizeof out->reason, "connection_or_pairing_failed");
+    return 1;
+}
+int host_pair_device(host_t *h, uint32_t id)
+{
+    if (!h || h->dead || h->clearing || !id)
+        return 0;
+    for (int i = 0; i < HOST_MAX_PADS; i++)
+        if (h->links[i].used && h->links[i].pairing && !h->links[i].ready)
+            return 0;
+    for (int i = 0; i < h->discovered_count; i++) {
+        host_discovered_info info;
+        if (!host_discovered_get(h, i, &info) || info.id != id)
+            continue;
+        if (!strcmp(info.state, "expired") || !strcmp(info.state, "connected") ||
+            !strcmp(info.state, "paired") || link_by_addr(h, info.addr))
+            return 0;
+        int accepted = info.le ? le_pair_selected(h, (uint8_t)info.addr_type, info.addr)
+                               : pair_with(h, h->discovered[i].classic_record);
+        if (accepted) {
+            h->discovered[i].attempted = 1;
+            h->discovered[i].info.reason[0] = 0;
+        }
+        return accepted;
+    }
+    return 0;
 }
 
 int host_output_ready(const host_t *h, int slot)
@@ -1752,9 +1907,15 @@ int host_transport_lost(const host_t *h)
     return h->dead;
 }
 
-int host_pairing_left(const host_t *h)
+uint32_t host_scan_id(const host_t *h)
 {
-    long left = h->pair_until - now_ms();
+    return h ? h->scan_id : 0;
+}
+int host_scan_left(const host_t *h)
+{
+    if (!h)
+        return 0;
+    long left = h->scan_until - now_ms();
     return left > 0 ? (int)((left + 999) / 1000) : 0;
 }
 
@@ -1829,7 +1990,8 @@ int host_forget(host_t *h, const unsigned char addr[6])
 int host_forget_all(host_t *h)
 {
     int count = h->ndb;
-    h->pair_until = 0;
+    h->scan_until = 0;
+    h->discovered_count = 0;
     h->clearing = 1; /* Late pairing replies must not restore deleted keys. */
     if (h->inquiring)
         send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);

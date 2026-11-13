@@ -168,12 +168,10 @@ typedef struct {
     uint8_t map[1024];
     int map_len;
 
-    /* Connecting (LC_*): scan off, create, and on a refusal cancel and
-     * try again. Statuses are -1 until their reply is seen. */
-    int cstate, ctries, cancel_needed, cancel_done, saw02;
-    int st_scan, st_create, st_cancel;
+    /* A refused create never authorizes cancellation of the system initiator. */
+    int cstate, ctries;
+    int st_scan, st_create; /* -1 until a reply is seen */
     long t_cstate, t_retry;
-    uint8_t addr02[6]; /* whose connection the cancel ended */
 } le_link;
 
 typedef struct {
@@ -271,9 +269,20 @@ struct host {
     int le_diag_n, le_diag_skipped;
     link_t *dhkey_owner; /* the link a DHKey is being made for */
 
-    long pair_until;
-    long purge_at; /* when stale links were last cleared */
+    long scan_until;
+    uint32_t scan_id;
+    struct {
+        host_discovered_info info;
+        unsigned char classic_record[14];
+        long seen;
+        int attempted;
+    } discovered[HOST_DISCOVERY_MAX];
+    int discovered_count;
+    /* Confirmed Classic EIR identities; retain across scans for this host lifetime. */
+    unsigned char system_addrs[HOST_DISCOVERY_MAX][6];
+    int system_addr_count;
     int inquiring;
+    long inquiry_next; /* Backoff on a busy shared controller; never spin. */
     int clearing;
     int dead;                /* the transport is gone */
     int diag_done;           /* the transport's self-report was logged */
@@ -283,6 +292,11 @@ struct host {
 };
 
 /* ---- shared between host.c and le.c ---- */
+
+void host_found(host_t *h, int le, uint8_t addr_type, const unsigned char *addr,
+                const unsigned char *advert, int advert_length, const unsigned char *classic,
+                int has_rssi, int rssi);
+int le_pair_selected(host_t *h, uint8_t addr_type, const unsigned char *addr);
 
 const char *addr_str(const unsigned char *a);
 int send_cmd(host_t *h, unsigned op, const void *p, int len);

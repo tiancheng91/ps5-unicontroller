@@ -6,9 +6,9 @@
  * reply is retried or timed out, since a few packets go to the system's
  * driver instead of here.
  *
- *   pairing:    host_pair() searches for a pad in pairing mode, connects,
- *               pairs, reads its vendor/product id over SDP and opens the
- *               HID channels. The link key and ids are stored.
+ *   discovery:  host_scan() records visible controllers without connecting.
+ *   pairing:    host_pair_device() connects only a user-selected discovery id,
+ *               then the existing authentication/SDP/HID state machine runs.
  *   reconnect:  a stored pad that is switched on connects by itself; it is
  *               accepted, authenticated with the stored key and its HID
  *               channels accepted or opened.
@@ -44,8 +44,23 @@ int host_disconnect_slot(host_t *h, int slot);
 
 void host_poll(host_t *h, int timeout_ms);
 
-/* Searches for pads in pairing mode for `seconds`. */
-int host_pair(host_t *h, int seconds);
+#define HOST_DISCOVERY_MAX 16
+#define HOST_DISCOVERY_NAME 64
+/* Bounded, memory-only results. Identity includes transport and LE address type.
+ * IDs are process-unique and invalidated by rescan/close; no arbitrary address
+ * pairing API is exposed. A result expires 120 seconds after its last sighting. */
+typedef struct {
+    uint32_t id;
+    unsigned char addr[6];
+    int le, addr_type, rssi, has_rssi;
+    char name[HOST_DISCOVERY_NAME], reason[80];
+    const char *state; /* discovered, pairing, paired, connected, failed, expired */
+} host_discovered_info;
+/* seconds=0 stops discovery only; existing/selected links and bonds stay intact. */
+int host_scan(host_t *h, int seconds);
+int host_pair_device(host_t *h, uint32_t discovery_id);
+int host_discovered_count(const host_t *h);
+int host_discovered_get(const host_t *h, int index, host_discovered_info *out);
 
 /* Sends rumble and lights to the pad in `slot` (queued for rate-limited
  * profiles). Returns 0 if unavailable, still initializing or unsupported. */
@@ -81,8 +96,9 @@ typedef struct {
     int connected;
 } host_paired_info;
 
-/* Seconds left in the pairing window, 0 if not pairing. */
-int host_pairing_left(const host_t *h);
+/* Seconds left in discovery, 0 when stopped/expired. */
+int host_scan_left(const host_t *h);
+uint32_t host_scan_id(const host_t *h);
 
 /* The i-th paired pad (0 <= i < host_paired_count). Returns 0 past the end. */
 int host_paired_get(const host_t *h, int i, host_paired_info *out);

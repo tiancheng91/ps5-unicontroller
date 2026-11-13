@@ -14,6 +14,7 @@ int test_clock_gettime(clockid_t which, struct timespec *time)
 static uint64_t auth = 7;
 static uint8_t caps[16];
 static int removed[256], inserted[256], feedback_calls[256];
+static int32_t initial_user = 43, foreground_user = 42;
 static int logged_in = 1, power_available = 1, delete_failure = -1, feedback_failure = -1;
 static uint64_t power_bits = 1000;
 static PadData frames[256];
@@ -30,7 +31,7 @@ int32_t sceUserServiceGetLoginUserIdList(int32_t users[4])
 }
 int32_t sceUserServiceGetForegroundUser(int32_t *user)
 {
-    *user = logged_in ? 42 : -1;
+    *user = logged_in ? foreground_user : -1;
     return 0;
 }
 int32_t scePadInit(void)
@@ -61,6 +62,11 @@ int32_t scePadVirtualDeviceDeleteDevice(int32_t h)
     if (h == delete_failure)
         return -123;
     removed[h]++;
+    return 0;
+}
+int32_t sceUserServiceGetInitialUser(int32_t *user)
+{
+    *user = logged_in ? initial_user : -1;
     return 0;
 }
 static int32_t feedback(int32_t handle, void *buffer)
@@ -392,6 +398,30 @@ int main(void)
 {
     candidate(
         "SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0x7b][type:1][subType:22][capabilityBattery:1]");
+    assert(!matches);
+    prepare();
+    assert(uc_backend_preferred_user() == 43); /* Initial is not first login. */
+    initial_user = 99;
+    foreground_user = 44;
+    assert(uc_backend_preferred_user() == 44);
+    foreground_user = 99;
+    assert(uc_backend_preferred_user() == 42);
+    initial_user = 43;
+    foreground_user = 42;
+    logged_in = 0;
+    assert(uc_backend_preferred_user() == -1);
+    logged_in = 1;
+    candidate("SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0x7b][type:1][subType:22]");
+    assert(matches == 1 && device == 123);
+    matches = 0;
+    device = 0;
+    candidate("DEVICE_ADDED [DeviceId = 0X7C][type:1][subType:22]");
+    assert(matches == 1 && device == 124);
+    matches = 0;
+    device = 0;
+    candidate("DEVICE_ADDED [DeviceId:0x7b][type:10][subType:22]");
+    candidate("DEVICE_ADDED [DeviceId:0x7b][type:1][subType:220]");
+    candidate("DEVICE_ADDED [DeviceId:0x7b][type:1][subType:22][capabilityBattery:01]");
     assert(!matches);
     isolation_and_rumble();
     power_guards();

@@ -16,10 +16,12 @@ BT_DIR := src/drivers/bluetooth
 BT_NAMES := host le hci_usb smp_crypto usb_desc evstream
 BT_SOURCES := $(addprefix $(BT_DIR)/,$(addsuffix .c,$(BT_NAMES)))
 DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/generic.c \
-	src/drivers/common/util.c src/drivers/common/log.c src/drivers/common/crc32.c
+	src/drivers/common/util.c src/drivers/common/crc32.c
 
 
 SOURCES := \
+	src/logging.c \
+	vendor/rxi-log/log.c \
 	src/drivers/usb.c \
 	src/drivers/usb/transport.c \
 	src/drivers/usb/protocol.c \
@@ -37,7 +39,7 @@ SOURCES := \
 	build/assets.c
 OBJECTS := $(patsubst %.c,build/ps5/%.o,$(SOURCES))
 CONTROLLER_DATA := build/controller_registry.inc
-HEADERS := $(shell find src -type f -name '*.h' | sort)
+HEADERS := $(shell find src -type f -name '*.h' | sort) vendor/rxi-log/log.h
 
 .PHONY: all
 all: $(PAYLOAD)

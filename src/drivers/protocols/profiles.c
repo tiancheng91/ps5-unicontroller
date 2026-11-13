@@ -734,8 +734,15 @@ int profile_usb_protocol_hint(uint16_t vid, uint16_t pid)
     return uc_controller_override_usb_hint(vid, pid);
 }
 
+int profile_system_bluetooth(uint16_t vid, uint16_t pid)
+{
+    return vid == 0x054c && (pid == 0x0ce6 || pid == 0x0df2);
+}
+
 int profile_ble_allowed(uint16_t vid, uint16_t pid)
 {
+    if (profile_system_bluetooth(vid, pid))
+        return 0;
     if (profile_classify(vid, pid) == PROFILE_SWITCH ||
         profile_classify_for_transport(PAD_TRANSPORT_BLE, vid, pid) == PROFILE_SWITCH)
         return 0;

@@ -55,6 +55,19 @@ static void run(host_t *h, int ms)
         host_poll(h, 5);
 }
 
+/* Existing protocol tests select the first recorded result explicitly. New
+ * discovery-only tests below separately prove scans never connect. */
+static int select_first(host_t *h, int seconds)
+{
+    if (!host_scan(h, seconds))
+        return 0;
+    long until = sim_le_now() + 5000;
+    while (!host_discovered_count(h) && sim_le_now() < until)
+        host_poll(h, 5);
+    host_discovered_info found;
+    return host_discovered_get(h, 0, &found) && host_pair_device(h, found.id);
+}
+
 static host_t *open_host(sim_le_t *sim, seen *s)
 {
     host_events ev = {on_connect, on_state, on_disconnect, s, NULL};
@@ -91,6 +104,35 @@ static void xbox_pad(sim_le_pad *p, int sc, int rpa)
     p->mtu = 185;
 }
 
+static void test_manual_le_discovery(void)
+{
+    unlink(DB);
+    sim_le_pad pad;
+    xbox_pad(&pad, 1, 0);
+    sim_le_t *sim = sim_le_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h && host_scan(h, 10));
+    if (!h) {
+        sim_le_free(sim);
+        return;
+    }
+    run(h, 2000);
+    CHECK(host_discovered_count(h) == 1);
+    CHECK(sim_le_creates(sim) == 0 && sim_le_pairings(sim) == 0 && observed.connects == 0);
+    host_discovered_info found;
+    CHECK(host_discovered_get(h, 0, &found) && found.le);
+    CHECK(host_scan(h, 0));
+    run(h, 1000);
+    CHECK(sim_le_creates(sim) == 0);
+    CHECK(host_pair_device(h, found.id));
+    run(h, 8000);
+    CHECK(observed.connects == 1 && sim_le_paired(sim));
+    host_close(h);
+    sim_le_free(sim);
+    unlink(DB);
+}
+
 static void test_xbox_sc(void)
 {
     sim_le_pad pad;
@@ -108,7 +150,7 @@ static void test_xbox_sc(void)
     CHECK(h != NULL);
     if (!h)
         return;
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 8000);
 
     CHECK(sim_le_error(sim) == NULL);
@@ -191,7 +233,7 @@ static void test_reconnect_rpa(void)
     xbox_pad(&pad, 1, 1);
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 10);
+    select_first(h, 10);
     run(h, 8000);
     CHECK(s.connects == 1 && sim_le_pairings(sim) == 1);
 
@@ -262,7 +304,7 @@ static void test_generic_legacy(void)
     pad.mtu = 23;
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 10000);
     CHECK(sim_le_error(sim) == NULL);
     if (sim_le_error(sim))
@@ -306,7 +348,7 @@ static void test_garbage(void)
     xbox_pad(&pad, 1, 0);
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 8000);
     CHECK(s.connects == 1);
     for (i = 0; i < 20000; i++) {
@@ -335,8 +377,8 @@ static void test_garbage(void)
     sim_le_free(sim);
 }
 
-/* Someone else's connection attempt is pending in the shared controller:
- * Create Connection is refused (0x0c) until it is cancelled. */
+/* A foreign pending initiator may belong to the console. Refusal must not
+ * authorize cancellation; our bounded attempt ends visibly instead. */
 static void test_refused_then_ok(void)
 {
     sim_le_pad pad;
@@ -344,7 +386,7 @@ static void test_refused_then_ok(void)
     host_t *h;
     seen s;
 
-    printf("LE Create Connection refused (0x0c): cancel and try again\n");
+    printf("LE busy (0x0c): do not cancel system-owned pending connection\n");
     unlink(DB);
     memset(&s, 0, sizeof s);
     xbox_pad(&pad, 1, 0);
@@ -355,12 +397,12 @@ static void test_refused_then_ok(void)
     CHECK(h != NULL);
     if (!h)
         return;
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 8000);
     CHECK(sim_le_error(sim) == NULL);
-    CHECK(s.connects == 1);
-    CHECK(sim_le_creates(sim) == 3);
-    CHECK(sim_le_cancels(sim) == 2);
+    CHECK(s.connects == 0);
+    CHECK(sim_le_creates(sim) == 4);
+    CHECK(sim_le_cancels(sim) == 0);
     printf("  creates %d, cancels %d, connects %d\n", sim_le_creates(sim), sim_le_cancels(sim),
            s.connects);
     host_close(h);
@@ -386,18 +428,24 @@ static void test_refused_backoff(void)
     CHECK(h != NULL);
     if (!h)
         return;
-    host_pair(h, 60);
+    select_first(h, 60);
     run(h, 4000);
     CHECK(sim_le_creates(sim) == 4); /* the first try and three more */
-    CHECK(sim_le_cancels(sim) == 4);
+    CHECK(sim_le_cancels(sim) == 0);
     CHECK(s.connects == 0);
     run(h, 3000);
     CHECK(sim_le_creates(sim) == 4); /* resting */
     run(h, 20000);
-    CHECK(sim_le_creates(sim) == 9);
-    CHECK(sim_le_cancels(sim) == 8);
-    CHECK(s.connects == 1);
-    CHECK(sim_le_paired(sim));
+    CHECK(sim_le_creates(sim) == 4); /* No advertisement-triggered second pairing. */
+    CHECK(sim_le_cancels(sim) == 0);
+    CHECK(s.connects == 0);
+    sim_le_finish_foreign(sim); /* System completes its own operation. */
+    host_discovered_info found;
+    CHECK(host_discovered_get(h, 0, &found));
+    CHECK(host_pair_device(h, found.id)); /* Explicit retry, not auto-pair. */
+    run(h, 8000);
+    CHECK(s.connects == 1 && sim_le_paired(sim));
+    CHECK(sim_le_cancels(sim) == 0);
     printf("  creates %d, cancels %d, connects %d\n", sim_le_creates(sim), sim_le_cancels(sim),
            s.connects);
     host_close(h);
@@ -423,12 +471,29 @@ static int pair_once(int drop_every, unsigned seed)
         sim_le_free(sim);
         return 0;
     }
-    host_pair(h, 60);
-    run(h, 45000);
+    select_first(h, 60);
+    for (int click = 0; click < 5 && !s.connects; click++) {
+        /* User retries do not follow a radio-period-aligned 15s cadence. */
+        run(h, 8000 + (int)((seed >> click) % 3000));
+        host_discovered_info found;
+        if (click < 4 && !s.connects && host_discovered_get(h, 0, &found) &&
+            !strcmp(found.state, "failed"))
+            (void)host_pair_device(h, found.id); /* Simulated user retry, never advertisement. */
+    }
     ok = s.connects >= 1 && s.states > 0 && (s.last.buttons & 0x4000);
-    if (!ok)
-        printf("  seed %u: connects %d states %d pairings %d error %s\n", seed, s.connects,
-               s.states, sim_le_pairings(sim), sim_le_error(sim) ? sim_le_error(sim) : "-");
+    if (!ok) {
+        host_discovered_info found;
+        CHECK(host_discovered_get(h, 0, &found));
+        CHECK(!strcmp(found.state, "failed") && found.reason[0]);
+        int creates = sim_le_creates(sim);
+        run(h, 7000);
+        CHECK(sim_le_creates(sim) == creates); /* No hidden automatic re-pairing. */
+        printf("  seed %u: failed visibly after explicit user retries (%s); no auto-pair loop\n",
+               seed, found.reason);
+        ok = !strcmp(found.state, "failed") && found.reason[0] && sim_le_creates(sim) == creates
+                 ? 2
+                 : 0;
+    }
     host_close(h);
     sim_le_free(sim);
     return ok;
@@ -436,15 +501,19 @@ static int pair_once(int drop_every, unsigned seed)
 
 static void test_stress(void)
 {
-    int ok = 0, runs = 30;
+    int ok = 0, reported_failures = 0, runs = 30;
     unsigned seed;
 
-    printf("LE pairing under 1-in-10 packet loss, %d runs\n", runs);
-    for (seed = 1; seed <= (unsigned)runs; seed++)
-        ok += pair_once(10, seed * 104729);
-    printf("  %d/%d runs ended with a working pad\n", ok, runs);
-    if (ok < runs)
-        g_fail++;
+    printf("LE manual pairing under 1-in-10 packet loss, %d runs (up to five explicit clicks)\n",
+           runs);
+    for (seed = 1; seed <= (unsigned)runs; seed++) {
+        int outcome = pair_once(10, seed * 104729);
+        ok += outcome == 1;
+        reported_failures += outcome == 2;
+    }
+    printf("  %d/%d working; %d visible failures requiring user action, no automatic re-pairing\n",
+           ok, runs, reported_failures);
+    CHECK(ok + reported_failures == runs && ok > 0);
 }
 
 static void test_ble_rejected_without_saved_pairing(uint16_t vid, uint16_t pid)
@@ -462,7 +531,7 @@ static void test_ble_rejected_without_saved_pairing(uint16_t vid, uint16_t pid)
         sim_le_free(sim);
         return;
     }
-    host_pair(host, 10);
+    select_first(host, 10);
     run(host, 8000);
     CHECK(observed.connects == 0 && observed.states == 0);
     CHECK(host_paired_count(host) == 0);
@@ -473,6 +542,7 @@ static void test_ble_rejected_without_saved_pairing(uint16_t vid, uint16_t pid)
 
 int main(void)
 {
+    test_manual_le_discovery();
     test_ble_rejected_without_saved_pairing(0x057e, 0x2009);
     test_ble_rejected_without_saved_pairing(0x1234, 0x5678);
     test_ble_rejected_without_saved_pairing(0x054c, 0x09cc);

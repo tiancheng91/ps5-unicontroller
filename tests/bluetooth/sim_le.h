@@ -47,6 +47,7 @@ int sim_le_encrypted(const sim_le_t *s);
 int sim_le_outputs(const sim_le_t *s);
 int sim_le_last_output(const sim_le_t *s, uint8_t *out, int max);
 int sim_le_blob_reads(const sim_le_t *s);
+void sim_le_finish_foreign(sim_le_t *s);     /* System-owned create completes. */
 int sim_le_creates(const sim_le_t *s);       /* LE Create Connection commands */
 int sim_le_cancels(const sim_le_t *s);       /* LE Create Connection Cancel commands */
 const char *sim_le_error(const sim_le_t *s); /* what the pad found wrong */

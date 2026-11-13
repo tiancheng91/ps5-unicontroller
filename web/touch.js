@@ -63,10 +63,49 @@ async function enableOutput(user_id, operation) {
   await api("/test-controller", "DELETE");
   throw Error("启用已取消");
 }
+const touchMessages = {
+  服务器未返回会话令牌: "No session token returned",
+  "服务器返回无效 JSON（HTTP ": "Invalid JSON (HTTP ",
+  "初始化仍未完成，请稍后重试": "Initialization not complete; retry later",
+  "正在初始化虚拟输出…": "Initializing virtual output…",
+  启用已取消: "Enable cancelled",
+  "已启用 · 输入已确认 · 租约超时 500ms": "Enabled · input acknowledged · 500ms lease",
+  "输入失败，已停止发送：": "Input failed; sending stopped: ",
+  "默认关闭 · 选择已登录用户后启用": "Off by default · choose a signed-in user to enable",
+  "读取账号失败：": "Unable to load users: ",
+  没有可用的已登录用户: "No signed-in users available",
+  "页面已隐藏，输出已关闭": "Page hidden; output disabled",
+  服务器会话编号无效: "Invalid server session ID",
+  "启用失败：": "Enable failed: ",
+  输出已关闭: "Output disabled",
+  "关闭失败，请重试：": "Disable failed; retry: ",
+  已释放全部控制: "All controls released",
+  "页面已隐藏 · 已释放，返回后请重新启用": "Page hidden · input released; enable again on return",
+  "网络已断开 · 输入停止；服务器将在 500ms 内释放":
+    "Network offline · input stopped; server releases within 500ms",
+  专注操控: "Focus mode",
+  退出专注: "Exit focus mode",
+  "默认关闭 · 正在读取已登录用户": "Off by default · loading signed-in users",
+  没有已登录用户: "No signed-in users",
+};
+function translateTouch(message) {
+  if (!window.UCUI || UCUI.get().lang === "zh") return message;
+  for (const key of Object.keys(touchMessages).sort((a, b) => b.length - a.length))
+    message = message.split(key).join(touchMessages[key]);
+  return message;
+}
+let lastStatus = "默认关闭 · 正在读取已登录用户";
 function status(message, error = false) {
-  $("status").textContent = message;
+  lastStatus = message;
+  $("status").textContent = translateTouch(message);
   $("status").classList.toggle("error", error);
 }
+window.addEventListener("uc-language", () => {
+  $("status").textContent = translateTouch(lastStatus);
+  $("focus").textContent = translateTouch(
+    document.body.classList.contains("focus-mode") ? "退出专注" : "专注操控",
+  );
+});
 function userList(data) {
   return Array.isArray(data) ? data : data.users || [];
 }
@@ -83,7 +122,7 @@ function fillUsers(data) {
   if (!$("user").options.length) {
     const o = document.createElement("option");
     o.value = "";
-    o.textContent = "没有已登录用户";
+    o.textContent = translateTouch("没有已登录用户");
     $("user").append(o);
   }
 }
@@ -344,8 +383,7 @@ function focusMode(enabled) {
   releaseAll();
   document.body.classList.toggle("focus-mode", enabled);
   $("focus").setAttribute("aria-pressed", String(enabled));
-  $("focus").textContent = enabled ? "退出专注" : "专注操控";
-  document.querySelector(".controller-shell").setAttribute("preserveAspectRatio", "xMidYMid meet");
+  $("focus").textContent = translateTouch(enabled ? "退出专注" : "专注操控");
 }
 $("focus").onclick = () => focusMode(!document.body.classList.contains("focus-mode"));
 document.addEventListener("keydown", (event) => {

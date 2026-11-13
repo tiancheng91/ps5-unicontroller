@@ -77,10 +77,8 @@ function harness(relative) {
   vm.createContext(context);
   let source = fs.readFileSync(path.join(__dirname, "../../web", relative), "utf8");
   // Suppress startup networking; test real handlers and enableOutput against deferred requests.
-  source = source.replace(/\ninit\(\);\nrender\(\);\s*$/, "\nrender();");
-  source = source.replace(/\nrefresh\(\);\nsetInterval\([\s\S]*$/, "");
+  source = source.replace(/\ninit\(\);\nrender\(\);/, "\nrender();");
   vm.runInContext(source, context);
-  vm.runInContext("refresh = async () => {};", context);
   const queue = [];
   context.request = (route, method) => {
     calls.push({ route, method });
@@ -88,18 +86,13 @@ function harness(relative) {
     return Promise.resolve({});
   };
   vm.runInContext("api = request;", context);
-  if (relative === "control/control.js")
-    vm.runInContext(
-      'bluetooth = {state:"off",devices:[],paired:[],pairing_seconds:0}; usb = {state:"off",devices:[],pending:false,bound:false}; sourcesReady = true; refresh = async () => { sourcesReady = true; updateActionButtons(); };',
-      context,
-    );
   return { context, events, element, calls, queue, timers };
 }
 async function flush() {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 }
 (async () => {
-  for (const file of ["control/control.js", "controller/controller.js"]) {
+  for (const file of ["touch.js"]) {
     let h = harness(file);
     const enabling = h.element("enable").onclick();
     assert.equal(h.queue.length, 1);
@@ -129,7 +122,7 @@ async function flush() {
     );
     assert.equal(h.element("enable").disabled, false);
   }
-  const h = harness("controller/controller.js");
+  const h = harness("touch.js");
   const waiting = h.element("enable").onclick();
   h.context.document.hidden = true;
   h.events.visibilitychange();

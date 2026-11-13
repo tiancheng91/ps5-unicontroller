@@ -6,8 +6,8 @@
 #define ACK_TIMEOUT_MS 250u
 static int fail(uc_usb_protocol *p)
 {
-    log_line("usb protocol: initialization/input failed kind=%d step=%d attempts=%d", p->kind,
-             p->step, p->attempts);
+    uc_log_error("usb protocol: initialization/input failed kind=%d step=%d attempts=%d", p->kind,
+                 p->step, p->attempts);
     p->failed = 1;
     p->ready = 0;
     return -1;
@@ -48,7 +48,7 @@ int uc_usb_protocol_rumble(uc_usb_protocol *p, uint8_t strong, uint8_t weak, uin
 }
 static int rumble_fail(uc_usb_protocol *p)
 {
-    log_line("usb rumble: output disabled kind=%d; input remains enabled", p->kind);
+    uc_log_warn("usb rumble: output disabled kind=%d; input remains enabled", p->kind);
     p->rumble_failed = 1;
     p->rumble_length = p->rumble_attempts = p->rumble_stops = 0;
     p->rumble_sample = p->rumble_dirty = 0;

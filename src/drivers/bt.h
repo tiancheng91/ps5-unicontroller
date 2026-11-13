@@ -15,7 +15,8 @@ int uc_bt_start_system_assigned(void);
 int uc_bt_assign(int slot, const char *address, int32_t user);
 int uc_bt_stop(void);
 void uc_bt_poll(uint64_t now_ms);
-int uc_bt_pair(unsigned seconds);
+int uc_bt_scan(unsigned seconds); /* 0 stops discovery, preserving connections. */
+int uc_bt_pair(uint32_t discovery_id);
 int uc_bt_forget(const char *address);
 size_t uc_bt_status_json(char *buffer, size_t capacity);
 int uc_bt_running(void);

@@ -77,6 +77,19 @@ static void run(host_t *h, int ms)
         host_poll(h, 5);
 }
 
+/* Existing protocol tests select the first recorded result explicitly. New
+ * discovery-only tests below separately prove scans never connect. */
+static int select_first(host_t *h, int seconds)
+{
+    if (!host_scan(h, seconds))
+        return 0;
+    long until = sim_now() + 5000;
+    while (!host_discovered_count(h) && sim_now() < until)
+        host_poll(h, 5);
+    host_discovered_info found;
+    return host_discovered_get(h, 0, &found) && host_pair_device(h, found.id);
+}
+
 static host_t *open_host(sim_t *sim, seen *s)
 {
     host_events ev = {on_connect, on_state, on_disconnect, s, NULL};
@@ -122,7 +135,7 @@ static int test_pairing_seed(int drop_every, unsigned seed, int quiet)
     if (!h)
         return 0;
 
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 15000);
 
     CHECK(s.connects == 1);
@@ -279,7 +292,7 @@ static void test_stale_link(void)
     host_t *h;
     seen s;
 
-    printf("a stale link from an earlier run is closed and the pad then pairs\n");
+    printf("an unknown existing link is never disconnected to force pairing\n");
     unlink(DB);
     memset(&pad, 0, sizeof pad);
     memset(&s, 0, sizeof s);
@@ -298,10 +311,10 @@ static void test_stale_link(void)
         sim_free(sim);
         return;
     }
-    host_pair(h, 60);
+    select_first(h, 60);
     run(h, 30000);
-    CHECK(sim_stale_cleared(sim) == 1);
-    CHECK(s.connects == 1);
+    CHECK(sim_stale_cleared(sim) == 0);
+    CHECK(s.connects == 0);
     host_close(h);
     sim_free(sim);
 }
@@ -390,7 +403,7 @@ static void test_generic_pad(void)
     }
     sim = sim_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 10000);
     CHECK(s.connects == 1);
     CHECK(s.info.profile && strcmp(s.info.profile, "Generic HID") == 0);
@@ -439,7 +452,7 @@ static void test_switch_pad(void)
     h = open_host(sim, &s);
     unlink("build/test-acl-diag.log");
     CHECK(log_open("build/test-acl-diag.log"));
-    host_pair(h, 30);
+    select_first(h, 30);
     {
         long until = sim_now() + 10000;
         while (!s.connects && sim_now() < until)
@@ -659,7 +672,7 @@ static void test_garbage(void)
     pad.needs_output = 1;
     sim = sim_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    select_first(h, 30);
     run(h, 8000);
     CHECK(s.connects == 1);
     for (i = 0; i < 20000; i++) {
@@ -790,13 +803,13 @@ static void test_clear_pairings(void)
     CHECK(stat(h.db_path, &permissions) == 0 && (permissions.st_mode & 0777) == 0600);
     CHECK(host_forget(&h, addr) && h.ndb == 0);
     h.ndb = 2;
-    h.pair_until = now_ms() + 60000;
+    h.scan_until = now_ms() + 60000;
     link_t *l = link_new(&h, addr);
     l->connected = 1;
     l->handle = 2;
     CHECK(host_forget_all(&h));
-    CHECK(h.ndb == 0 && h.clearing && h.pair_until == 0 && l->disconnecting);
-    CHECK(!host_pair(&h, 60));
+    CHECK(h.ndb == 0 && h.clearing && h.scan_until == 0 && l->disconnecting);
+    CHECK(!host_scan(&h, 60));
     /* A late key notification cannot repopulate the cleared store. */
     unsigned char key_event[23] = {0};
     memcpy(key_event, addr, 6);
@@ -811,11 +824,123 @@ static void test_clear_pairings(void)
         fclose(f);
     }
     memset(h.links, 0, sizeof h.links);
-    CHECK(host_pair(&h, 60) && !h.clearing);
+    CHECK(host_scan(&h, 60) && !h.clearing);
     snprintf(h.db_path, sizeof h.db_path, "build/missing-clear-dir/store.db");
     CHECK(!host_forget_all(&h)); /* Never report a failed disk write as success. */
     unlink("build/test-clear.db");
     sim_free(sim);
+}
+
+static void test_system_controller_filter(void)
+{
+    host_t h = {0};
+    unsigned char record[14] = {1, 2, 3, 4, 5, 6};
+    unsigned char eir[] = {9, 0x10, 2, 0, 0x4c, 0x05, 0xe6, 0x0c, 0, 0};
+    CHECK(profile_system_bluetooth(0x054c, 0x0ce6));
+    CHECK(profile_system_bluetooth(0x054c, 0x0df2));
+    CHECK(!profile_system_bluetooth(0x054c, 0x09cc));
+    CHECK(!profile_system_bluetooth(0x054c, 0x05c4));
+    CHECK(!profile_system_bluetooth(0x1234, 0x0ce6));
+    CHECK(!profile_ble_allowed(0x054c, 0x0ce6));
+    CHECK(host_scan(&h, 60));
+    host_found(&h, 0, 0, record, eir, sizeof eir, record, 0, 0);
+    CHECK(h.discovered_count == 0);
+    host_found(&h, 0, 0, record, NULL, 0, record, 0, 0);
+    CHECK(h.discovered_count == 0); /* Later plain reports cannot reintroduce it. */
+    record[0]++;
+    /* Identity may arrive after an initial result without EIR. Remove its ID too. */
+    host_found(&h, 0, 0, record, NULL, 0, record, 0, 0);
+    CHECK(h.discovered_count == 1);
+    uint32_t id = h.discovered[0].info.id;
+    eir[6] = 0xf2;
+    eir[7] = 0x0d;
+    host_found(&h, 0, 0, record, eir, sizeof eir, record, 0, 0);
+    CHECK(h.discovered_count == 0 && !host_pair_device(&h, id));
+    record[0]++;
+    /* DS4 remains available; unknown/truncated identity does not justify filtering. */
+    eir[6] = 0xcc;
+    eir[7] = 0x09;
+    host_found(&h, 0, 0, record, eir, sizeof eir, record, 0, 0);
+    CHECK(h.discovered_count == 1);
+    CHECK(host_scan(&h, 60));
+    eir[6] = 0xe6;
+    eir[7] = 0x0c;
+    host_found(&h, 0, 0, record, eir, sizeof eir - 1, record, 0, 0);
+    CHECK(h.discovered_count == 1);
+    CHECK(host_scan(&h, 60));
+    h.ndb = 1;
+    memcpy(h.db[0].addr, record, 6);
+    h.db[0].vid = 0x054c;
+    h.db[0].pid = 0x0ce6;
+    host_found(&h, 1, 0, record, NULL, 0, NULL, 0, 0);
+    CHECK(h.discovered_count == 0);
+}
+
+static void test_discovery_cache(void)
+{
+    host_t h = {0};
+    unsigned char record[14] = {1, 2, 3, 4, 5, 6, 1, 0, 8, 0x25, 0, 0, 0, 0};
+    const unsigned char name[] = {8, 0x09, 'P', 'a', 'd', '"', '\\', 'X', 'Y'};
+    CHECK(host_scan(&h, 60));
+    host_found(&h, 0, 0, record, name, sizeof name, record, 1, -40);
+    host_found(&h, 0, 0, record, NULL, 0, record, 1, -42);
+    CHECK(host_discovered_count(&h) == 1 && h.ndb == 0);
+    host_discovered_info first;
+    CHECK(host_discovered_get(&h, 0, &first));
+    CHECK(!strcmp(first.name, "Pad\"\\XY") && first.rssi == -42);
+    uint32_t old_id = first.id;
+    host_found(&h, 1, 1, record, NULL, 0, NULL, 0, 0);
+    CHECK(host_discovered_count(&h) == 2); /* Same address, different transport. */
+    for (int i = 0; i < HOST_DISCOVERY_MAX + 4; i++) {
+        record[0] = (unsigned char)(20 + i);
+        host_found(&h, 0, 0, record, NULL, 0, record, 0, 0);
+    }
+    CHECK(host_discovered_count(&h) == HOST_DISCOVERY_MAX);
+    CHECK(host_scan(&h, 60));
+    CHECK(!host_pair_device(&h, old_id)); /* A rescan invalidates old result ids. */
+    host_found(&h, 0, 0, record, NULL, 0, record, 0, 0);
+    CHECK(host_discovered_get(&h, 0, &first) && first.id != old_id);
+    h.discovered[0].seen = now_ms() - 120001;
+    CHECK(!host_pair_device(&h, first.id));
+    CHECK(host_discovered_get(&h, 0, &first) && !strcmp(first.state, "expired"));
+    h.links[0].used = h.links[0].ready = 1;
+    CHECK(host_scan(&h, 0) && h.links[0].ready && h.discovered_count == 1);
+}
+
+static void test_manual_switch_discovery(void)
+{
+    unlink(DB);
+    sim_pad pad = {.mode = SIM_WAIT_PAIRING, .cod = 0x002508, .vid = 0x057e, .pid = 0x2009};
+    const unsigned char address[6] = {9, 8, 7, 6, 5, 4};
+    memcpy(pad.addr, address, 6);
+    pad.report[0] = 0x30;
+    pad.report_len = 49;
+    sim_t *sim = sim_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h && host_scan(h, 10));
+    if (!h) {
+        sim_free(sim);
+        return;
+    }
+    run(h, 1200);
+    CHECK(host_discovered_count(h) == 1 && !sim_link_up(sim));
+    CHECK(observed.connects == 0 && host_paired_count(h) == 0);
+    int remaining = host_scan_left(h);
+    run(h, 1500);
+    CHECK(host_scan_left(h) < remaining);
+    host_discovered_info found;
+    CHECK(host_discovered_get(h, 0, &found) && !found.le);
+    CHECK(!host_pair_device(h, found.id + 10000));
+    CHECK(host_scan(h, 0) && host_scan_left(h) == 0);
+    run(h, 1000);
+    CHECK(!sim_link_up(sim) && host_paired_count(h) == 0);
+    CHECK(host_pair_device(h, found.id));
+    run(h, 10000);
+    CHECK(observed.connects == 1 && observed.states > 0 && host_paired_count(h) == 1);
+    host_close(h);
+    sim_free(sim);
+    unlink(DB);
 }
 
 static void test_recording_level(void)
@@ -823,9 +948,9 @@ static void test_recording_level(void)
     const char *path = "build/test-log-level.log";
     unlink(path);
     CHECK(log_open(path));
-    log_set_level(2);
+    uc_log_set_level(2);
     log_line("suppressed legacy info");
-    log_set_level(3);
+    uc_log_set_level(3);
     log_line("visible legacy info");
     log_close();
     FILE *file = fopen(path, "r");
@@ -842,6 +967,9 @@ static void test_recording_level(void)
 
 int main(void)
 {
+    test_system_controller_filter();
+    test_discovery_cache();
+    test_manual_switch_discovery();
     test_recording_level();
     test_clear_pairings();
     test_input_diagnostics();

@@ -8,7 +8,7 @@ B=$(mktemp -d /tmp/uc-bt-tests.XXXXXX)
 trap 'rm -rf "$B"' EXIT
 CC=${CC:-cc}
 common=(-std=c11 -Wall -Wextra -Werror -O1 -g -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -I"$D" -Isrc/core -Isrc/drivers/protocols -Isrc/drivers/common -Ibuild)
-core=("src/drivers/config/overrides.c" "src/drivers/config/json.c" "src/drivers/common/util.c" "src/drivers/common/log.c" "src/drivers/common/crc32.c" "$D/smp_crypto.c" "src/drivers/protocols/profiles.c" "src/drivers/protocols/generic.c" "$D/host.c" "$D/le.c")
+core=("src/drivers/config/overrides.c" "src/drivers/config/json.c" "src/drivers/common/util.c" "src/logging.c" "vendor/rxi-log/log.c" "src/drivers/common/crc32.c" "$D/smp_crypto.c" "src/drivers/protocols/profiles.c" "src/drivers/protocols/generic.c" "$D/host.c" "$D/le.c")
 "$CC" "${common[@]}" "${core[@]}" "$T/sim.c" "$T/test_host.c" -o "$B/host"
 "$CC" "${common[@]}" "${core[@]}" "$T/sim_le.c" "$T/test_le.c" -o "$B/le"
 "$CC" "${common[@]}" "${core[@]}" "$T/test_profiles.c" -o "$B/profiles"

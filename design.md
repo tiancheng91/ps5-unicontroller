@@ -1,118 +1,71 @@
----
-name: ESP-EMU DevStudio
-description: Dense, terminal-adjacent dark system designed for in-browser hardware emulators, embedded registers, and low-level firmware telemetry.
-colors:
-  primary: "#ff8c00"
-  on-primary: "#000000"
-  primary-container: "#3d2200"
-  secondary: "#00e5ff"
-  on-secondary: "#000000"
-  neutral: "#0d0e11"
-  surface: "#16181d"
-  surface-variant: "#1f232b"
-  outline: "#2c313a"
-  outline-variant: "#3b424e"
-  text-primary: "#e6edf3"
-  text-secondary: "#8b949e"
-  text-muted: "#545d68"
-  status-success: "#2ea043"
-  status-error: "#f85149"
-  status-warning: "#d29922"
-typography:
-  fontFamily:
-    sans: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    mono: "'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace"
-  heading-sm:
-    fontFamily: "{typography.fontFamily.sans}"
-    fontSize: "0.75rem"
-    fontWeight: "700"
-    letterSpacing: "0.08em"
-    textTransform: "uppercase"
-  heading-md:
-    fontFamily: "{typography.fontFamily.sans}"
-    fontSize: "0.875rem"
-    fontWeight: "600"
-    lineHeight: "1.25"
-  body-sm:
-    fontFamily: "{typography.fontFamily.sans}"
-    fontSize: "0.75rem"
-    lineHeight: "1.3"
-  body-md:
-    fontFamily: "{typography.fontFamily.sans}"
-    fontSize: "0.8125rem"
-    lineHeight: "1.4"
-  code-xs:
-    fontFamily: "{typography.fontFamily.mono}"
-    fontSize: "0.6875rem"
-    lineHeight: "1.2"
-  code-sm:
-    fontFamily: "{typography.fontFamily.mono}"
-    fontSize: "0.75rem"
-    lineHeight: "1.35"
-spacing:
-  2xs: "2px"
-  xs: "4px"
-  sm: "8px"
-  md: "12px"
-  lg: "16px"
-  xl: "24px"
-rounded:
-  none: "0px"
-  xs: "2px"
-  sm: "4px"
-  md: "6px"
-components:
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.heading-sm}"
-    rounded: "{rounded.xs}"
-    padding: "4px 10px"
-  button-primary-hover:
-    backgroundColor: "#ffa333"
-  button-control:
-    backgroundColor: "{colors.surface-variant}"
-    textColor: "{colors.text-primary}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.xs}"
-    padding: "4px 8px"
-  card-panel:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.xs}"
-    padding: "10px"
-  input-text:
-    backgroundColor: "{colors.neutral}"
-    textColor: "{colors.text-primary}"
-    typography: "{typography.code-sm}"
-    rounded: "{rounded.xs}"
-    padding: "4px 8px"
-  terminal-window:
-    backgroundColor: "#08090a"
-    textColor: "{colors.text-primary}"
-    typography: "{typography.code-sm}"
-    rounded: "{rounded.none}"
-    padding: "10px"
----
+# UniController H5 界面规范
 
-# ESP-EMU DevStudio — UniController 应用规范
+以已确认的 [布局骨架](docs/prototypes/ui-skeleton.html) 为结构基准。管理页与模拟手柄页重新编写；原 `web/control`、`web/controller`、`web/shared` 页面目录已移除。本文维护产品界面规则，不把原型示例状态作为真实硬件能力。
 
-以上设计 token 按用户提供规范保存。视觉采用工业硬件工作台：密集、深色、高对比、严格分区。无浮动阴影和背景模糊，使用 1px 描边与 0–2px 圆角。
+## 视觉和布局
 
-橙色标识主要启动操作，青色用于连接和遥测提示；成功、错误、警告分别使用既定语义色，同时提供文字，不能仅依赖颜色。
+用途是 PS5 客厅与手机上的本地手柄管理。采用灰阶设备工作台：画布 `#111111`、面板 `#1c1c1c`、分隔 `#383838`、文字 `#f2f2f2`、次级文字 `#a4a4a4`。主按钮为白底深色文字，不使用大幅背景渐变、装饰性手柄插图或通栏技术面板。
 
-Inter 用于标题与操作；JetBrains Mono / Fira Code 用于设备 ID、数据表、十六进制和日志。英文分区标题大写，中文不强行转换。字体离线打包或使用系统回退。
+桌面为196px左侧导航和单个主内容区，内容最大1050px。760px以下采用顶部横向导航和单列内容。正文使用 `DIN Alternate, Bahnschrift, Microsoft YaHei, sans-serif`，字标保留 Trebuchet MS；字体均从本地回退，不请求外网。标准正文15px、控件至少44px；电视模式正文20px、控件至少56px。复选开关通过整行 label 扩大点击区域。
 
-## 控制面
+保留橙／蓝／绿／红主题，仅改变导航强调、焦点相关细节和模拟手柄强调色，不给面板整体染色。焦点采用近白3px轮廓，保留 `:focus` 兼容性。错误使用明确文字和独立颜色，不用主题色区分错误。页面标题使用可复用的 `web/brand.svg`：浅色 Trebuchet MS 字标与固定 `#E5484D` 红点，不跟随主题变色。网页页签使用用户提供的UC红点图 `web/icon.png`，不更改PS5安装图标或README Banner。
 
-桌面三列：左侧设备发现、配对与配置；中间连接会话、操作与持续日志；右侧按键、摇杆、账号、虚拟输出和反馈状态。状态矩阵使用等宽数字，设备状态与错误必须可复制。移动端折叠为单列，日志限高。
+## 页面结构
 
-## 手机测试手柄
+| 入口                   | 主要内容                                                                   | 不放在此处的内容                     |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------ |
+| 手柄 `/#controllers`   | 蓝牙／USB统一设备列表、连接服务状态、新增蓝牙设备、未连接配对记录          | 账号选择、JSON、日志流、默认映射编辑 |
+| 模拟手柄 `/controller` | 显式启停、PS键、方向／面键、摇杆、紧急释放                                 | 蓝牙配对、页面导航注入到游戏         |
+| 日志 `/#logs`          | 分级事件、刷新／暂停、复制／导出，折叠的技术快照                           | 设备首页的重复日志面板               |
+| 设置 `/#settings`      | 连接服务启停、默认按键与震动、自动启动、日志级别、外观、应用入口和停止应用 | 假设已支持的逐设备配置               |
 
-独立 /controller 页面，与控制面共享色彩与组件语言，但操作区不使用微小按钮。触控目标至少 44px，双摇杆、方向键、面键、肩键和 PS/Options 分区。显示启用状态、连接状态、控制租约及紧急释放按钮。默认关闭；隐藏页面、断线、触摸取消自动释放。
+`/settings` 保留兼容入口。管理页是一份HTML，分区只切换显示，不反复挂载轮询。模拟手柄保持独立文档，避免切换管理分区时误用输入会话。
 
-## 日志面板
+## 设备列表和侧栏
 
-深色终端底色，橙/青前缀，等宽行；支持级别筛选、暂停滚动、复制和导出。日志按文本安全渲染；如支持 ANSI，仅允许经过解析的样式，不解释控制指令或 HTML。
+设备行以传输＋实际标识＋槽位作为稳定key。显示名称、连接方式、电量或有线状态、是否收到解析输入，右侧提供设备详情。名称和设备字段必须使用文本绑定，不执行设备提供的HTML。输入已解析不等于游戏已接受输入。
 
-本轮仅提供规范，不实现页面或生成效果图。
+详情采用右侧模态侧栏；手机为全宽面板。展示设备标识、协议、输入帧和虚拟输出状态。账号分配放在高级折叠区，仅在显式选择时调用现有接口；首屏不显示账号关系。页面中的应用分配记录不等同于系统最终归属查询。设备消失时禁用分配，不向旧身份发送命令。不提供后端未支持的逐设备震动或映射开关。
+
+新增蓝牙设备使用相同侧栏。打开面板不启用硬件。点击搜索后可先启动服务，再等待启动完成，最后开始60秒扫描。扫描只缓存发现结果，不能发起新设备连接、认证或保存新密钥。设备列表显示广播名称（没有名称时用通用标签及MAC）、Classic/BLE、信号与状态；用户点击单个结果的“配对”才提交该结果ID。已配对设备仍保留原有回连策略。
+
+服务端返回扫描ID和剩余秒数；页面以单调时钟每秒更新、轮询校准，同一轮不会被旧响应反复延长。停止搜索只结束发现，保留已连接手柄及已经选择的配对任务；关闭面板也不会隐式停止服务或已经开始的扫描。重扫清空旧结果并更换ID，禁止重放旧ID。
+
+配对记录按实际地址和传输区分，不能把相似MAC或相同VID/PID合并。蓝牙停用时后端未提供配对列表，页面应说明记录仍保留，不能显示为已从磁盘删除。
+
+## 语言、导航与交互
+
+首次按浏览器首选语言：`zh*` 为中文，其余英文；手动偏好优先。语言、主题、字号和导航方式保存在浏览器 `unicontroller.appearance.v1`，存储损坏或不可用时仍可操作。切换外观不发送设备命令。日志原文、账号／设备名称和协议字段不强行翻译。
+
+默认浏览器原生导航，可选方向键／标准Gamepad导航。选择框保留原生编辑；确认仅响应新按下边沿，长按方向节流。模拟手柄页不轮询Gamepad导航。PS5系统保留按键仍交给系统。
+
+侧栏打开时主界面 inert，Tab循环限制在面板，Esc／返回关闭，关闭后回到原入口。方向导航也限制在可见侧栏，不能操作遮罩下的按钮。轮询复用设备DOM和账号选项，设备移除或控件禁用才恢复焦点。忘记设备与停止应用保留确认。
+
+模拟输入默认关闭，保留请求序列、会话令牌、100ms心跳、500ms服务端释放、指针取消／键盘抬起／失焦释放。隐藏或断网停止发送，返回后需重新启用；取消创建后仍清理迟到结果。
+
+## 前端文件边界
+
+```text
+web/
+  index.html       管理文档：手柄、日志、设置与侧栏
+  controller.html  独立模拟手柄文档
+  styles.css       灰阶组件、响应式、主题变量
+  touch.css        测试按键和摇杆布局
+  app.js           设备状态、操作串行、侧栏与配对流程
+  settings.js      设置快照、映射和图标管理
+  touch.js         模拟输入会话与释放逻辑
+  api.js           管理页令牌、请求超时、错误处理
+  ui.js            语言／外观、分区路由、Alpine指令
+  navigation.js    方向导航、Gamepad边沿与焦点恢复
+  messages.js      中英文文案
+  icon.png         页签图标
+  vendor/          固定版本 Alpine CSP 和许可证
+```
+
+继续离线分发 Alpine CSP，保持 `script-src 'self'`，不使用 CDN、动态eval或前端构建工具。模板仅用受支持的简单绑定和具名事件方法；显式change事件代替CSP不支持的赋值，映射select使用受控指令。
+
+## 验证边界
+
+`make preview` 使用独立示例数据，始终标记演示，不请求真实API、不打入ELF。`docs/prototypes` 仅保留已确认的结构参考，不是另一套产品页面。
+
+主机模型覆盖请求竞争、启用后再配对、关闭侧栏取消后续配对、失败保留设置；Chrome覆盖CSP、侧栏焦点、稳定DOM、安全文本、双语／外观、设置与映射、方向导航、PS键输入、手机无横向溢出和演示隔离。HTTP测试验证离线资源与原文件一致，旧资源路径404。以上不代替PS5 WebView、原装手柄共存和原生游戏实测。

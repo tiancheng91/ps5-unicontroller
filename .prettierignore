@@ -3,3 +3,7 @@ dist/
 
 target/
 .git/
+
+# Pinned third-party distribution; do not reformat vendor code.
+web/vendor/
+vendor/

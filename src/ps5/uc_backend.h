@@ -21,6 +21,8 @@ int uc_backend_delete(uint64_t handle);
 int uc_backend_read_rumble(uint64_t handle, uint64_t now_ms, uint8_t *strong, uint8_t *weak);
 int uc_backend_cancel_pending(void);
 int uc_backend_users(int32_t users[4]);
+/* Proven default account policy: signed-in initial, foreground, first login. */
+int32_t uc_backend_preferred_user(void);
 /* Optional one-shot auto-start. Desktop mode requires new focus plus signed-in
  * foreground/target users; resume mode permits the explicit system-selection experiment without
  * accounts. */

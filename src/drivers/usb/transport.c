@@ -107,7 +107,9 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
 typedef struct {
     int fd, claimed, initialized, busy[2], opened[2], dead, leased, output_dead;
     int iface_index;
-    unsigned diagnostic_mask;
+    unsigned diagnostic_mask, scan_nodes;
+    uint16_t observed_nodes[16];
+    unsigned observed_count;
     DIR *directory;
     uc_usb_device device;
     struct usb_fs_endpoint endpoints[2];
@@ -205,14 +207,19 @@ static int pump(native_transport *n)
 static int open_candidate(native_transport *n, const char *node, uc_usb_device *selected)
 {
     unsigned diagnostic = 0;
-    const char *operation = "descriptor";
+    const char *operation = "device_descriptor";
     for (unsigned i = 0; i < 4; i++)
         if (&natives[i] != n && natives[i].leased && natives[i].fd >= 0 &&
             !strcmp(natives[i].device.node, node))
             return 0;
     n->fd = open(node, O_RDWR | O_NONBLOCK);
-    if (n->fd < 0)
+    if (n->fd < 0) {
+        if (!(n->diagnostic_mask & 1u)) {
+            n->diagnostic_mask |= 1u;
+            log_line("usb %s: open failed errno=%d", node, errno);
+        }
         return 0;
+    }
     struct usb_device_descriptor descriptor;
     struct usb_device_info info;
     uint8_t config[4096];
@@ -220,14 +227,35 @@ static int open_candidate(native_transport *n, const char *node, uc_usb_device *
     if (ioctl(n->fd, USB_GET_DEVICE_DESC, &descriptor) < 0 ||
         ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0)
         goto reject;
-    if (descriptor.bDeviceClass != 0 && descriptor.bDeviceClass != 0xff)
+    unsigned bus = 0, address = 0;
+    (void)sscanf(node, "/dev/ugen%u.%u", &bus, &address);
+    uint16_t identity = (uint16_t)(bus << 8 | address);
+    int observed = 0;
+    for (unsigned i = 0; i < n->observed_count; i++)
+        observed |= n->observed_nodes[i] == identity;
+    if (!observed && n->observed_count < 16) {
+        n->observed_nodes[n->observed_count++] = identity;
+        log_line("usb %s: enumerated vid=%04x pid=%04x class=%02x config=%u", node,
+                 UGETW(descriptor.idVendor), UGETW(descriptor.idProduct), descriptor.bDeviceClass,
+                 info.udi_config_index);
+    }
+    operation = "device_class_filter";
+    if (descriptor.bDeviceClass != 0 && descriptor.bDeviceClass != 0xff) {
+        errno = 0;
         goto reject;
+    }
     struct usb_gen_descriptor full;
     memset(&full, 0, sizeof(full));
     full.ugd_data = config;
     full.ugd_maxlen = sizeof(config);
     full.ugd_config_index = info.udi_config_index;
-    if (ioctl(n->fd, USB_GET_FULL_DESC, &full) < 0 || full.ugd_actlen > sizeof(config) ||
+    operation = "configuration_descriptor";
+    if (ioctl(n->fd, USB_GET_FULL_DESC, &full) < 0)
+        goto reject;
+    operation = "protocol_or_endpoint_filter";
+    diagnostic = 6;
+    errno = 0;
+    if (full.ugd_actlen > sizeof(config) ||
         !uc_usb_select(UGETW(descriptor.idVendor), UGETW(descriptor.idProduct), config,
                        full.ugd_actlen, selected))
         goto reject;
@@ -284,7 +312,7 @@ static int open_candidate(native_transport *n, const char *node, uc_usb_device *
     return 1;
 reject: {
     /* Repeated enumeration must not flood logs; one diagnostic per stage. */
-    if (diagnostic && !(n->diagnostic_mask & (1u << diagnostic))) {
+    if (!(n->diagnostic_mask & (1u << diagnostic))) {
         n->diagnostic_mask |= 1u << diagnostic;
         log_line("usb %s: rejected at %s errno=%d (no detach/reset attempted)", node, operation,
                  errno);
@@ -303,13 +331,23 @@ static int native_scan(void *context, uc_usb_device *out)
         return -1;
     if (!n->directory)
         n->directory = opendir("/dev");
-    if (!n->directory)
+    if (!n->directory) {
+        if (!(n->diagnostic_mask & (1u << 7))) {
+            n->diagnostic_mask |= 1u << 7;
+            log_line("usb: opendir /dev failed errno=%d", errno);
+        }
         return -1;
+    }
     /* At most 128 directory entries and one candidate open/descriptor query per
      * scan. Opening ugen control nodes reads descriptors, never all endpoints. */
     for (unsigned examined = 0; examined < 128; examined++) {
         struct dirent *entry = readdir(n->directory);
         if (!entry) {
+            if (!(n->diagnostic_mask & (1u << 8))) {
+                n->diagnostic_mask |= 1u << 8;
+                log_line("usb: /dev scan completed ugen_candidates=%u", n->scan_nodes);
+            }
+            n->scan_nodes = 0;
             closedir(n->directory);
             n->directory = NULL;
             return 0;
@@ -319,6 +357,7 @@ static int native_scan(void *context, uc_usb_device *out)
         if (sscanf(entry->d_name, "ugen%u.%u%c", &bus, &address, &trailing) != 2 || bus > 255 ||
             address > 127 || !address)
             continue;
+        ++n->scan_nodes;
         char node[24];
         int length = snprintf(node, sizeof(node), "/dev/ugen%u.%u", bus, address);
         if (length < 0 || (size_t)length >= sizeof(node))

@@ -15,11 +15,14 @@ CONTROLLER_DATA := build/controller_registry.inc
 BUILD := build
 HOST_BINARY := $(BUILD)/unicontroller-host
 
+LOG_SOURCES := src/logging.c vendor/rxi-log/log.c
+LOG_HEADERS := src/logging.h vendor/rxi-log/log.h
+
 BT_DIR := src/drivers/bluetooth
 BT_NAMES := host le smp_crypto usb_desc evstream
 BT_SOURCES := $(addprefix $(BT_DIR)/,$(addsuffix .c,$(BT_NAMES)))
 DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/generic.c \
-	src/drivers/common/util.c src/drivers/common/log.c src/drivers/common/crc32.c
+	src/drivers/common/util.c src/drivers/common/crc32.c $(LOG_SOURCES)
 BT_MANAGER := src/drivers/bt.c
 
 USB_SOURCES := src/drivers/usb.c src/drivers/usb/transport.c src/drivers/usb/protocol.c
@@ -40,8 +43,9 @@ HOST_SOURCES := \
 	tests/web/host_backend.c
 
 C_SOURCES := $(shell find src tests -type f \( -name '*.c' -o -name '*.h' \) | sort)
-C_HEADERS := $(filter %.h,$(C_SOURCES))
-WEB_SOURCES := $(shell find web -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' \) | sort)
+C_HEADERS := $(filter %.h,$(C_SOURCES)) $(LOG_HEADERS)
+WEB_SOURCES := $(shell find web -type f \( -name '*.html' -o -name '*.css' \
+	-o -name '*.js' -o -name '*.png' -o -name '*.svg' \) | sort)
 PYTHON_SOURCES := $(shell find tools tests -type f -name '*.py' | sort)
 
 .PHONY: all assets host ps5 test test-core test-json test-backend test-web test-ports test-ui
@@ -61,10 +65,9 @@ assets: $(BUILD)/assets.c
 $(BUILD)/assets.c: $(WEB_SOURCES) tools/embed_assets.py src/web/assets.h
 	$(PYTHON) tools/embed_assets.py
 
-# Static preview only; API calls require the application server.
+# Isolated demo preview; fixture data never ships in the payload.
 preview:
-	$(PYTHON) tools/prepare_preview.py
-	$(PYTHON) -m http.server $(PREVIEW_PORT) --bind $(PREVIEW_BIND) --directory $(BUILD)/preview
+	$(PYTHON) tools/preview_server.py --port $(PREVIEW_PORT) --bind $(PREVIEW_BIND)
 
 host: $(HOST_BINARY)
 
@@ -81,9 +84,9 @@ test: test-core test-json test-backend test-web test-ports test-ui test-bluetoot
 test-core: $(BUILD)/test-core
 	./$(BUILD)/test-core
 
-$(BUILD)/test-core: $(CORE_SOURCES) tests/core/test_core.c src/core/uc_core.h
+$(BUILD)/test-core: $(CORE_SOURCES) tests/core/test_core.c src/core/uc_core.h $(LOG_SOURCES) $(LOG_HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/core/test_core.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/core/test_core.c $(LOG_SOURCES) -o $@
 
 test-json: $(BUILD)/test-json
 	./$(BUILD)/test-json
@@ -96,9 +99,9 @@ test-backend: $(BUILD)/test-backend
 	./$(BUILD)/test-backend
 
 $(BUILD)/test-backend: tests/ps5/test_backend.c src/ps5/backend.c src/ps5/uc_backend.h \
-	src/core/bt_autostart.c src/core/bt_autostart.h
+	src/core/bt_autostart.c src/core/bt_autostart.h $(LOG_SOURCES) $(LOG_HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/ps5/test_backend.c src/core/bt_autostart.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/ps5/test_backend.c src/core/bt_autostart.c $(LOG_SOURCES) -o $@
 
 test-web: host
 	$(PYTHON) tests/web/test_runtime.py $(HOST_BINARY)
@@ -110,14 +113,14 @@ test-ports: host
 format:
 	$(CLANG_FORMAT) -i $(C_SOURCES)
 	$(PYTHON) -m black $(PYTHON_SOURCES)
-	npx --yes prettier@3.6.2 --write 'web/**/*.{html,css,js}' 'tests/**/*.js' '**/*.md' \
+	npx --yes prettier@3.6.2 --write 'web/**/*.{html,css,js}' 'tests/**/*.{js,cjs}' 'tools/**/*.js' '**/*.md' \
 		'.github/**/*.yml' '*.json' 'src/**/*.json' 'examples/**/*.json' \
 		'.clang-format' '.editorconfig' --ignore-unknown
 
 format-check:
 	$(CLANG_FORMAT) --dry-run --Werror $(C_SOURCES)
 	$(PYTHON) -m black --check $(PYTHON_SOURCES)
-	npx --yes prettier@3.6.2 --check 'web/**/*.{html,css,js}' 'tests/**/*.js' '**/*.md' \
+	npx --yes prettier@3.6.2 --check 'web/**/*.{html,css,js}' 'tests/**/*.{js,cjs}' 'tools/**/*.js' '**/*.md' \
 		'.github/**/*.yml' '*.json' 'src/**/*.json' 'examples/**/*.json' \
 		'.clang-format' '.editorconfig' --ignore-unknown
 	$(PYTHON) tools/check_make_style.py Makefile ps5.mk
@@ -127,6 +130,7 @@ clean:
 
 test-ui:
 	node tests/web/test_ui.js
+	node tests/web/test_models.js
 
 test-bluetooth: controllers
 	@mkdir -p $(BUILD)
@@ -137,9 +141,10 @@ test-bluetooth: controllers
 test-bt-manager: $(BUILD)/test-bt-manager
 	./$(BUILD)/test-bt-manager
 
-$(BUILD)/test-bt-manager: src/drivers/bt.c src/drivers/bt.h tests/bt_manager/test_manager.c
+$(BUILD)/test-bt-manager: src/drivers/bt.c src/drivers/bt.h tests/bt_manager/test_manager.c \
+	$(LOG_SOURCES) $(LOG_HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/bt.c tests/bt_manager/test_manager.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/bt.c tests/bt_manager/test_manager.c $(LOG_SOURCES) -o $@
 
 test-bt-ui:
 	node tests/web/test_bt_ui.js
@@ -157,9 +162,9 @@ $(BUILD)/test-usb-protocol: src/drivers/usb/transport.c src/drivers/usb/protocol
 test-usb-manager: $(BUILD)/test-usb-manager
 	./$(BUILD)/test-usb-manager
 
-$(BUILD)/test-usb-manager: src/drivers/usb.c tests/usb_manager/test_manager.c $(C_HEADERS)
+$(BUILD)/test-usb-manager: src/drivers/usb.c tests/usb_manager/test_manager.c $(C_HEADERS) $(LOG_SOURCES)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb.c tests/usb_manager/test_manager.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb.c tests/usb_manager/test_manager.c $(LOG_SOURCES) -o $@
 
 test-usb-ui:
 	node tests/web/test_usb_ui.js
@@ -190,8 +195,8 @@ test-launcher: $(BUILD)/test-launcher
 	./$(BUILD)/test-launcher
 
 $(BUILD)/test-launcher: tests/launcher/test_launcher.c src/ps5/launcher.c \
-	src/ps5/launcher.h $(BUILD)/launcher_icon.inc
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/launcher/test_launcher.c -o $@
+	src/ps5/launcher.h $(BUILD)/launcher_icon.inc $(LOG_SOURCES) $(LOG_HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/launcher/test_launcher.c $(LOG_SOURCES) -o $@
 
 
 .PHONY: test-bt-autostart
@@ -203,3 +208,18 @@ $(BUILD)/test-bt-autostart: src/core/bt_autostart.c src/core/bt_autostart.h \
 	tests/core/test_bt_autostart.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/core/bt_autostart.c tests/core/test_bt_autostart.c -o $@
+
+
+.PHONY: test-browser
+test-browser:
+	npm run test:browser
+
+
+.PHONY: test-logging
+test: test-logging
+test-logging: $(BUILD)/test-logging
+	./$(BUILD)/test-logging
+
+$(BUILD)/test-logging: tests/logging/test_logging.c $(LOG_SOURCES) $(LOG_HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/logging/test_logging.c $(LOG_SOURCES) -o $@
