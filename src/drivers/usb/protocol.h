@@ -10,7 +10,9 @@ typedef struct {
     uc_usb_generic_hid hid;
     int ready, failed;
     uint64_t started;
-    int led_sent;
+    int led_sent, led_failed;
+    unsigned led_attempts;
+    uint64_t led_last_at;
     unsigned rejected_reports; /* Three malformed input packets fail the device. */
     uint8_t rumble_strong, rumble_weak, rumble_packet[64];
     unsigned rumble_length, rumble_attempts, rumble_stops;

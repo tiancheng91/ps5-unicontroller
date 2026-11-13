@@ -512,6 +512,8 @@ static int diagnostic_fields(char *b, size_t cap, size_t *used, const uc_usb_dev
           d->descriptor_attempted ? "true" : "false", d->descriptor_ok ? "true" : "false",
           d->descriptor_errno, d->info_attempted ? "true" : "false", d->info_ok ? "true" : "false",
           d->info_errno);
+    FIELD(",\"output_endpoint_available\":%s,\"output_endpoint_errno\":%d",
+          d->output_available ? "true" : "false", d->output_errno);
     FIELD(",\"protocol_hint\":\"%s\",\"interface_summary\":\"%s\",\"device_class\":%u,"
           "\"config_index\":%u,\"config_value\":%u,\"config_length\":%u,\"config_valid\":%s,"
           "\"hid_report_interface\":%d,\"hid_report_declared\":%u,\"hid_report_captured\":%u,"

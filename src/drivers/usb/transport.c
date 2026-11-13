@@ -60,7 +60,7 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
             ++endpoints;
             if (wanted) {
                 unsigned packet = le16(d + 4);
-                unsigned minimum = 20;
+                unsigned minimum = (d[2] & 0x80) ? 20 : 8;
                 if ((d[3] & 3) != 3 || packet < minimum || packet > 64 || !d[6])
                     return 0;
                 if (d[2] & 0x80) {
@@ -148,7 +148,7 @@ int uc_usb_select_generic(const uc_usb_device *candidate, uc_usb_device *out)
 
 typedef struct {
     int fd, in_fd, out_fd, claimed, detached, leased, dead, output_dead;
-    int iface_index;
+    int iface_index, info_unsupported;
     unsigned reads, diagnostic_mask;
     DIR *directory;
     uc_usb_device device;
@@ -312,7 +312,7 @@ static void native_close(void *context)
         closedir(n->directory);
     n->directory = NULL;
     n->fd = n->in_fd = n->out_fd = -1;
-    n->claimed = n->detached = n->dead = n->output_dead = 0;
+    n->claimed = n->detached = n->dead = n->output_dead = n->info_unsupported = 0;
     n->reads = 0;
 }
 
@@ -346,14 +346,6 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     selected.vid = UGETW(descriptor.idVendor);
     selected.pid = UGETW(descriptor.idProduct);
     selected.diagnostic.device_class = descriptor.bDeviceClass;
-    stage = "device_info";
-    selected.diagnostic.info_attempted = 1;
-    if (ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0) {
-        selected.diagnostic.info_errno = errno;
-        goto reject;
-    }
-    selected.diagnostic.info_ok = 1;
-    selected.diagnostic.config_index = info.udi_config_index;
     /* Leave Sony controllers and the internal Bluetooth vendor to the system.
      * Device class alone never authorizes detaching a driver. */
     if (selected.vid == 0x054c) {
@@ -367,12 +359,35 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         report = 0;
         goto reject;
     }
+    /* Some PS5 kernels implement descriptors but not USB_GET_DEVICEINFO.
+     * 0xFF asks the kernel for the active configuration, never configuration 0
+     * by guess and never a SET_CONFIGURATION request. */
+    unsigned config_index = 0xff;
+    stage = "device_info";
+    selected.diagnostic.info_attempted = 1;
+    if (ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0) {
+        selected.diagnostic.info_errno = errno;
+        if (errno != ENOTTY && errno != ENOSYS && errno != EOPNOTSUPP)
+            goto reject;
+        n->info_unsupported = 1;
+        if (!(n->diagnostic_mask & 2u)) {
+            n->diagnostic_mask |= 2u;
+            log_line("usb %s: USB_GET_DEVICEINFO unsupported errno=%d; using current "
+                     "configuration 0xff and device descriptor health checks",
+                     selected.node, errno);
+        }
+    } else {
+        selected.diagnostic.info_ok = 1;
+        config_index = info.udi_config_index;
+        n->info_unsupported = 0;
+    }
+    selected.diagnostic.config_index = (uint8_t)config_index;
     uint8_t config[4096];
     struct usb_gen_descriptor full;
     memset(&full, 0, sizeof(full));
     full.ugd_data = config;
     full.ugd_maxlen = sizeof(config);
-    full.ugd_config_index = info.udi_config_index;
+    full.ugd_config_index = config_index;
     stage = "configuration_descriptor";
     if (ioctl(n->fd, USB_GET_FULL_DESC, &full) < 0)
         goto reject;
@@ -380,11 +395,14 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         errno = EOVERFLOW;
         goto reject;
     }
+    int info_ok = selected.diagnostic.info_ok, info_errno = selected.diagnostic.info_errno;
     uc_usb_diagnose_config(&selected.diagnostic, config, full.ugd_actlen);
     selected.diagnostic.descriptor_attempted = selected.diagnostic.descriptor_ok = 1;
-    selected.diagnostic.info_attempted = selected.diagnostic.info_ok = 1;
+    selected.diagnostic.info_attempted = 1;
+    selected.diagnostic.info_ok = info_ok;
+    selected.diagnostic.info_errno = info_errno;
     selected.diagnostic.device_class = descriptor.bDeviceClass;
-    selected.diagnostic.config_index = info.udi_config_index;
+    selected.diagnostic.config_index = (uint8_t)config_index;
     diagnose_hid(n, &selected);
     uc_usb_device matched = {0};
     stage = "not_supported_xinput";
@@ -446,8 +464,13 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         stage = "output_endpoint_open";
         snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.ep_out & 15);
         n->out_fd = open(path, O_WRONLY | O_NONBLOCK);
-        if (n->out_fd < 0)
-            goto reject;
+        if (n->out_fd < 0) {
+            selected.diagnostic.output_errno = errno;
+            log_line("usb %s: output endpoint unavailable path=%s errno=%d; trying input only",
+                     selected.node, path, errno);
+        } else {
+            selected.diagnostic.output_available = 1;
+        }
     }
     stage = "short_transfer";
     int one = 1;
@@ -557,11 +580,21 @@ static int native_alive(void *context)
     native_transport *n = context;
     if (n->fd < 0 || n->dead)
         return 0;
-    struct usb_device_info info;
-    memset(&info, 0, sizeof(info));
-    if (ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0)
+    if (!n->info_unsupported) {
+        struct usb_device_info info;
+        memset(&info, 0, sizeof info);
+        if (ioctl(n->fd, USB_GET_DEVICEINFO, &info) == 0)
+            return info.udi_vendorNo == n->device.vid && info.udi_productNo == n->device.pid;
+        if (errno != ENOTTY && errno != ENOSYS && errno != EOPNOTSUPP)
+            return errno == ENXIO || errno == ENODEV ? 0 : -1;
+        n->info_unsupported = 1;
+    }
+    struct usb_device_descriptor descriptor;
+    memset(&descriptor, 0, sizeof descriptor);
+    if (ioctl(n->fd, USB_GET_DEVICE_DESC, &descriptor) < 0)
         return errno == ENXIO || errno == ENODEV ? 0 : -1;
-    return info.udi_vendorNo == n->device.vid && info.udi_productNo == n->device.pid;
+    return UGETW(descriptor.idVendor) == n->device.vid &&
+           UGETW(descriptor.idProduct) == n->device.pid;
 }
 static const uc_usb_ops ops = {native_scan, native_read, native_write, native_alive, native_close};
 int uc_usb_transport_open(uc_usb_transport *out)

@@ -38,6 +38,8 @@ static uint8_t cfg[80];
 static size_t cfg_length = sizeof(original_cfg);
 static uint8_t hid_report[] = {0x05, 0x01, 0x09, 0x05, 0xa1, 0x01, 0xc0};
 static int descriptor_reads, descriptor_error;
+static unsigned last_config_index;
+static int full_descriptor_error;
 static int control_error, plugtime_error, device_descriptor_error, device_info_error;
 static uint32_t plugtime_generation = 1;
 static ino_t inode_generation = 1;
@@ -110,7 +112,12 @@ static int test_ioctl(int fd, unsigned long request, ...)
         return 0;
     }
     case USB_GET_FULL_DESC: {
+        if (full_descriptor_error) {
+            errno = full_descriptor_error;
+            return -1;
+        }
         struct usb_gen_descriptor *d = arg;
+        last_config_index = d->ugd_config_index;
         memcpy(d->ugd_data, cfg, cfg_length);
         d->ugd_actlen = cfg_length;
         return 0;
@@ -220,10 +227,29 @@ int main(void)
            d.diagnostic.descriptor_errno == ENOTTY && !d.diagnostic.info_attempted);
     device_descriptor_error = 0;
     device_info_error = ENOTTY;
-    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "device_info"));
+    assert(open_candidate(n, 2, 7, &d) == 1 && n->info_unsupported);
+    assert(last_config_index == 0xff && d.diagnostic.config_index == 0xff);
     assert(d.vid == 0x3537 && d.pid == 0x1040 && d.diagnostic.descriptor_ok &&
            d.diagnostic.info_attempted && !d.diagnostic.info_ok &&
            d.diagnostic.info_errno == ENOTTY);
+    assert(native_alive(n) == 1);
+    vendor = 0x1234;
+    assert(native_alive(n) == 0); /* Same node changed identity. */
+    vendor = 0x3537;
+    device_descriptor_error = ENXIO;
+    assert(native_alive(n) == 0); /* Removal still releases the virtual pad. */
+    device_descriptor_error = EIO;
+    assert(native_alive(n) == -1); /* Do not disguise an actual I/O failure. */
+    device_descriptor_error = 0;
+    native_close(n);
+    detach_count = claim_count = 0;
+    full_descriptor_error = EIO;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "configuration_descriptor"));
+    assert(d.error_number == EIO && d.vid == 0x3537 && d.diagnostic.info_errno == ENOTTY);
+    assert(!detach_count && !claim_count);
+    full_descriptor_error = 0;
+    device_info_error = EIO;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "device_info"));
     assert(!detach_count && !claim_count);
     device_info_error = 0;
     vendor = 0x054c;
@@ -248,8 +274,11 @@ int main(void)
     claim_error = 0;
     fail_output = 1;
     int released = release_count;
-    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "output_endpoint_open") &&
-           n->in_fd == -1 && release_count == released + 1);
+    assert(open_candidate(n, 2, 7, &d) == 1 && n->in_fd >= 0 && n->out_fd == -1);
+    assert(d.diagnostic.output_errno == EPERM && !d.diagnostic.output_available);
+    assert(native_alive(n) == 1);
+    native_close(n);
+    assert(release_count == released + 1);
     uc_usb_transport_release(&t);
     reset();
     assert(uc_usb_transport_open(&t));

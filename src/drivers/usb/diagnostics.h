@@ -20,6 +20,7 @@ typedef struct {
     uint8_t device_class, config_index, config_value;
     int descriptor_attempted, descriptor_ok, descriptor_errno;
     int info_attempted, info_ok, info_errno;
+    int output_available, output_errno;
     unsigned config_length, config_saved, interface_count, endpoint_count;
     int config_valid, interfaces_truncated, endpoints_truncated;
     uint32_t config_hash;

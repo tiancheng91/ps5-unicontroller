@@ -11,6 +11,13 @@ static void selection(void)
     uint8_t cfg[sizeof(configuration)];
     memcpy(cfg, configuration, sizeof cfg);
     assert(uc_usb_select(0x1234, 0x5678, cfg, sizeof cfg, &device));
+    cfg[29] = 8;
+    assert(uc_usb_select(0x1234, 0x5678, cfg, sizeof cfg, &device));
+    assert(device.packet_out == 8);
+    cfg[29] = 4;
+    assert(!uc_usb_select(0x1234, 0x5678, cfg, sizeof cfg, &device));
+    memcpy(cfg, configuration, sizeof cfg);
+    assert(uc_usb_select(0x1234, 0x5678, cfg, sizeof cfg, &device));
     assert(device.kind == UC_USB_XINPUT && device.iface == 3 && device.iface_index == 0 &&
            device.ep_in == 0x81);
     static const uint16_t nova_pids[] = {0x1040, 0x100f, 0x1098};
@@ -85,7 +92,7 @@ static void xbox(void)
     assert(uc_usb_protocol_poll(&protocol, NULL, 4800) < 0);
 }
 typedef struct {
-    int writes, block, short_write;
+    int writes, block, short_write, error;
     size_t length;
     uint8_t bytes[64];
 } mock;
@@ -95,6 +102,8 @@ static int write_mock(void *context, const uint8_t *bytes, size_t length)
     ++m->writes;
     m->length = length;
     memcpy(m->bytes, bytes, length);
+    if (m->error)
+        return -1;
     if (m->block)
         return 0;
     return m->short_write ? (int)length - 1 : (int)length;
@@ -111,17 +120,18 @@ static void xinput_led_gate(void)
     assert(!uc_usb_protocol_poll(&p, &transport, 0) && m.writes == 1);
     assert(uc_usb_protocol_feed(&p, report, sizeof(report), &state, 1) == 1);
     p.led_sent = 0;
+    p.led_attempts = 0;
     m.block = 1;
     assert(!uc_usb_protocol_poll(&p, &transport, 2) && !p.led_sent && p.ready);
     m.block = 0;
-    assert(!uc_usb_protocol_poll(&p, &transport, 3) && p.led_sent && m.bytes[0] == 1 &&
+    assert(!uc_usb_protocol_poll(&p, &transport, 22) && p.led_sent && m.bytes[0] == 1 &&
            m.bytes[1] == 3 && m.bytes[2] == 6);
     int writes = m.writes;
-    assert(!uc_usb_protocol_poll(&p, &transport, 4) && m.writes == writes);
+    assert(!uc_usb_protocol_poll(&p, &transport, 23) && m.writes == writes);
     report[1] = 19;
-    assert(!uc_usb_protocol_feed(&p, report, 20, &state, 5));
-    assert(!uc_usb_protocol_feed(&p, report, 20, &state, 6));
-    assert(uc_usb_protocol_feed(&p, report, 20, &state, 7) < 0);
+    assert(!uc_usb_protocol_feed(&p, report, 20, &state, 24));
+    assert(!uc_usb_protocol_feed(&p, report, 20, &state, 25));
+    assert(uc_usb_protocol_feed(&p, report, 20, &state, 26) < 0);
     uc_usb_protocol_begin(&p, UC_USB_XINPUT, 0);
     assert(!uc_usb_protocol_poll(&p, &transport, 0) && p.led_sent && !p.ready);
     assert(uc_usb_protocol_poll(&p, &transport, 4800) < 0); /* LED alone is not input. */
@@ -129,6 +139,28 @@ static void xinput_led_gate(void)
     m.block = 1;
     assert(!uc_usb_protocol_poll(&p, &transport, 4799));
     assert(uc_usb_protocol_poll(&p, &transport, 4800) < 0);
+    uc_usb_protocol_begin(&p, UC_USB_XINPUT, 0);
+    m.block = 0;
+    m.error = 1;
+    assert(!uc_usb_protocol_poll(&p, &transport, 0) && p.led_failed && p.rumble_failed &&
+           !p.failed);
+    report[1] = 20;
+    assert(uc_usb_protocol_feed(&p, report, sizeof report, &state, 1) == 1 && p.ready);
+    int before = m.writes;
+    assert(!uc_usb_protocol_poll(&p, &transport, 1000) && m.writes == before);
+    uc_usb_protocol_begin(&p, UC_USB_XINPUT, 0);
+    m.error = 0;
+    m.short_write = 1;
+    assert(!uc_usb_protocol_poll(&p, &transport, 0) && p.led_failed && !p.failed);
+    assert(uc_usb_protocol_feed(&p, report, sizeof report, &state, 1) == 1);
+    uc_usb_protocol_begin(&p, UC_USB_XINPUT, 0);
+    m.short_write = 0;
+    m.block = 1;
+    before = m.writes;
+    for (unsigned now = 0; now < 1000; ++now)
+        assert(!uc_usb_protocol_poll(&p, &transport, now));
+    assert(m.writes - before == 16 && p.led_failed && !p.failed);
+    assert(uc_usb_protocol_feed(&p, report, sizeof report, &state, 1001) == 1);
 }
 
 static void rumble_output(void)

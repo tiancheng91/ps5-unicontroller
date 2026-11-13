@@ -106,6 +106,14 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
         --p->rumble_stops;
     return 0;
 }
+static int led_unavailable(uc_usb_protocol *p)
+{
+    p->led_failed = p->rumble_failed = 1;
+    log_line("usb xinput: LED activation unavailable after %u attempts; "
+             "waiting for valid input, rumble disabled",
+             p->led_attempts);
+    return 0;
+}
 int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
 {
     if (!p || p->failed)
@@ -115,16 +123,20 @@ int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t
         return fail(p);
     if (p->kind == UC_USB_GENERIC_HID)
         return p->hid.initialized ? 0 : fail(p);
-    if (p->led_sent)
+    if (p->led_sent || p->led_failed)
         return p->ready ? rumble_poll(p, t, now) : 0;
     /* FF/5D/01 plus validated interrupt endpoints authorizes the standard LED
      * activation, including third-party VID/PIDs that wait for host output. */
-    if (!t || !t->ops || !t->ops->write)
-        return fail(p);
+    if (!t || !t->ops || !t->ops->write || p->led_attempts >= 16)
+        return led_unavailable(p);
+    if (p->led_attempts && now >= p->led_last_at && now - p->led_last_at < 20)
+        return 0;
+    p->led_last_at = now;
+    ++p->led_attempts;
     static const uint8_t led[] = {0x01, 0x03, 0x06};
     int written = t->ops->write(t->context, led, sizeof(led));
     if (written < 0 || (written > 0 && written != (int)sizeof(led)))
-        return fail(p);
+        return led_unavailable(p);
     if (written == (int)sizeof(led)) {
         p->led_sent = 1;
         log_line("usb xinput: player LED activation sent; waiting for input");
