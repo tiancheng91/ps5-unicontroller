@@ -39,6 +39,7 @@ typedef struct {
 
 typedef struct {
     int has_ids;
+    uint16_t report_bits[256];
     field axis[AX_N];
     field button[MAX_BUTTONS]; /* usage n at index n - 1 */
     field home, back;          /* consumer page: AC Home, AC Back */
@@ -210,6 +211,7 @@ static int parse_descriptor(generic_ctx *g, const uint8_t *d, int n)
                     }
                 }
                 *off = (uint16_t)(*off + bits);
+                g->report_bits[gl.rid] = *off;
             } else if (tag == 9 || tag == 11) { /* output, feature: other reports */
             }
             nusages = 0;
@@ -528,4 +530,122 @@ const pad_profile generic_profile = {
 int generic_setup(void *ctx, const uint8_t *desc, int len, uint16_t vid, uint16_t pid)
 {
     return generic_setup_for_transport(ctx, desc, len, vid, pid, PAD_TRANSPORT_UNSPECIFIED);
+}
+
+/* Diagnostics never changes input parsing or sends a report to the device. */
+void generic_output_inventory(const uint8_t *desc, int len, hid_output_inventory *out)
+{
+    hid_globals gl = {0}, stack[4];
+    int depth = 0;
+    uint16_t local_pages[HID_DIAG_PAGES];
+    unsigned local_count = 0;
+    if (!out)
+        return;
+    memset(out, 0, sizeof *out);
+    if (!desc || len <= 0 || len > 1024)
+        return;
+    for (int at = 0; at < len;) {
+        unsigned prefix = desc[at++];
+        if (prefix == 0xfe) {
+            if (at + 2 > len || desc[at] > len - at - 2)
+                return;
+            at += 2 + desc[at];
+            continue;
+        }
+        int size = (prefix & 3) == 3 ? 4 : (int)(prefix & 3);
+        unsigned type = (prefix >> 2) & 3, tag = prefix >> 4;
+        if (size > len - at)
+            return;
+        uint32_t value = (uint32_t)item_value(desc + at, size, 0);
+        at += size;
+        if (type == 1) {
+            switch (tag) {
+            case 0:
+                gl.page = (uint16_t)value;
+                break;
+            case 7:
+                gl.size = value;
+                break;
+            case 8:
+                if (!value || value > 255)
+                    return;
+                gl.rid = (uint8_t)value;
+                out->has_ids = 1;
+                break;
+            case 9:
+                gl.count = value;
+                break;
+            case 10:
+                if (depth == 4)
+                    return;
+                stack[depth++] = gl;
+                break;
+            case 11:
+                if (!depth)
+                    return;
+                gl = stack[--depth];
+                break;
+            default:
+                break;
+            }
+        } else if (type == 2 && tag <= 2 && size == 4) {
+            uint16_t page = (uint16_t)(value >> 16);
+            if (page && local_count < HID_DIAG_PAGES)
+                local_pages[local_count++] = page;
+            else if (page)
+                out->truncated = 1;
+        } else if (type == 0 && (tag == 9 || tag == 11)) {
+            if (!gl.size || gl.size > MAX_REPORT_BITS || gl.count > MAX_REPORT_BITS ||
+                (uint64_t)gl.size * gl.count > MAX_REPORT_BITS)
+                return;
+            unsigned report_type = tag == 9 ? 2 : 3, index;
+            for (index = 0; index < out->count; index++)
+                if (out->reports[index].id == gl.rid && out->reports[index].type == report_type)
+                    break;
+            if (index == out->count) {
+                if (out->count == HID_DIAG_REPORTS) {
+                    out->truncated = 1;
+                    local_count = 0;
+                    continue;
+                }
+                out->reports[index].id = gl.rid;
+                out->reports[index].type = (uint8_t)report_type;
+                out->count++;
+            }
+            hid_report_inventory *report = &out->reports[index];
+            unsigned bits = gl.size * gl.count;
+            if (bits > MAX_REPORT_BITS - report->bits)
+                return;
+            report->bits += bits;
+            if (!(value & 1)) { /* Report padding does not describe a device capability. */
+                for (unsigned item = 0; item <= local_count; item++) {
+                    uint16_t usage_page = item ? local_pages[item - 1] : gl.page;
+                    unsigned page;
+                    for (page = 0; page < report->page_count; page++)
+                        if (report->pages[page] == usage_page)
+                            break;
+                    if (page == report->page_count) {
+                        if (page < HID_DIAG_PAGES)
+                            report->pages[report->page_count++] = usage_page;
+                        else
+                            out->truncated = 1;
+                    }
+                    out->pid_usage |= usage_page == 0x0f;
+                    out->vendor_usage |= usage_page >= 0xff00;
+                }
+            }
+        }
+        if (type == 0)
+            local_count = 0;
+    }
+    out->valid = depth == 0;
+}
+
+int generic_input_report_bytes(const void *ctx, uint8_t first_byte)
+{
+    const generic_ctx *g = ctx;
+    if (!g)
+        return 0;
+    unsigned bits = g->report_bits[g->has_ids ? first_byte : 0];
+    return bits ? (int)((bits + 7) / 8) + !!g->has_ids : 0;
 }

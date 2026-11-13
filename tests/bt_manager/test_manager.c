@@ -1,4 +1,5 @@
 #include "../../src/drivers/bt.h"
+#include "../../src/drivers/protocols/profiles.h"
 #include "../../src/core/uc_core.h"
 #include <assert.h>
 #include <stdio.h>
@@ -283,7 +284,13 @@ int main(void)
            strstr(json, "\"battery\":80") && strstr(json, "DualSense_unsafe_"));
     assert(strstr(json, "\"discovered\":[") && strstr(json, "\"scan_seconds\":7") &&
            strstr(json, "pad\\\"\\u000aname"));
+    int pulses_before = pulse_calls;
+    assert(uc_bt_diagnostics_json(json, sizeof json) > 0);
+    assert(strstr(json, "\"descriptor_hex\":\"050f\"") && strstr(json, "\"pid_usage\":true") &&
+           strstr(json, "\"type\":\"output\"") && strstr(json, "\"descriptor_available\":false"));
+    assert(pulse_calls == pulses_before);
     char small[8];
+    assert(uc_bt_diagnostics_json(small, sizeof small) == 0 && !small[0]);
     assert(uc_bt_status_json(small, sizeof(small)) == 0 && !small[0]);
     assert(uc_bt_scan(30) == 0 && uc_bt_scan(121) == -1 && uc_bt_scan(0) == 0);
     assert(uc_bt_pair(7) == 0 && uc_bt_pair(8) == -1);
@@ -539,4 +546,20 @@ int main(void)
     gate = 1;
     puts("Bluetooth manager checks passed");
     return 0;
+}
+
+int host_hid_descriptor_get(const host_t *h, int slot, host_hid_descriptor *out)
+{
+    (void)h;
+    if (slot != 0)
+        return 0;
+    *out = (host_hid_descriptor){.data = {0x05, 0x0f}, .length = 2};
+    return 1;
+}
+void generic_output_inventory(const uint8_t *data, int length, hid_output_inventory *out)
+{
+    assert(data[0] == 0x05 && length == 2);
+    *out = (hid_output_inventory){.valid = 1, .pid_usage = 1, .count = 1};
+    out->reports[0] =
+        (hid_report_inventory){.id = 3, .type = 2, .bits = 16, .page_count = 1, .pages = {15}};
 }

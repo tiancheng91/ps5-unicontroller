@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "diagnostics.h"
-/* USB currently supports wired Xbox 360-style XInput interfaces only. */
+/* Wired Xbox 360-style XInput and descriptor-verified Generic HID input. */
 typedef enum { UC_USB_NONE, UC_USB_XINPUT, UC_USB_GENERIC_HID } uc_usb_kind;
 typedef struct {
     uc_usb_kind kind;
@@ -19,12 +19,16 @@ typedef struct {
 /* Descriptor-only selection, no I/O; rejects malformed/ambiguous configurations. */
 int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
                   uc_usb_device *out);
+/* Select one non-boot gamepad/joystick HID interface from a full cached
+ * descriptor. Keyboard/mouse collections, ambiguous IN endpoints and Switch
+ * protocol identities are excluded. No output endpoint is opened for HID. */
+int uc_usb_select_generic(const uc_usb_device *candidate, uc_usb_device *out);
 /* One opened device per transport. Endpoint I/O is nonblocking; scan bounds work
  * but descriptor control ioctls depend on kernel timeout behavior.
  * scan: 1 opened, 2 rejected candidate with diagnostic, 0 none, -1 fatal. read/write: bytes, 0
  * would-block, -1 error. alive: 1 attached, 0 detached, -1 error; detach is limited to the selected
- * XInput interface; never reset devices. close releases device/interface but transport can scan
- * again. */
+ * verified controller interface; never reset devices. close releases device/interface but transport
+ * can scan again. */
 typedef struct {
     int (*scan)(void *, uc_usb_device *);
     int (*read)(void *, uint8_t *, size_t);

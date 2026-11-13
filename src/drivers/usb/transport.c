@@ -83,6 +83,56 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
     *out = candidate;
     return 1;
 }
+int uc_usb_select_generic(const uc_usb_device *candidate, uc_usb_device *out)
+{
+    if (!candidate || !out || candidate->vid == 0x054c || candidate->vid == 0x057e ||
+        candidate->vid == 0x0e8d)
+        return 0;
+    const uc_usb_diagnostics *d = &candidate->diagnostic;
+    if (!d->config_valid || d->interface_count > UC_USB_DIAG_INTERFACES ||
+        d->endpoint_count > UC_USB_DIAG_ENDPOINTS || d->interfaces_truncated ||
+        d->endpoints_truncated || !d->report_valid || !d->report_saved ||
+        d->report_saved != d->report_declared || !(d->gamepad || d->joystick) || d->keyboard ||
+        d->mouse)
+        return 0;
+    uc_usb_device selected = *candidate;
+    selected.kind = UC_USB_GENERIC_HID;
+    selected.ep_in = selected.ep_out = 0;
+    selected.packet_in = selected.packet_out = 0;
+    unsigned matches = 0, endpoints = 0;
+    for (unsigned i = 0; i < d->interface_count; i++) {
+        const uc_usb_interface_info *iface = &d->interfaces[i];
+        if (iface->number != d->report_interface || iface->alternate)
+            continue;
+        if (++matches > 1 || iface->class_code != 3 || iface->subclass == 1 || iface->protocol)
+            return 0;
+        selected.iface = iface->number;
+        selected.iface_index = iface->index;
+        endpoints = iface->endpoints;
+    }
+    if (matches != 1)
+        return 0;
+    unsigned seen = 0;
+    for (unsigned i = 0; i < d->endpoint_count; i++) {
+        const uc_usb_endpoint_info *ep = &d->endpoints[i];
+        if (ep->interface_number != selected.iface || ep->alternate)
+            continue;
+        if (++seen > endpoints || (ep->attributes & 3) != 3 || !ep->interval ||
+            !(ep->address & 15) || (ep->address & 0x70) || !ep->packet_size ||
+            ep->packet_size > 512)
+            return 0;
+        if (ep->address & 0x80) {
+            if (selected.ep_in)
+                return 0;
+            selected.ep_in = ep->address;
+            selected.packet_in = ep->packet_size;
+        }
+    }
+    if (seen != endpoints || !selected.ep_in)
+        return 0;
+    *out = selected;
+    return 1;
+}
 #ifdef UC_PS5
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -287,12 +337,22 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     memset(&descriptor, 0, sizeof(descriptor));
     memset(&info, 0, sizeof(info));
     stage = "device_descriptor";
-    if (ioctl(n->fd, USB_GET_DEVICE_DESC, &descriptor) < 0 ||
-        ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0)
+    selected.diagnostic.descriptor_attempted = 1;
+    if (ioctl(n->fd, USB_GET_DEVICE_DESC, &descriptor) < 0) {
+        selected.diagnostic.descriptor_errno = errno;
         goto reject;
+    }
+    selected.diagnostic.descriptor_ok = 1;
     selected.vid = UGETW(descriptor.idVendor);
     selected.pid = UGETW(descriptor.idProduct);
     selected.diagnostic.device_class = descriptor.bDeviceClass;
+    stage = "device_info";
+    selected.diagnostic.info_attempted = 1;
+    if (ioctl(n->fd, USB_GET_DEVICEINFO, &info) < 0) {
+        selected.diagnostic.info_errno = errno;
+        goto reject;
+    }
+    selected.diagnostic.info_ok = 1;
     selected.diagnostic.config_index = info.udi_config_index;
     /* Leave Sony controllers and the internal Bluetooth vendor to the system.
      * Device class alone never authorizes detaching a driver. */
@@ -321,18 +381,20 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         goto reject;
     }
     uc_usb_diagnose_config(&selected.diagnostic, config, full.ugd_actlen);
+    selected.diagnostic.descriptor_attempted = selected.diagnostic.descriptor_ok = 1;
+    selected.diagnostic.info_attempted = selected.diagnostic.info_ok = 1;
     selected.diagnostic.device_class = descriptor.bDeviceClass;
     selected.diagnostic.config_index = info.udi_config_index;
     diagnose_hid(n, &selected);
     uc_usb_device matched = {0};
     stage = "not_supported_xinput";
     errno = 0;
-    if (full.ugd_actlen > sizeof(config) ||
-        !uc_usb_select(selected.vid, selected.pid, config, full.ugd_actlen, &matched)) {
+    if (!uc_usb_select(selected.vid, selected.pid, config, full.ugd_actlen, &matched) &&
+        !uc_usb_select_generic(&selected, &matched)) {
         const char *hint = uc_usb_diagnostic_hint(selected.vid, selected.pid, &selected.diagnostic);
         if (!strcmp(hint, "generic-hid-gamepad")) {
             selected.kind = UC_USB_GENERIC_HID;
-            stage = "generic_hid_not_implemented";
+            stage = "generic_hid_interface_unsupported";
         } else if (!strcmp(hint, "switch-pro")) {
             stage = "special_protocol_disabled";
         } else if (!selected.diagnostic.config_valid) {
@@ -350,12 +412,12 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     selected = matched;
     n->device = selected;
     n->iface_index = selected.iface_index;
-    log_line("usb %s: XInput candidate %04x:%04x interface=%u index=%u IN=%#x OUT=%#x",
-             selected.node, selected.vid, selected.pid, selected.iface, selected.iface_index,
-             selected.ep_in, selected.ep_out);
+    log_line("usb %s: %s candidate %04x:%04x interface=%u index=%u IN=%#x OUT=%#x", selected.node,
+             selected.kind == UC_USB_XINPUT ? "XInput" : "Generic HID", selected.vid, selected.pid,
+             selected.iface, selected.iface_index, selected.ep_in, selected.ep_out);
     stage = "driver_detach";
-    /* Detach only this verified FF/5D/01 interface. No VID/PID allowlist or
-     * device reset. No-driver/unsupported detach may still permit a claim. */
+    /* Detach only this verified XInput or gamepad HID interface, never
+     * the whole device. No-driver/unsupported detach may still permit a claim. */
     selected.diagnostic.detach_attempted = 1;
     if (ioctl(n->fd, USB_IFACE_DRIVER_DETACH, &n->iface_index) == 0) {
         n->detached = selected.diagnostic.detached = 1;
@@ -380,16 +442,20 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     n->in_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (n->in_fd < 0)
         goto reject;
-    stage = "output_endpoint_open";
-    snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.ep_out & 15);
-    n->out_fd = open(path, O_WRONLY | O_NONBLOCK);
-    if (n->out_fd < 0)
-        goto reject;
+    if (selected.kind == UC_USB_XINPUT) {
+        stage = "output_endpoint_open";
+        snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.ep_out & 15);
+        n->out_fd = open(path, O_WRONLY | O_NONBLOCK);
+        if (n->out_fd < 0)
+            goto reject;
+    }
     stage = "short_transfer";
     int one = 1;
     if (ioctl(n->in_fd, USB_SET_RX_SHORT_XFER, &one) < 0)
         goto reject;
-    log_line("usb %s: endpoints opened; ready for XInput activation", selected.node);
+    log_line("usb %s: input endpoint ready protocol=%s; output=%s", selected.node,
+             selected.kind == UC_USB_XINPUT ? "XInput" : "Generic HID",
+             n->out_fd >= 0 ? "available" : "disabled");
     *out = selected;
     return 1;
 reject: {
@@ -401,8 +467,13 @@ reject: {
         /* One stage log per scan context. The API keeps the latest per-node result. */
         if (!(n->diagnostic_mask & 1u)) {
             n->diagnostic_mask |= 1u;
-            log_line("usb %s: rejected stage=%s vid=%04x pid=%04x errno=%d", selected.node, stage,
-                     selected.vid, selected.pid, saved_errno);
+            log_line("usb %s: rejected stage=%s path=%s vid=%04x pid=%04x errno=%d (%s) "
+                     "device_desc=%d/%d desc_errno=%d device_info=%d/%d info_errno=%d",
+                     selected.node, stage, path, selected.vid, selected.pid, saved_errno,
+                     saved_errno ? strerror(saved_errno) : "none",
+                     selected.diagnostic.descriptor_attempted, selected.diagnostic.descriptor_ok,
+                     selected.diagnostic.descriptor_errno, selected.diagnostic.info_attempted,
+                     selected.diagnostic.info_ok, selected.diagnostic.info_errno);
         }
     }
     DIR *directory = n->directory;

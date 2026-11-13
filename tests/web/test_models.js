@@ -27,6 +27,7 @@ const assert = require("assert"),
     bundle.includes("# /bluetooth") &&
       bundle.includes("# /usb") &&
       bundle.includes("# /usb/diagnostics") &&
+      bundle.includes("# /bluetooth/diagnostics") &&
       bundle.includes("# runtime.log"),
   );
   h.responder((route, method, body, previous) => {

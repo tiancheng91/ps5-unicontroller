@@ -79,6 +79,11 @@ with tempfile.TemporaryDirectory() as directory:
         assert [user["user_id"] for user in users["users"]] == [1, 2, 3, 4]
         assert users["preferred_user_id"] == 1
         assert request("GET", "/api/v1/usb")[1]["state"] == "off"
+        assert request("GET", "/api/v1/bluetooth/diagnostics")[1] == {
+            "schema_version": 1,
+            "snapshot": True,
+            "devices": [],
+        }
         status, diagnostic = request("GET", "/api/v1/usb/diagnostics")
         assert status == 200 and diagnostic == {
             "schema_version": 1,

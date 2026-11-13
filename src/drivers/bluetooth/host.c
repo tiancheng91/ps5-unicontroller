@@ -780,9 +780,11 @@ static void sdp_finish(host_t *h, link_t *l, int ok)
     } else if (query == SDP_Q_DESC) {
         const unsigned char *desc;
         int dlen;
-        if (ok && sdp_find_descriptor(l->sdp_buf, l->sdp_len, &desc, &dlen) &&
-            generic_setup_for_transport(l->pctx.bytes, desc, dlen, l->vid, l->pid,
-                                        PAD_TRANSPORT_CLASSIC)) {
+        int found = ok && sdp_find_descriptor(l->sdp_buf, l->sdp_len, &desc, &dlen);
+        if (found)
+            host_capture_hid_descriptor(l, desc, dlen);
+        if (found && generic_setup_for_transport(l->pctx.bytes, desc, dlen, l->vid, l->pid,
+                                                 PAD_TRANSPORT_CLASSIC)) {
             l->prof = &generic_profile;
         } else {
             link_disconnect(h, l, "no usable HID descriptor");
@@ -2211,5 +2213,28 @@ int host_disconnect_slot(host_t *h, int slot)
     if (!h || slot < 0 || slot >= HOST_MAX_PADS || !h->links[slot].used)
         return 0;
     link_disconnect(h, &h->links[slot], "application requested disconnect");
+    return 1;
+}
+
+void host_capture_hid_descriptor(link_t *l, const unsigned char *data, int length)
+{
+    if (!l || !data || length <= 0)
+        return;
+    l->hid_descriptor.truncated = length > HOST_HID_DESCRIPTOR_MAX;
+    l->hid_descriptor.length = length > HOST_HID_DESCRIPTOR_MAX ? HOST_HID_DESCRIPTOR_MAX : length;
+    memcpy(l->hid_descriptor.data, data, (size_t)l->hid_descriptor.length);
+    hid_output_inventory inventory;
+    generic_output_inventory(l->hid_descriptor.data, l->hid_descriptor.length, &inventory);
+    log_line("pad %s: cached HID descriptor bytes=%d truncated=%d inventory_valid=%d "
+             "output_feature_reports=%u pid_usage=%d vendor_usage=%d; diagnostics only",
+             addr_str(l->addr), l->hid_descriptor.length, l->hid_descriptor.truncated,
+             inventory.valid, inventory.count, inventory.pid_usage, inventory.vendor_usage);
+}
+int host_hid_descriptor_get(const host_t *h, int slot, host_hid_descriptor *out)
+{
+    if (!h || !out || slot < 0 || slot >= HOST_MAX_PADS || !h->links[slot].used ||
+        !h->links[slot].hid_descriptor.length)
+        return 0;
+    *out = h->links[slot].hid_descriptor;
     return 1;
 }

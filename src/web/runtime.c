@@ -352,6 +352,15 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         response(c, 200, "application/json", status);
         return;
     }
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/bluetooth/diagnostics")) {
+        char *status = malloc(RESPONSE_MAX - 1024);
+        if (!status || !uc_bt_diagnostics_json(status, RESPONSE_MAX - 1024))
+            error_response(c, 503, "bluetooth_diagnostics_unavailable");
+        else
+            response(c, 200, "application/json", status);
+        free(status);
+        return;
+    }
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/usb/diagnostics")) {
         char *status = malloc(RESPONSE_MAX - 1024);
         if (!status || !uc_usb_diagnostics_json(status, RESPONSE_MAX - 1024))

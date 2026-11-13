@@ -130,7 +130,9 @@
     }
     let data = {},
       status = 200;
-    if (path === "/usb/diagnostics")
+    if (path === "/bluetooth/diagnostics")
+      data = { schema_version: 1, snapshot: true, devices: [], preview: true };
+    else if (path === "/usb/diagnostics")
       data = { schema_version: 1, snapshot: true, devices: usb.rejected || [], preview: true };
     else if (path === "/session") data = { token: "preview-only-token" };
     else if (path === "/users")

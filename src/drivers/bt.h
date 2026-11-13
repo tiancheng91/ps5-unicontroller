@@ -19,6 +19,7 @@ int uc_bt_scan(unsigned seconds); /* 0 stops discovery, preserving connections. 
 int uc_bt_pair(uint32_t discovery_id);
 int uc_bt_forget(const char *address);
 size_t uc_bt_status_json(char *buffer, size_t capacity);
+size_t uc_bt_diagnostics_json(char *buffer, size_t capacity);
 int uc_bt_running(void);
 void uc_bt_suspend(void);
 void uc_bt_set_log_level(unsigned level);

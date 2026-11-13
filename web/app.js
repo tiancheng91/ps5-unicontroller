@@ -594,7 +594,14 @@ document.addEventListener("alpine:init", () => {
     },
     async diagnosticText() {
       // Independent sections remain available even if one endpoint fails.
-      const routes = ["/system", "/bluetooth", "/usb", "/usb/diagnostics", "/test-controller"];
+      const routes = [
+        "/system",
+        "/bluetooth",
+        "/bluetooth/diagnostics",
+        "/usb",
+        "/usb/diagnostics",
+        "/test-controller",
+      ];
       const sections = await Promise.all(
         routes.map(async (route) => {
           try {

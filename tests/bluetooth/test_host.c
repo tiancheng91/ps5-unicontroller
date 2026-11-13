@@ -413,6 +413,15 @@ static void test_generic_pad(void)
     CHECK(s.last.lx == 255 && s.last.ly == 128);
     CHECK((s.last.buttons & 0x40) && (s.last.buttons & 0x4000)); /* down, cross */
     CHECK(s.last.r2 == 0x80 && (s.last.buttons & 0x200));
+    host_hid_descriptor descriptor;
+    int queries = sim_sdp_queries(sim), outputs = sim_outputs(sim);
+    CHECK(host_hid_descriptor_get(h, s.slot, &descriptor));
+    CHECK(descriptor.length == pad.desc_len && !descriptor.truncated);
+    CHECK(!memcmp(descriptor.data, pad.desc, (size_t)pad.desc_len));
+    CHECK(sim_sdp_queries(sim) == queries && sim_outputs(sim) == outputs);
+    sim_disconnect(sim);
+    run(h, 50);
+    CHECK(!host_hid_descriptor_get(h, s.slot, &descriptor));
     host_close(h);
     sim_free(sim);
 }

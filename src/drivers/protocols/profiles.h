@@ -93,8 +93,24 @@ extern const pad_profile generic_profile;
 
 /* Prepares descriptor-based HID decoding with registry bindings.
  * Returns 0 if the descriptor shows no usable gamepad controls. */
+/* Read-only HID output/feature inventory. Presence is not proof of rumble support. */
+#define HID_DIAG_REPORTS 32
+#define HID_DIAG_PAGES 8
+typedef struct {
+    uint8_t id, type; /* type: 2=Output, 3=Feature */
+    uint16_t pages[HID_DIAG_PAGES];
+    unsigned page_count, bits;
+} hid_report_inventory;
+typedef struct {
+    int valid, truncated, has_ids, pid_usage, vendor_usage;
+    unsigned count;
+    hid_report_inventory reports[HID_DIAG_REPORTS];
+} hid_output_inventory;
+void generic_output_inventory(const uint8_t *desc, int len, hid_output_inventory *out);
+
 int generic_setup_for_transport(void *ctx, const uint8_t *desc, int len, uint16_t vid, uint16_t pid,
                                 pad_transport transport);
+int generic_input_report_bytes(const void *ctx, uint8_t first_byte);
 int generic_setup(void *ctx, const uint8_t *desc, int len, uint16_t vid, uint16_t pid);
 
 #endif

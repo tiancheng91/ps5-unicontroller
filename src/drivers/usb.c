@@ -179,7 +179,8 @@ int uc_usb_start(int32_t user)
     usb.enabled = 1;
     usb.reason = NULL;
     usb.clock_valid = usb.presence_valid = 0;
-    uc_log_info("[usb] started slots=%u user=%d; XInput interfaces only", usb.count, user);
+    uc_log_info("[usb] started slots=%u user=%d; XInput and verified Generic HID inputs", usb.count,
+                user);
     return 0;
 }
 int uc_usb_stop(void)
@@ -271,6 +272,12 @@ static void record_rejection(const uc_usb_device *device)
 changed:
     uc_log_warn("[usb] node=%s vid=%04x pid=%04x rejected=%s errno=%d", device->node, device->vid,
                 device->pid, device->reason, device->error_number);
+    uc_log_info("[usb] node=%s USB_GET_DEVICE_DESC attempted=%d ok=%d errno=%d; "
+                "USB_GET_DEVICEINFO attempted=%d ok=%d errno=%d",
+                device->node, device->diagnostic.descriptor_attempted,
+                device->diagnostic.descriptor_ok, device->diagnostic.descriptor_errno,
+                device->diagnostic.info_attempted, device->diagnostic.info_ok,
+                device->diagnostic.info_errno);
     uc_log_info("[usb] node=%s protocol=%s interfaces=%s config_valid=%d report=%u/%u errno=%d",
                 device->node, uc_usb_diagnostic_hint(device->vid, device->pid, &device->diagnostic),
                 device->diagnostic.summary, device->diagnostic.config_valid,
@@ -338,7 +345,7 @@ static void poll_slot(unsigned index, uint64_t now)
                 s->device.node[i] = '_';
         }
         s->attached = 1;
-        if (device.kind != UC_USB_XINPUT) {
+        if (device.kind != UC_USB_XINPUT && device.kind != UC_USB_GENERIC_HID) {
             fail_slot(index, "unsupported_device", 0, now);
             return;
         }
@@ -346,6 +353,11 @@ static void poll_slot(unsigned index, uint64_t now)
         s->frames = s->submitted = 0;
         s->reason = NULL;
         uc_usb_protocol_begin(&s->protocol, device.kind, now);
+        if (device.kind == UC_USB_GENERIC_HID &&
+            uc_usb_protocol_hid_descriptor(&s->protocol, &device)) {
+            fail_slot(index, "hid_descriptor_unsupported", 0, now);
+            return;
+        }
         log_code(3, index, "device_opened");
     }
     if (!s->health_valid || now - s->health_at >= 100) {
@@ -357,7 +369,7 @@ static void poll_slot(unsigned index, uint64_t now)
         s->health_at = now;
         s->health_valid = 1;
     }
-    if (active(s) && usb.rumble) {
+    if (active(s) && usb.rumble && s->device.kind == UC_USB_XINPUT) {
         uint8_t strong = 0, weak = 0;
         int feedback = uc_core_read_rumble(s->session, now, &strong, &weak);
         if (feedback > 0)
@@ -494,6 +506,12 @@ static int diagnostic_fields(char *b, size_t cap, size_t *used, const uc_usb_dev
         if (append(b, cap, used, __VA_ARGS__))                                                     \
             return -1;                                                                             \
     } while (0)
+    FIELD(",\"device_descriptor_attempted\":%s,\"device_descriptor_ok\":%s,"
+          "\"device_descriptor_errno\":%d,\"device_info_attempted\":%s,"
+          "\"device_info_ok\":%s,\"device_info_errno\":%d",
+          d->descriptor_attempted ? "true" : "false", d->descriptor_ok ? "true" : "false",
+          d->descriptor_errno, d->info_attempted ? "true" : "false", d->info_ok ? "true" : "false",
+          d->info_errno);
     FIELD(",\"protocol_hint\":\"%s\",\"interface_summary\":\"%s\",\"device_class\":%u,"
           "\"config_index\":%u,\"config_value\":%u,\"config_length\":%u,\"config_valid\":%s,"
           "\"hid_report_interface\":%d,\"hid_report_declared\":%u,\"hid_report_captured\":%u,"
@@ -612,7 +630,8 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
         usb_slot *s = &usb.slots[i];
         if (!s->device.node[0])
             continue;
-        const char *profile = "xinput-usb";
+        const char *profile =
+            s->device.kind == UC_USB_GENERIC_HID ? "generic-hid-usb" : "xinput-usb";
         const char *model = pad_display_name_for_transport(PAD_TRANSPORT_USB, s->device.vid,
                                                            s->device.pid, profile);
         /* Model aliases are ASCII but may contain quotes: quote them as JSON. */

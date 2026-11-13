@@ -460,8 +460,40 @@ static void test_classification_and_joycons(void)
     CHECK(state.lx == 128 && state.ly == 128 && (state.buttons & PAD_CROSS));
 }
 
+static void test_output_inventory(void)
+{
+    static const uint8_t descriptor[] = {
+        0x85, 3,    0x05, 0x0f, 0x75, 8, 0x95, 2, 0x91,
+        2,    0x06, 0,    0xff, 0x95, 1, 0x91, 2, /* same Output ID: cumulative bits */
+        0x85, 7,    0xb1, 2,                      /* independent Feature report */
+    };
+    hid_output_inventory out;
+    generic_output_inventory(descriptor, sizeof descriptor, &out);
+    CHECK(out.valid && out.count == 2 && out.has_ids && out.pid_usage && out.vendor_usage);
+    CHECK(out.reports[0].id == 3 && out.reports[0].type == 2 && out.reports[0].bits == 24);
+    CHECK(out.reports[0].page_count == 2 && out.reports[0].pages[1] == 0xff00);
+    CHECK(out.reports[1].id == 7 && out.reports[1].type == 3 && out.reports[1].bits == 8);
+    static const uint8_t extended_usage[] = {0x05, 1, 0x0b, 0x70, 0,    0x0f, 0,
+                                             0x75, 8, 0x95, 1,    0x91, 2};
+    generic_output_inventory(extended_usage, sizeof extended_usage, &out);
+    CHECK(out.valid && out.pid_usage);
+    static const uint8_t huge[] = {0x75, 32, 0x97, 0xff, 0xff, 0xff, 0xff, 0x91, 2};
+    generic_output_inventory(huge, sizeof huge, &out);
+    CHECK(!out.valid);
+    static const uint8_t truncated[] = {0xfe, 10, 0, 0};
+    generic_output_inventory(truncated, sizeof truncated, &out);
+    CHECK(!out.valid);
+    static const uint8_t stack_underflow[] = {0xb4};
+    generic_output_inventory(stack_underflow, sizeof stack_underflow, &out);
+    CHECK(!out.valid);
+    static const uint8_t input_only[] = {0x05, 1, 0x75, 8, 0x95, 2, 0x81, 2};
+    generic_output_inventory(input_only, sizeof input_only, &out);
+    CHECK(out.valid && out.count == 0 && !out.pid_usage);
+}
+
 int main(void)
 {
+    test_output_inventory();
     test_crc();
     test_lookup();
     test_classification_and_joycons();

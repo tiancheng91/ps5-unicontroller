@@ -193,14 +193,64 @@ static void diagnostics(void)
     assert(!d.report_valid);
     uc_usb_diagnose_config(&d, configuration, sizeof(configuration) - 1);
     assert(!d.config_valid);
-    pad_state state, before;
-    memset(&state, 0x5a, sizeof(state));
-    before = state;
-    assert(uc_usb_generic_hid_parse(report, sizeof(report), &state) == UC_USB_HID_UNIMPLEMENTED);
-    assert(!memcmp(&state, &before, sizeof(state)));
 }
+static void generic_hid(void)
+{
+    static const uint8_t descriptor[] = {
+        5,    1,    9,    5,    0xa1, 1,    0x85, 1,    9,    0x30, 9,    0x31, 0x15,
+        0,    0x26, 255,  0,    0x75, 8,    0x95, 2,    0x81, 2,    5,    9,    0x19,
+        1,    0x29, 4,    0x15, 0,    0x25, 1,    0x75, 1,    0x95, 4,    0x81, 2,
+        0x75, 4,    0x95, 1,    0x81, 3,    0x85, 2,    5,    0x0c, 0x0a, 0x23, 2,
+        0x75, 1,    0x95, 1,    0x81, 2,    0x75, 7,    0x81, 3,    0xc0};
+    const uint8_t cfg[] = {9, 2, 34, 0,    1, 1,  0,    0x80, 50, 9, 4, 3,    0,
+                           1, 3, 0,  0,    0, 9,  0x21, 0x11, 1,  0, 1, 0x22, sizeof(descriptor),
+                           0, 7, 5,  0x81, 3, 32, 0,    4};
+    uc_usb_device candidate = {.vid = 0x3537, .pid = 0x1041}, selected;
+    uc_usb_diagnose_config(&candidate.diagnostic, cfg, sizeof cfg);
+    candidate.diagnostic.report_declared = sizeof descriptor;
+    candidate.diagnostic.report_interface = 3;
+    uc_usb_diagnose_report(&candidate.diagnostic, descriptor, sizeof descriptor);
+    assert(uc_usb_select_generic(&candidate, &selected));
+    assert(selected.kind == UC_USB_GENERIC_HID && selected.ep_in == 0x81 && !selected.ep_out);
+    uc_usb_protocol p;
+    uc_usb_protocol_begin(&p, selected.kind, 0);
+    assert(uc_usb_protocol_hid_descriptor(&p, &selected) == 0);
+    assert(!uc_usb_protocol_poll(&p, NULL, 0)); /* No LED, rumble or SET_REPORT I/O. */
+    const uint8_t buttons[] = {1, 255, 128, 2}, home[] = {2, 1}, release_home[] = {2, 0},
+                  other[] = {3, 0};
+    pad_state state;
+    assert(uc_usb_protocol_feed(&p, buttons, sizeof buttons, &state, 10) == 1);
+    assert(p.ready && state.lx == 255 && state.ly == 128 && (state.buttons & PAD_CROSS));
+    assert(uc_usb_protocol_feed(&p, home, sizeof home, &state, 20) == 1);
+    assert((state.buttons & (PAD_PS | PAD_CROSS)) == (PAD_PS | PAD_CROSS) && state.lx == 255);
+    assert(uc_usb_protocol_feed(&p, release_home, sizeof release_home, &state, 30) == 1);
+    assert(!(state.buttons & PAD_PS) && (state.buttons & PAD_CROSS));
+    assert(!uc_usb_protocol_feed(&p, other, sizeof other, &state, 40));
+    assert(uc_usb_protocol_rumble(&p, 255, 255, 40) < 0 && !uc_usb_protocol_poll(&p, NULL, 40));
+    assert(!uc_usb_protocol_feed(&p, buttons, 2, &state, 41));
+    assert(!uc_usb_protocol_feed(&p, buttons, 2, &state, 42));
+    assert(uc_usb_protocol_feed(&p, buttons, 2, &state, 43) < 0);
+    static const uint8_t plain_descriptor[] = {5, 1,    9,    5,    0xa1, 1,   9, 0x30,
+                                               9, 0x31, 0x15, 0,    0x26, 255, 0, 0x75,
+                                               8, 0x95, 2,    0x81, 2,    0xc0};
+    candidate.diagnostic.report_declared = sizeof plain_descriptor;
+    uc_usb_diagnose_report(&candidate.diagnostic, plain_descriptor, sizeof plain_descriptor);
+    uc_usb_protocol_begin(&p, UC_USB_GENERIC_HID, 0);
+    assert(!uc_usb_protocol_hid_descriptor(&p, &candidate));
+    assert(!uc_usb_protocol_poll(&p, NULL, 50000)); /* Change-only HID may be idle for minutes. */
+    const uint8_t plain[] = {10, 20};
+    assert(uc_usb_protocol_feed(&p, plain, sizeof plain, &state, 50001) == 1);
+    assert(state.lx == 10 && state.ly == 20 && state.rx == 128 && !state.buttons);
+    candidate.diagnostic.keyboard = 1;
+    assert(!uc_usb_select_generic(&candidate, &selected));
+    candidate.diagnostic.keyboard = 0;
+    candidate.diagnostic.report_declared++;
+    assert(!uc_usb_select_generic(&candidate, &selected));
+}
+
 int main(void)
 {
+    generic_hid();
     rumble_output();
     selection();
     diagnostics();

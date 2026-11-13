@@ -1337,6 +1337,7 @@ static void on_att_response(host_t *h, link_t *l, const uint8_t *d, int n)
                 break;
             }
         }
+        host_capture_hid_descriptor(l, e->map, e->map_len);
         if (!generic_setup_for_transport(l->pctx.bytes, e->map, e->map_len, l->vid, l->pid,
                                          PAD_TRANSPORT_BLE)) {
             link_disconnect(h, l, "no usable report map");

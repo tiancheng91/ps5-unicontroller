@@ -5,7 +5,8 @@
 #define INIT_DEADLINE_MS 4800u
 static int fail(uc_usb_protocol *p)
 {
-    uc_log_error("usb xinput: initialization/input failed rejected=%u", p->rejected_reports);
+    uc_log_error("usb protocol: kind=%d initialization/input failed rejected=%u", p->kind,
+                 p->rejected_reports);
     p->failed = 1;
     p->ready = 0;
     return -1;
@@ -15,8 +16,19 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     memset(p, 0, sizeof(*p));
     p->kind = kind;
     p->started = now;
-    if (kind != UC_USB_XINPUT)
+    if (kind != UC_USB_XINPUT && kind != UC_USB_GENERIC_HID)
         p->failed = 1;
+}
+int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *device)
+{
+    if (!p || !device || p->kind != UC_USB_GENERIC_HID || !device->diagnostic.report_valid ||
+        device->diagnostic.report_saved != device->diagnostic.report_declared ||
+        !uc_usb_generic_hid_begin(&p->hid, device->diagnostic.report,
+                                  device->diagnostic.report_saved, device->vid, device->pid))
+        return p ? fail(p) : -1;
+    log_line("usb generic HID: descriptor initialized %04x:%04x bytes=%u; input only", device->vid,
+             device->pid, device->diagnostic.report_saved);
+    return 0;
 }
 int uc_usb_protocol_rumble(uc_usb_protocol *p, uint8_t strong, uint8_t weak, uint64_t now)
 {
@@ -98,8 +110,11 @@ int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t
 {
     if (!p || p->failed)
         return -1;
-    if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
+    if (p->kind == UC_USB_XINPUT && !p->ready &&
+        (now < p->started || now - p->started >= INIT_DEADLINE_MS))
         return fail(p);
+    if (p->kind == UC_USB_GENERIC_HID)
+        return p->hid.initialized ? 0 : fail(p);
     if (p->led_sent)
         return p->ready ? rumble_poll(p, t, now) : 0;
     /* FF/5D/01 plus validated interrupt endpoints authorizes the standard LED
@@ -158,8 +173,24 @@ int uc_usb_protocol_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_sta
 {
     if (!p || p->failed || !r || !state)
         return -1;
-    if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
+    if (p->kind == UC_USB_XINPUT && !p->ready &&
+        (now < p->started || now - p->started >= INIT_DEADLINE_MS))
         return fail(p);
+    if (p->kind == UC_USB_GENERIC_HID) {
+        int parsed = uc_usb_generic_hid_parse(&p->hid, r, n, state);
+        if (parsed < 0) {
+            if (++p->rejected_reports >= 3)
+                return fail(p);
+            return 0;
+        }
+        if (parsed) {
+            if (!p->ready)
+                log_line("usb generic HID: first valid input bytes=%zu", n);
+            p->ready = 1;
+            p->rejected_reports = 0;
+        }
+        return parsed;
+    }
     if (p->kind != UC_USB_XINPUT)
         return fail(p);
     int valid = xinput(r, n, state);

@@ -691,3 +691,67 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
 #undef ADD
     return used;
 }
+
+#define ADD(...)                                                                                   \
+    do {                                                                                           \
+        if (append(buffer, capacity, &used, __VA_ARGS__)) {                                        \
+            buffer[0] = 0;                                                                         \
+            return 0;                                                                              \
+        }                                                                                          \
+    } while (0)
+/* Snapshot only: no transport commands, feature reads, or output probes. */
+size_t uc_bt_diagnostics_json(char *buffer, size_t capacity)
+{
+    if (!buffer || !capacity)
+        return 0;
+    size_t used = 0;
+    buffer[0] = 0;
+    ADD("{\"schema_version\":1,\"snapshot\":true,\"devices\":[");
+    int count = 0;
+    for (int slot = 0; slot < HOST_MAX_PADS; slot++) {
+        const Slot *s = &bt.slots[slot];
+        if (!s->connected)
+            continue;
+        char address[18], profile[64];
+        address_text(s->addr, address);
+        safe_profile(s->profile, profile);
+        host_hid_descriptor descriptor = {0};
+        int available = host_hid_descriptor_get(bt.host, slot, &descriptor);
+        ADD("%s{\"slot\":%d,\"address\":\"%s\",\"transport\":\"%s\","
+            "\"vid\":\"%04X\",\"pid\":\"%04X\",\"profile\":\"%s\","
+            "\"rumble_output_ready\":%s,\"descriptor_available\":%s",
+            count++ ? "," : "", slot, address,
+            s->transport == PAD_TRANSPORT_BLE ? "ble" : "classic", s->vid, s->pid, profile,
+            host_output_ready(bt.host, slot) ? "true" : "false", available ? "true" : "false");
+        if (available) {
+            hid_output_inventory inventory;
+            generic_output_inventory(descriptor.data, descriptor.length, &inventory);
+            ADD(",\"descriptor_source\":\"%s\",\"descriptor_length\":%d,"
+                "\"descriptor_truncated\":%s,\"descriptor_hex\":\"",
+                s->transport == PAD_TRANSPORT_BLE ? "gatt_report_map" : "sdp_hid_descriptor",
+                descriptor.length, descriptor.truncated ? "true" : "false");
+            for (int i = 0; i < descriptor.length; i++)
+                ADD("%02x", descriptor.data[i]);
+            ADD("\",\"inventory_valid\":%s,\"inventory_truncated\":%s,"
+                "\"pid_usage\":%s,\"vendor_usage\":%s,\"reports\":[",
+                inventory.valid ? "true" : "false", inventory.truncated ? "true" : "false",
+                inventory.pid_usage ? "true" : "false", inventory.vendor_usage ? "true" : "false");
+            for (unsigned i = 0; i < inventory.count; i++) {
+                const hid_report_inventory *r = &inventory.reports[i];
+                ADD("%s{\"type\":\"%s\",\"report_id\":%u,\"bits\":%u,"
+                    "\"payload_bytes\":%u,\"report_id_prefix\":%s,\"usage_pages\":[",
+                    i ? "," : "", r->type == 2 ? "output" : "feature", r->id, r->bits,
+                    (r->bits + 7) / 8, inventory.has_ids ? "true" : "false");
+                for (unsigned j = 0; j < r->page_count; j++)
+                    ADD("%s%u", j ? "," : "", r->pages[j]);
+                ADD("]}");
+            }
+            ADD("]");
+        }
+        ADD("}");
+    }
+    ADD("]}");
+    return used;
+}
+
+#undef ADD

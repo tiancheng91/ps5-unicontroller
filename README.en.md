@@ -48,12 +48,12 @@ After startup, the application attempts to register a **UniController** icon whe
 
 These are **implemented paths**, not a certified hardware list. A product can use different protocols across modes and firmware versions.
 
-| Device / protocol     | Bluetooth                                   | USB                                                 | Current limits                                                           |
-| --------------------- | ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
-| Switch Pro-compatible | Classic                                     | Not supported                                       | Switch BLE identities are rejected to avoid unusable device entries      |
-| Joy-Con               | Separate left/right profiles                | —                                                   | No paired Joy-Con combination                                            |
-| Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
-| Android / generic HID | Supported HID descriptors and known layouts | HID diagnostics only                                | Arbitrary Android modes and USB HID are not guaranteed                   |
+| Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
+| --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Switch Pro-compatible | Classic                                     | Not supported                                            | Switch BLE identities are rejected to avoid unusable device entries      |
+| Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
+| Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
+| Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
 BLE uses an allowlist; the only built-in enabled identity is currently Xbox `045e:0b13`. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 

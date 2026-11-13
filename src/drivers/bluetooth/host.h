@@ -106,6 +106,15 @@ int host_paired_get(const host_t *h, int i, host_paired_info *out);
 /* A connected, ready pad's identity and latest state. Returns 0 if none. */
 int host_pad_get(const host_t *h, int slot, pad_info *info, pad_state *st);
 
+/* Cached descriptor, never an on-demand Bluetooth read. Cleared on disconnect.
+ * Dedicated profiles may not fetch a descriptor; return 0 when unavailable. */
+#define HOST_HID_DESCRIPTOR_MAX 1024
+typedef struct {
+    unsigned char data[HOST_HID_DESCRIPTOR_MAX];
+    int length, truncated;
+} host_hid_descriptor;
+int host_hid_descriptor_get(const host_t *h, int slot, host_hid_descriptor *out);
+
 /* Forgets a paired pad: disconnects it if linked and drops its keys.
  * Returns 0 if it was not paired. */
 int host_forget(host_t *h, const unsigned char addr[6]);

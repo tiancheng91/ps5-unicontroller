@@ -38,7 +38,7 @@ static uint8_t cfg[80];
 static size_t cfg_length = sizeof(original_cfg);
 static uint8_t hid_report[] = {0x05, 0x01, 0x09, 0x05, 0xa1, 0x01, 0xc0};
 static int descriptor_reads, descriptor_error;
-static int control_error, plugtime_error;
+static int control_error, plugtime_error, device_descriptor_error, device_info_error;
 static uint32_t plugtime_generation = 1;
 static ino_t inode_generation = 1;
 static unsigned vendor = 0x3537, product = 0x1040;
@@ -88,6 +88,10 @@ static int test_ioctl(int fd, unsigned long request, ...)
     va_end(args);
     switch (request) {
     case USB_GET_DEVICE_DESC: {
+        if (device_descriptor_error) {
+            errno = device_descriptor_error;
+            return -1;
+        }
         struct usb_device_descriptor *d = arg;
         d->idVendor[0] = vendor;
         d->idVendor[1] = vendor >> 8;
@@ -96,6 +100,10 @@ static int test_ioctl(int fd, unsigned long request, ...)
         return 0;
     }
     case USB_GET_DEVICEINFO: {
+        if (device_info_error) {
+            errno = device_info_error;
+            return -1;
+        }
         struct usb_device_info *info = arg;
         info->udi_vendorNo = vendor;
         info->udi_productNo = product;
@@ -206,6 +214,18 @@ int main(void)
     reset();
     assert(uc_usb_transport_open(&t));
     n = t.context;
+    device_descriptor_error = ENOTTY;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "device_descriptor"));
+    assert(d.diagnostic.descriptor_attempted && !d.diagnostic.descriptor_ok &&
+           d.diagnostic.descriptor_errno == ENOTTY && !d.diagnostic.info_attempted);
+    device_descriptor_error = 0;
+    device_info_error = ENOTTY;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "device_info"));
+    assert(d.vid == 0x3537 && d.pid == 0x1040 && d.diagnostic.descriptor_ok &&
+           d.diagnostic.info_attempted && !d.diagnostic.info_ok &&
+           d.diagnostic.info_errno == ENOTTY);
+    assert(!detach_count && !claim_count);
+    device_info_error = 0;
     vendor = 0x054c;
     assert(open_candidate(n, 2, 7, &d) == 2 && !detach_count && !claim_count &&
            !strcmp(d.reason, "system_device_excluded"));
@@ -240,8 +260,9 @@ int main(void)
         0, 7, 5,  0x83, 3, 32, 0,    4};
     memcpy(cfg, hid_cfg, sizeof(hid_cfg));
     cfg_length = sizeof(hid_cfg);
+    cfg[16] = 1; /* Not a non-boot gamepad protocol: diagnostics only. */
     assert(open_candidate(n, 2, 7, &d) == 2 && d.kind == UC_USB_GENERIC_HID);
-    assert(!strcmp(d.reason, "generic_hid_not_implemented") && d.diagnostic.gamepad);
+    assert(!strcmp(d.reason, "generic_hid_interface_unsupported") && d.diagnostic.gamepad);
     assert(!detach_count && !claim_count && descriptor_reads == 1);
     uc_usb_transport other;
     assert(uc_usb_transport_open(&other));
@@ -274,6 +295,10 @@ int main(void)
     assert(open_candidate(n, 2, 7, &d) == 2 && d.diagnostic.report_valid &&
            descriptor_reads == reads_before_retry + 1);
     assert(!detach_count && !claim_count);
+    cfg[16] = 0; /* Verified non-boot gamepad: only its input endpoint is opened. */
+    assert(open_candidate(n, 2, 7, &d) == 1 && d.kind == UC_USB_GENERIC_HID);
+    assert(n->in_fd == 11 && n->out_fd == -1 && !d.ep_out);
+    assert(detach_count == 1 && claim_count == 1);
     uc_usb_transport_release(&t);
     puts(
         "USB native transport: selection, detach, claim, endpoints, backpressure and cleanup PASS");

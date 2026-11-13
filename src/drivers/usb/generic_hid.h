@@ -1,9 +1,18 @@
 #ifndef UC_USB_GENERIC_HID_H
 #define UC_USB_GENERIC_HID_H
-#include "../../core/pad.h"
+#include "../protocols/profiles.h"
 #include <stddef.h>
-#define UC_USB_HID_UNIMPLEMENTED (-2)
-/* Reserved USB HID input entry point. Always returns UNIMPLEMENTED and leaves
- * state untouched. Descriptor recognition never enables input or USB output. */
-int uc_usb_generic_hid_parse(const unsigned char *report, size_t length, pad_state *state);
+typedef struct {
+    union {
+        uint64_t align;
+        unsigned char bytes[PROFILE_CTX_MAX];
+    } context;
+    pad_state latest;
+    int initialized;
+} uc_usb_generic_hid;
+int uc_usb_generic_hid_begin(uc_usb_generic_hid *, const uint8_t *descriptor, size_t length,
+                             uint16_t vid, uint16_t pid);
+/* 1 normalized input, 0 unrelated Report ID, -1 malformed/truncated input.
+ * Controls distributed across multiple reports retain their previous values. */
+int uc_usb_generic_hid_parse(uc_usb_generic_hid *, const uint8_t *, size_t, pad_state *);
 #endif

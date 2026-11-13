@@ -14,7 +14,7 @@ static struct {
     int user, active, pending, submits, refreshes, disable_error;
 } sessions[4];
 static uint64_t next_session = 1;
-static int create_error;
+static int create_error, hid_kind, hid_configured;
 static int gate = 1, wait_creation, init_error, invalid_report, lease_error, feedback, rumble_calls,
            stops;
 static uint8_t desired_strong, desired_weak;
@@ -137,7 +137,8 @@ static int scan(void *ctx, uc_usb_device *out)
     m->scans++;
     if (!m->available)
         return 0;
-    *out = (uc_usb_device){.kind = UC_USB_XINPUT, .vid = 0x045e, .pid = 0x028e};
+    *out = (uc_usb_device){
+        .kind = hid_kind ? UC_USB_GENERIC_HID : UC_USB_XINPUT, .vid = 0x045e, .pid = 0x028e};
     snprintf(out->node, sizeof(out->node), "/dev/ugen1.%u", m->id + 1);
     if (m->reject) {
         out->kind = UC_USB_NONE;
@@ -202,6 +203,12 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     p->started = now;
     p->ready = 1;
 }
+int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *d)
+{
+    assert(p->kind == UC_USB_GENERIC_HID && d->kind == UC_USB_GENERIC_HID);
+    ++hid_configured;
+    return 0;
+}
 int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
 {
     (void)p;
@@ -247,6 +254,7 @@ static void setup(unsigned count)
     }
     assert(uc_usb_set_transports(ts, count) == 0);
     gate = 1;
+    hid_kind = 0;
     wait_creation = init_error = invalid_report = lease_error = feedback = 0;
     uc_usb_set_rumble_enabled(1);
 }
@@ -267,6 +275,26 @@ static int by_user(int user)
 int main(void)
 {
     uc_usb_set_log_level(0);
+    setup(1);
+    hid_kind = 1;
+    int configurations_before = hid_configured;
+    assert(!uc_usb_start(1));
+    uc_usb_poll(0);
+    assert(by_user(1) < 0); /* Enumeration alone must not create a virtual pad. */
+    ports[0].reports = 1;
+    uc_usb_poll(1);
+    assert(hid_configured == configurations_before + 1 && by_user(1) >= 0);
+    char hid_status[8192];
+    assert(uc_usb_status_json(hid_status, sizeof hid_status) &&
+           strstr(hid_status, "generic-hid-usb"));
+    ports[0].alive = 0;
+    uc_usb_poll(101);
+    assert(!sessions[by_user(1)].active);
+    ports[0].alive = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(202);
+    assert(hid_configured == configurations_before + 2 && sessions[by_user(1)].active);
+    finish();
     setup(1);
     ports[0].reject = 1;
     assert(!uc_usb_start(1));

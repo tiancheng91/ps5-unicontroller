@@ -1,11 +1,13 @@
 #ifndef UC_USB_PROTOCOL_H
 #define UC_USB_PROTOCOL_H
 #include "transport.h"
+#include "generic_hid.h"
 #include "../protocols/profiles.h"
 #include <stddef.h>
 /* Caller-owned, zero-copy protocol state; no sleeps or I/O in feed. */
 typedef struct {
     uc_usb_kind kind;
+    uc_usb_generic_hid hid;
     int ready, failed;
     uint64_t started;
     int led_sent;
@@ -15,6 +17,7 @@ typedef struct {
     int rumble_seen, rumble_sample, rumble_dirty, rumble_sent, rumble_failed;
     uint64_t rumble_sample_at, rumble_sent_at, rumble_retry_at, rumble_queued_at;
 } uc_usb_protocol;
+int uc_usb_protocol_hid_descriptor(uc_usb_protocol *, const uc_usb_device *);
 void uc_usb_protocol_begin(uc_usb_protocol *, uc_usb_kind, uint64_t now);
 /* Advances at most one initialization command per call; 0 progress/ready, -1 failed. */
 int uc_usb_protocol_poll(uc_usb_protocol *, const uc_usb_transport *, uint64_t now);

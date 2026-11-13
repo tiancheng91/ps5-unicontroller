@@ -200,6 +200,7 @@ typedef struct {
     int sdp_len;
 
     chan sdp, sdp_server, ctrl, intr;
+    host_hid_descriptor hid_descriptor;
     int ready, disconnecting;
 
     unsigned char rx[1024];
@@ -329,5 +330,7 @@ void le_on_create_status(host_t *h, int status);
 void le_abandon(host_t *h, link_t *l);
 void le_shutdown(host_t *h);
 int le_send_report(host_t *h, link_t *l, const unsigned char *rep, int len);
+
+void host_capture_hid_descriptor(link_t *l, const unsigned char *data, int length);
 
 #endif

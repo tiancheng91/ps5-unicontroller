@@ -361,6 +361,10 @@ static void test_generic_legacy(void)
     CHECK(s.last.lx == 0 && (s.last.buttons & 0x80));    /* hat west: left */
     CHECK(s.last.buttons & 0x2000);                      /* button 2: circle */
     CHECK(s.last.l2 == 255 && (s.last.buttons & 0x100)); /* brake */
+    host_hid_descriptor descriptor;
+    CHECK(host_hid_descriptor_get(h, s.slot, &descriptor));
+    CHECK(descriptor.length == pad.map_len && !descriptor.truncated);
+    CHECK(!memcmp(descriptor.data, pad.map, (size_t)pad.map_len));
     host_close(h);
 
     /* Legacy bonds reconnect with the distributed LTK, EDIV and Rand. */
