@@ -818,14 +818,25 @@ void uc_backend_poll(void)
         params[0] = sizeof params;
         params[1] = 1;
         int32_t add_result = scePadVirtualDeviceAddDevice(params, 3);
-        if (add_result < 0) {
+        /* On the observed console this status accompanies an already-open
+         * assignment screen. The proven flow still identifies the device from
+         * MBus logs; aborting here can orphan a device without ever binding or
+         * feeding it. This exception is not success and does not supply an ID. */
+        int identity_pending = (uint32_t)add_result == UINT32_C(0x803b0006);
+        if (add_result < 0 && !identity_pending) {
             backend_error(8, "scePadVirtualDeviceAddDevice", add_result);
             phase = 5;
             close_log();
             return;
         }
-        uc_log_info("[vpad] add user=%#x rc=%#x source=%s; waiting for device identity",
-                    (unsigned)owner, (unsigned)add_result, raw_log ? "klog" : "tcp");
+        uc_log_at(identity_pending ? 2 : 3,
+                  "[vpad] add user=%#x rc=%#x source=%s identity_pending=%d; "
+                  "waiting for verified device identity",
+                  (unsigned)owner, (unsigned)add_result, raw_log ? "klog" : "tcp",
+                  identity_pending);
+        uc_log_info("[vpad] add result block=%08x,%08x,%08x,%08x,%08x,%08x; diagnostic only",
+                    (unsigned)params[2], (unsigned)params[3], (unsigned)params[4],
+                    (unsigned)params[5], (unsigned)params[6], (unsigned)params[7]);
         phase = 3;
         started = now;
     }

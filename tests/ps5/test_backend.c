@@ -18,6 +18,8 @@ static int32_t initial_user = 43, foreground_user = 42;
 static int logged_in = 1, power_available = 1, delete_failure = -1, feedback_failure = -1;
 static uint64_t power_bits = 1000;
 static PadData frames[256];
+static int32_t add_result;
+static int add_calls, add_event_writer = -1, add_event_device = -1;
 int32_t sceUserServiceInitialize(void *p)
 {
     (void)p;
@@ -45,9 +47,17 @@ int32_t scePadSetProcessPrivilege(int32_t p)
 }
 int32_t scePadVirtualDeviceAddDevice(void *p, int32_t t)
 {
-    (void)p;
-    (void)t;
-    return 0;
+    assert(t == 3 && ((int32_t *)p)[0] == 32 && ((int32_t *)p)[1] == 1);
+    ++add_calls;
+    if (add_event_writer >= 0 && add_event_device >= 0) {
+        char event[192];
+        int length =
+            snprintf(event, sizeof(event),
+                     "DEVICE_ADDED [DeviceId:0x%x][type:1][subType:22][capabilityBattery:0]\n",
+                     add_event_device);
+        assert(write(add_event_writer, event, (size_t)length) == length);
+    }
+    return add_result;
 }
 int32_t scePadVirtualDeviceInsertData(int32_t h, const void *p)
 {
@@ -188,6 +198,90 @@ static uint64_t finish_identification(int writer, int32_t user)
     uint64_t handle = 0;
     assert(uc_backend_create(user, &handle) == 0 && handle);
     return handle;
+}
+/* Exercise the actual AddDevice phase: a status error can arrive after the
+ * kernel creates a device. Never publish input until strict identity + bind. */
+static int start_add(int32_t result, int event_device)
+{
+    assert(!phase);
+    prepare();
+    int pipe_fds[2];
+    assert(pipe(pipe_fds) == 0);
+    fd = pipe_fds[0];
+    assert(fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+    raw_log = connection_pending = used = discard_line = 0;
+    phase = 2;
+    pending_slot = 0;
+    owner = 42;
+    matches = identified = cancelled = 0;
+    device = 0;
+    started = fake_ms;
+    add_result = result;
+    add_event_writer = pipe_fds[1];
+    add_event_device = event_device;
+    return pipe_fds[1];
+}
+static void partial_add_status(void)
+{
+    int before = add_calls, bindings = bind_calls;
+    int writer = start_add((int32_t)UINT32_C(0x803b0006), 150);
+    uc_backend_poll();
+    assert(phase == 3 && matches == 1 && add_calls == before + 1);
+    assert(bind_calls == bindings && !inserted[150] && !removed[150]);
+    uint64_t token = 0;
+    assert(uc_backend_create(42, &token) == 2 && !token && add_calls == before + 1);
+    /* A real controller appearing nearby must not become an owned output. */
+    const char real[] = "DEVICE_ADDED [DeviceId:0x99][type:1][subType:22][capabilityBattery:1]\n";
+    assert(write(writer, real, sizeof(real) - 1) == (ssize_t)sizeof(real) - 1);
+    fake_ms += 300;
+    uc_backend_poll();
+    assert(phase == 4 && bind_calls == bindings + 1 && !inserted[153] && !removed[153]);
+    assert(!uc_backend_create(42, &token) && token);
+    int16_t axes[4] = {0};
+    uint16_t triggers[2] = {0};
+    assert(!uc_backend_submit(token, 1u << 16, axes, triggers));
+    assert(frames[150].buttons == (1u << 16));
+    assert(!uc_backend_delete(token) && removed[150] == 1);
+    close(writer);
+
+    writer = start_add((int32_t)UINT32_C(0x803b0006), 151);
+    uc_backend_poll();
+    assert(uc_backend_cancel_pending() == 2);
+    fake_ms += 300;
+    uc_backend_poll();
+    assert(!phase && removed[151] == 1 && bind_calls == bindings + 1);
+    close(writer);
+
+    before = add_calls;
+    writer = start_add((int32_t)UINT32_C(0x803b0006), -1);
+    uc_backend_poll();
+    for (int i = 0; i < 11; i++) {
+        fake_ms += 300;
+        uc_backend_poll();
+    }
+    assert(phase == 5 && !identified && add_calls == before + 1);
+    assert(uc_backend_create(42, &token) < 0 && !token && add_calls == before + 1);
+    assert(!uc_backend_cancel_pending() && !phase);
+    close(writer);
+
+    writer = start_add((int32_t)UINT32_C(0x803b0006), 152);
+    uc_backend_poll();
+    const char other[] = "DEVICE_ADDED [DeviceId:0x99][type:1][subType:22][capabilityBattery:0]\n";
+    assert(write(writer, other, sizeof(other) - 1) == (ssize_t)sizeof(other) - 1);
+    uc_backend_poll();
+    assert(phase == 5 && !removed[152] && !removed[153] && bind_calls == bindings + 1);
+    assert(!uc_backend_cancel_pending());
+    close(writer);
+
+    before = add_calls;
+    writer = start_add(-123, -1);
+    uc_backend_poll();
+    assert(phase == 5 && add_calls == before + 1 && !identified);
+    assert(!uc_backend_cancel_pending());
+    close(writer);
+    add_result = 0;
+    add_event_writer = add_event_device = -1;
+    prepare();
 }
 static void isolation_and_rumble(void)
 {
@@ -423,6 +517,7 @@ int main(void)
     candidate("DEVICE_ADDED [DeviceId:0x7b][type:1][subType:220]");
     candidate("DEVICE_ADDED [DeviceId:0x7b][type:1][subType:22][capabilityBattery:01]");
     assert(!matches);
+    partial_add_status();
     isolation_and_rumble();
     power_guards();
     home_observation();
