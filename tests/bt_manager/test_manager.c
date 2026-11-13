@@ -1,6 +1,8 @@
 #include "../../src/drivers/bt.h"
 #include "../../src/drivers/protocols/profiles.h"
 #include "../../src/core/uc_core.h"
+#include "../../src/core/device_options.h"
+#include <unistd.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -120,6 +122,13 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
     memcpy(submitted_axes, axes, sizeof(submitted_axes));
     memcpy(submitted_triggers, triggers, sizeof(submitted_triggers));
     return 0;
+}
+int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid)
+{
+    (void)transport;
+    (void)vid;
+    (void)pid;
+    return 1;
 }
 const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid, uint16_t pid,
                                            const char *profile)
@@ -544,6 +553,26 @@ int main(void)
     assert(!uc_bt_running() && !sessions[0]);
     assert(uc_bt_start_system_assigned() == -1);
     gate = 1;
+    char options_path[128];
+    snprintf(options_path, sizeof options_path, "/tmp/uc-bt-options-%ld.json", (long)getpid());
+    unlink(options_path);
+    assert(!uc_device_options_load(options_path));
+    assert(!uc_bt_start(1));
+    frame.buttons = PAD_CROSS;
+    event(1, 0, 40000);
+    event(2, 0, 40010);
+    const char *key = "classic:06:05:04:03:02:01:054C:0CE6";
+    assert(uc_bt_device_options_match(key, active));
+    assert(!uc_bt_device_options_match(key, active + 100));
+    assert(!uc_device_options_save(key, (uc_device_options){0, 1}));
+    int calls_before = feedback_calls;
+    uc_bt_device_options_changed();
+    assert(feedback_calls == calls_before + 1 && !feedback_strong && !feedback_weak);
+    event(2, 0, 40020);
+    assert(submitted_buttons == PAD_CIRCLE);
+    assert(!uc_bt_stop());
+    assert(!uc_bt_device_options_match(key, 0));
+    assert(!unlink(options_path));
     puts("Bluetooth manager checks passed");
     return 0;
 }

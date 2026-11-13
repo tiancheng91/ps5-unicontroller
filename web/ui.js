@@ -4,9 +4,9 @@
   const choices = {
     lang: ["zh", "en"],
     theme: ["orange", "blue", "green", "red"],
-    size: ["normal", "tv"],
-    navigation: ["native", "arrows"],
   };
+  // Presentation only: UA detection never grants API or device permissions.
+  const ps5 = /\bPlayStation\s+5(?:[\/;\s)]|$)/i.test(navigator.userAgent || "");
   let saved = {};
   try {
     saved = JSON.parse(localStorage.getItem(key) || "{}");
@@ -17,8 +17,15 @@
   const state = {
     lang: /^zh/i.test(preferred) ? "zh" : "en",
     theme: "red",
-    size: "normal",
-    navigation: "native",
+    get consoleBrowser() {
+      return ps5;
+    },
+    get size() {
+      return ps5 ? "tv" : "normal";
+    },
+    get navigation() {
+      return ps5 ? "arrows" : "native";
+    },
     page: "controllers",
     get controllersPage() {
       return this.page === "controllers";
@@ -58,6 +65,7 @@
   document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
   document.documentElement.dataset.theme = state.theme;
   document.documentElement.dataset.size = state.size;
+  document.documentElement.dataset.navigation = state.navigation;
   document.addEventListener("alpine:init", () => {
     Alpine.store("ui", state);
     Alpine.directive("label", (el, { expression }, { effect }) => {

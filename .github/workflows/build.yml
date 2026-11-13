@@ -2,6 +2,8 @@ name: Test and build PS5 payload
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -12,10 +14,20 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
     env:
       LLVM_CONFIG: /usr/bin/llvm-config-18
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Validate build version
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: python3 tools/release_metadata.py --tag "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
       - name: Install compiler
         run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 lld-18 clang-format-18
       - name: Install Python formatter
@@ -41,15 +53,84 @@ jobs:
           unzip -q "$RUNNER_TEMP/ps5-sdk.zip" -d "$RUNNER_TEMP/ps5-sdk"
           echo "PS5_PAYLOAD_SDK=$RUNNER_TEMP/ps5-sdk/ps5-payload-sdk" >> "$GITHUB_ENV"
       - name: Build payload
-        run: make ps5
+        env:
+          UC_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+        run: make ps5 UC_BUILD_VERSION="$UC_BUILD_VERSION"
       - name: Hash payload
+        env:
+          UC_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
           file dist/unicontroller.elf
           readelf -h dist/unicontroller.elf
           (cd dist && sha256sum unicontroller.elf > unicontroller.elf.sha256)
-          printf 'commit=%s\nrun=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.txt
+          printf 'version=%s\ntag=%s\ncommit=%s\nrun=%s\nurl=%s\n' \
+            "$UC_BUILD_VERSION" "$RELEASE_TAG" "$(git rev-parse HEAD)" "$GITHUB_RUN_ID" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            > dist/build-info.txt
       - uses: actions/upload-artifact@v4
         with:
           name: UniController-PS5
           path: dist/
           if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: UniController-PS5
+          path: dist
+      - name: Verify release artifact and tag
+        run: |
+          (cd dist && sha256sum --check unicontroller.elf.sha256)
+          grep -Fx "version=${{ needs.build.outputs.version }}" dist/build-info.txt
+          grep -Fx "tag=$RELEASE_TAG" dist/build-info.txt
+          grep -Fx "commit=$(git rev-parse HEAD)" dist/build-info.txt
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$(git rev-parse HEAD)"
+      - name: Prepare release notes
+        id: notes
+        run: |
+          python3 tools/release_metadata.py --tag "$RELEASE_TAG" \
+            --notes "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_OUTPUT"
+      - name: Publish complete release
+        env:
+          HAS_NOTES: ${{ steps.notes.outputs.has_notes }}
+        run: |
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null) || draft=missing
+          if [ "$draft" = false ]; then
+            echo "Release already published; leaving its assets unchanged."
+            exit 0
+          fi
+          if [ "$draft" = missing ]; then
+            notes=(--generate-notes)
+            if [ "$HAS_NOTES" = true ]; then
+              notes=(--notes-file "$RUNNER_TEMP/release-notes.md")
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "UniController for PS5 $RELEASE_TAG" \
+              --prerelease="$PRERELEASE" "${notes[@]}"
+          fi
+          if [ "$HAS_NOTES" = true ]; then
+            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$RELEASE_TAG" \
+            dist/unicontroller.elf dist/unicontroller.elf.sha256 dist/build-info.txt --clobber
+          gh release edit "$RELEASE_TAG" --prerelease="$PRERELEASE" --draft=false

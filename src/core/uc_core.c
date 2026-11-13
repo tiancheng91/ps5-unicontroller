@@ -200,7 +200,7 @@ int uc_core_submit(uint64_t session, uint64_t seq, uint32_t buttons, const int16
     }
     if (s->closing || s->pending || state.suspended || !axes || !triggers)
         return fail_session("input_rejected", session);
-    if (state.swap) {
+    if (state.swap && !s->physical) {
         /* Switch <-> PS/Xbox face layout: both A/B and X/Y pairs. */
         uint32_t cross = buttons & (UINT32_C(1) << 14);
         uint32_t circle = buttons & (UINT32_C(1) << 13);

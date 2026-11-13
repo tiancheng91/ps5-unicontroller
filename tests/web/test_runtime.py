@@ -55,6 +55,21 @@ with tempfile.TemporaryDirectory() as directory:
         assert request("POST", "/api/v1/launcher", auth=False)[0] == 403
         assert request("POST", "/api/v1/launcher")[0] == 503
         assert request("DELETE", "/api/v1/launcher")[0] == 503
+        assert request("POST", "/api/v1/device-settings", auth=False)[0] == 403
+        assert request("POST", "/api/v1/device-settings", {})[0] == 400
+        assert (
+            request(
+                "POST",
+                "/api/v1/device-settings",
+                {
+                    "key": "usb:/dev/ugen1.2:3537:1040",
+                    "session_id": 1,
+                    "rumble": True,
+                    "swap_ab": False,
+                },
+            )[0]
+            == 409
+        )  # Offline/replaced devices cannot be changed.
         # Embedded CSS/JS must match source bytes and have strict MIME types.
         root = Path(__file__).resolve().parents[2]
         for asset in (root / "web").rglob("*"):
@@ -212,6 +227,44 @@ with tempfile.TemporaryDirectory() as directory:
         assert settings["bluetooth_auto_start"] is False
         assert settings["bluetooth_auto_user"] == 0
         assert settings["bluetooth_auto_trigger"] == "login"
+        assert settings["usb_auto_start"] is False and settings["usb_auto_user"] == 0
+        usb_auto = dict(settings, usb_auto_start=True)
+        assert request("POST", "/api/v1/settings", usb_auto)[1] == usb_auto
+        assert json.loads(path.read_text()) == usb_auto
+        assert (
+            request("POST", "/api/v1/settings", dict(usb_auto, usb_auto_user=2))[1]
+            == usb_auto
+        )
+        assert (
+            request(
+                "POST",
+                "/api/v1/settings",
+                dict(usb_auto, bluetooth_auto_trigger="resume"),
+            )[0]
+            == 200
+        )
+        assert (
+            request(
+                "POST",
+                "/api/v1/settings",
+                dict(
+                    usb_auto, bluetooth_auto_start=True, bluetooth_auto_trigger="resume"
+                ),
+            )[0]
+            == 400
+        )
+        for bad_usb in [1, "true", None]:
+            assert (
+                request(
+                    "POST", "/api/v1/settings", dict(settings, usb_auto_start=bad_usb)
+                )[0]
+                == 400
+            )
+        old_schema = {
+            k: v for k, v in settings.items() if not k.startswith("usb_auto_")
+        }
+        assert request("POST", "/api/v1/settings", old_schema)[1] == settings
+
         resume = dict(
             settings, bluetooth_auto_start=True, bluetooth_auto_trigger="resume"
         )

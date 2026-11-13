@@ -17,6 +17,11 @@
     input_frames: 42,
     battery: 75,
     charging: false,
+    settings_key: "classic:02:00:00:00:00:01:057E:2009",
+    known_device: true,
+    rumble: true,
+    swap_ab: false,
+    rumble_available: true,
   };
   const bt = {
     state: "on",
@@ -43,6 +48,12 @@
     node: "/dev/ugen1.4",
     vid: "045E",
     pid: "028E",
+    settings_key: "usb:/dev/ugen1.4:045E:028E",
+    known_device: true,
+    rumble: true,
+    swap_ab: false,
+    rumble_available: true,
+    session_id: 102,
     model: "Sample Xbox USB",
     profile: "XInput",
     connected: true,
@@ -86,6 +97,8 @@
     bluetooth_auto_start: false,
     bluetooth_auto_trigger: "login",
     bluetooth_auto_user: 2,
+    usb_auto_start: false,
+    usb_auto_user: 1,
     button_mapping: Array.from({ length: 32 }, (_, i) => i),
   };
   const entries = [
@@ -144,7 +157,19 @@
       };
     else if (path === "/system")
       data = { mode: "DEMO PREVIEW", backend: "simulated", hardware: false };
-    else if (path === "/settings") {
+    else if (path === "/device-settings" && method === "POST") {
+      const found = [...bt.devices, ...usb.devices].find(
+        (d) => d.settings_key === body.key && d.session_id === body.session_id,
+      );
+      if (!found) {
+        data = { error: "device_changed" };
+        status = 409;
+      } else {
+        found.rumble = body.rumble;
+        found.swap_ab = body.swap_ab;
+        data = { saved: true };
+      }
+    } else if (path === "/settings") {
       if (method === "POST") settings = JSON.parse(JSON.stringify(body));
       data = settings;
     } else if (path === "/launcher")

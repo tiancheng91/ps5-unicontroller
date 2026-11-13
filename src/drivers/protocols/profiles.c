@@ -730,6 +730,12 @@ const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid
     return r && r->has_name ? r->name : pad_display_name(vid, pid, profile);
 }
 
+int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid)
+{
+    return profile_model_name(vid, pid) != NULL ||
+           profile_find_for_transport(transport, vid, pid) != NULL;
+}
+
 int profile_system_bluetooth(uint16_t vid, uint16_t pid)
 {
     return vid == 0x054c && (pid == 0x0ce6 || pid == 0x0df2);

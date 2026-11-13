@@ -6,9 +6,12 @@ PYTHON ?= python3
 CLANG_FORMAT ?= clang-format-18
 PREVIEW_PORT ?= 7456
 PREVIEW_BIND ?= 127.0.0.1
+UC_BUILD_VERSION ?= dev
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -O2
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -Isrc/core -Isrc/web -Isrc/ps5 \
 	-Isrc/drivers/common -Ibuild
+
+CPPFLAGS += -DUC_VERSION='"$(UC_BUILD_VERSION)"'
 
 CONTROLLER_DATA := build/controller_registry.inc
 
@@ -30,7 +33,8 @@ USB_SOURCES := src/drivers/usb.c src/drivers/usb/transport.c src/drivers/usb/pro
 
 CONFIG_SOURCES := src/drivers/config/json.c src/drivers/config/overrides.c
 
-CORE_SOURCES := src/core/uc_core.c src/core/bt_autostart.c
+OPTIONS_SOURCE := src/core/device_options.c
+CORE_SOURCES := src/core/uc_core.c src/core/bt_autostart.c $(OPTIONS_SOURCE)
 HOST_SOURCES := \
 	$(CORE_SOURCES) \
 	$(BT_MANAGER) \
@@ -79,13 +83,23 @@ ps5: assets controllers $(BUILD)/launcher_icon.inc
 	$(MAKE) -f ps5.mk
 
 # Core/platform tests run without sockets; web tests bind local listeners.
-test: test-core test-json test-backend test-web test-ports test-ui test-bluetooth test-bt-manager test-bt-ui \
+test: test-device-options test-core test-json test-backend test-web test-ports test-ui \
+	test-bluetooth test-bt-manager test-bt-ui \
 	test-usb-protocol test-usb-manager test-usb-ui test-config
+
+.PHONY: test-device-options
+test-device-options: $(BUILD)/test-device-options
+	./$(BUILD)/test-device-options
+
+$(BUILD)/test-device-options: $(OPTIONS_SOURCE) src/core/device_options.h \
+	tests/core/test_device_options.c src/web/json.h $(LOG_SOURCES) $(LOG_HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OPTIONS_SOURCE) tests/core/test_device_options.c $(LOG_SOURCES) -o $@
 
 test-core: $(BUILD)/test-core
 	./$(BUILD)/test-core
 
-$(BUILD)/test-core: $(CORE_SOURCES) tests/core/test_core.c src/core/uc_core.h $(LOG_SOURCES) $(LOG_HEADERS)
+$(BUILD)/test-core: $(CORE_SOURCES) tests/core/test_core.c $(C_HEADERS) $(LOG_SOURCES) $(LOG_HEADERS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/core/test_core.c $(LOG_SOURCES) -o $@
 
@@ -132,6 +146,7 @@ clean:
 test-ui:
 	node tests/web/test_ui.js
 	node tests/web/test_models.js
+	node tests/web/test_appearance.js
 
 test-bluetooth: controllers
 	@mkdir -p $(BUILD)
@@ -143,9 +158,9 @@ test-bt-manager: $(BUILD)/test-bt-manager
 	./$(BUILD)/test-bt-manager
 
 $(BUILD)/test-bt-manager: src/drivers/bt.c src/drivers/bt.h tests/bt_manager/test_manager.c \
-	$(LOG_SOURCES) $(LOG_HEADERS)
+	$(LOG_SOURCES) $(LOG_HEADERS) $(OPTIONS_SOURCE) $(C_HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/bt.c tests/bt_manager/test_manager.c $(LOG_SOURCES) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/bt.c tests/bt_manager/test_manager.c $(OPTIONS_SOURCE) $(LOG_SOURCES) -o $@
 
 test-bt-ui:
 	node tests/web/test_bt_ui.js
@@ -176,13 +191,14 @@ test-usb-manager: $(BUILD)/test-usb-manager
 	./$(BUILD)/test-usb-manager
 
 $(BUILD)/test-usb-manager: src/drivers/usb.c src/drivers/usb/diagnostics.c \
-	tests/usb_manager/test_manager.c $(C_HEADERS) $(LOG_SOURCES)
+	tests/usb_manager/test_manager.c $(C_HEADERS) $(LOG_SOURCES) $(OPTIONS_SOURCE)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb.c src/drivers/usb/diagnostics.c \
-		tests/usb_manager/test_manager.c $(LOG_SOURCES) -o $@
+		tests/usb_manager/test_manager.c $(OPTIONS_SOURCE) $(LOG_SOURCES) -o $@
 
 test-usb-ui:
 	node tests/web/test_usb_ui.js
+	node tests/web/test_device_options.js
 
 test-config:
 	$(PYTHON) -m unittest discover -s tests/config -v

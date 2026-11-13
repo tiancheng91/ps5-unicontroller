@@ -7,8 +7,11 @@ endif
 
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
+UC_BUILD_VERSION ?= dev
 CFLAGS := -std=c11 -Wall -Wextra -Werror -O2
 CPPFLAGS += -Isrc/core -Isrc/web -Isrc/ps5 -Isrc/drivers/common -Ibuild -DUC_PS5
+CPPFLAGS += -DUC_VERSION='"$(UC_BUILD_VERSION)"'
+
 LDLIBS += -lScePad -lSceUserService -lSceAppInstUtil -ldl
 
 PAYLOAD := dist/unicontroller.elf
@@ -33,6 +36,7 @@ SOURCES := \
 	$(BT_SOURCES) \
 	$(DRIVER_SHARED) \
 	src/core/uc_core.c \
+	src/core/device_options.c \
 	src/core/bt_autostart.c \
 	src/ps5/main.c \
 	src/ps5/backend.c \

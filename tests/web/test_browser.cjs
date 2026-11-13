@@ -40,6 +40,8 @@ const root = path.resolve(__dirname, "../..");
     if (!executablePath) throw Error("Set CHROME_PATH to a Chromium/Chrome executable");
     browser = await chromium.launch({ executablePath, headless: true });
     const context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (PlayStation; PlayStation 5/13.60) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
       locale: "en-US",
       viewport: { width: 1280, height: 900 },
     });
@@ -58,6 +60,41 @@ const root = path.resolve(__dirname, "../..");
     await page.waitForFunction(
       () => document.querySelector("#devices h3")?.textContent === "Sample Switch Pro",
     );
+    // USB modes can re-enumerate at the same node between two status polls.
+    await page.evaluate(() => {
+      window.usbMode = "xinput";
+      const request = UCAPI.request;
+      window.usbModeRequest = request;
+      UCAPI.request = async (...args) => {
+        const data = await request(...args);
+        if (args[0] === "/usb") {
+          const generic = window.usbMode === "generic";
+          data.devices = [
+            {
+              slot: 0,
+              node: "/dev/ugen1.2",
+              vid: "3537",
+              pid: generic ? "1041" : "1040",
+              profile: generic ? "generic-hid-usb" : "xinput-usb",
+              model: generic ? "GameSir Nova Lite" : "XInput test device",
+              session_id: generic ? 6 : 5,
+              input_frames: 100,
+              bound: true,
+            },
+          ];
+        }
+        return data;
+      };
+    });
+    await page.getByText("XInput test device", { exact: true }).waitFor();
+    await page.evaluate(() => {
+      window.usbMode = "generic";
+    });
+    await page.getByText("GameSir Nova Lite", { exact: true }).waitFor();
+    assert.equal(await page.getByText("XInput test device", { exact: true }).count(), 0);
+    await page.evaluate(() => {
+      UCAPI.request = window.usbModeRequest;
+    });
     assert.equal(await page.locator("html").getAttribute("lang"), "en");
     assert.equal(await page.locator("html").getAttribute("data-theme"), "red");
     assert((await page.locator(".preview-notice").innerText()).includes("Demo preview"));
@@ -81,6 +118,29 @@ const root = path.resolve(__dirname, "../..");
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.activeElement?.matches("#devices button"));
     assert.deepEqual(await page.evaluate(() => window.commands), []);
+    // Device-specific preferences are editable without stopping other inputs.
+    await details.click();
+    const deviceRumble = page.locator("#device-rumble");
+    await page.waitForFunction(() => !document.querySelector("#device-rumble").disabled);
+    assert(await deviceRumble.isChecked());
+    await deviceRumble.uncheck();
+    await page.waitForFunction(
+      () =>
+        !document.querySelector("#device-rumble").checked &&
+        !document.querySelector("#device-rumble").disabled,
+    );
+    await page.locator("#device-swap").check();
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#device-swap").checked &&
+        !document.querySelector("#device-swap").disabled,
+    );
+    assert(
+      await page.evaluate(() =>
+        window.commands.some((c) => c[0] === "/device-settings" && c[2].swap_ab && !c[2].rumble),
+      ),
+    );
+    await page.keyboard.press("Escape");
     await details.focus();
     await page.evaluate(() => {
       window.savedButton = document.activeElement;
@@ -139,10 +199,22 @@ const root = path.resolve(__dirname, "../..");
     }
     await page.locator('nav a[data-page="settings"]').click();
     await page.locator("#settings-view").waitFor({ state: "visible" });
+    const usbAuto = page.locator("#usb-auto-start");
+    await usbAuto.check();
+    await page.locator('[data-form="bluetooth_auto_start"]').check();
+    await page.locator('[data-form="bluetooth_auto_trigger"]').selectOption("resume");
+    assert(await page.locator("#save").isDisabled());
+    await page.locator('[x-label="autoConflict"]').waitFor({ state: "visible" });
+    await page.locator('[data-form="bluetooth_auto_trigger"]').selectOption("login");
+    assert(await page.locator("#save").isEnabled());
+    await usbAuto.uncheck();
+    await page.locator('[data-form="bluetooth_auto_start"]').uncheck();
     const beforeAppearance = await page.evaluate(() => window.commands.length);
     await page.locator("#ui-language").selectOption("zh");
     await page.locator("#ui-theme").selectOption("blue");
-    await page.locator("#ui-size").selectOption("tv");
+    assert.equal(await page.locator("html").getAttribute("data-size"), "tv");
+    assert.equal(await page.locator("html").getAttribute("data-navigation"), "arrows");
+    assert.equal(await page.locator("#ui-size, #ui-navigation").count(), 0);
     assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
     assert.equal(await page.locator("html").getAttribute("data-theme"), "blue");
     assert.equal(
@@ -150,7 +222,6 @@ const root = path.resolve(__dirname, "../..");
       beforeAppearance,
       "appearance has no hardware writes",
     );
-    await page.locator("#ui-size").selectOption("normal");
     // Disabling USB Start must not hand focus to Bluetooth Stop. Delay the
     // request so both USB buttons remain disabled long enough to test recovery.
     await page.evaluate(() => {
@@ -198,7 +269,6 @@ const root = path.resolve(__dirname, "../..");
     await page.locator("#load").click();
     assert.equal(await rumble.isChecked(), false);
     assert.equal(await mapping.first().inputValue(), "11");
-    await page.locator("#ui-navigation").selectOption("arrows");
     await page.locator("#ui-theme").focus();
     await page.keyboard.press("ArrowDown");
     assert(
@@ -325,6 +395,8 @@ const root = path.resolve(__dirname, "../..");
     });
     await cp.goto(url + "/#settings");
     await cp.waitForFunction(() => document.querySelector("#ui-language").value === "zh");
+    assert.equal(await cp.locator("html").getAttribute("data-size"), "normal");
+    assert.equal(await cp.locator("html").getAttribute("data-navigation"), "native");
     await cp.locator("#ui-theme").selectOption("green");
     assert.equal(await cp.locator("html").getAttribute("data-theme"), "green");
     const narrow = await browser.newContext({
@@ -332,8 +404,16 @@ const root = path.resolve(__dirname, "../..");
       locale: "en-US",
     });
     const np = await narrow.newPage();
+    await np.addInitScript(() => {
+      localStorage.setItem(
+        "unicontroller.appearance.v1",
+        JSON.stringify({ size: "tv", navigation: "arrows" }),
+      );
+    });
     await np.goto(url + "/#settings");
     await np.waitForFunction(() => document.querySelector("#ui-language").value === "en");
+    assert.equal(await np.locator("html").getAttribute("data-size"), "normal");
+    assert.equal(await np.locator("html").getAttribute("data-navigation"), "native");
     assert(
       await np.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       "mobile page must not overflow horizontally",

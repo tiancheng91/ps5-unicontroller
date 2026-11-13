@@ -33,4 +33,6 @@ typedef struct {
     void *userdata;
 } uc_bt_factory;
 int uc_bt_set_factory(const uc_bt_factory *factory, const char *database_path);
+int uc_bt_device_options_match(const char *key, uint64_t session);
+void uc_bt_device_options_changed(void);
 #endif

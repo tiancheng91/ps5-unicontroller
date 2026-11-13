@@ -463,6 +463,38 @@ main {
 .service-actions button {
   font-size: 0.85rem;
 }
+.service-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.service-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.service-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+.service-status[data-state="on"] {
+  color: var(--text);
+}
+.service-status[data-state="on"]::before,
+.service-status[data-state="starting"]::before {
+  background: var(--accent);
+}
+.service-status[data-state="failed"] {
+  color: var(--danger);
+  border-color: currentColor;
+}
 .service-error {
   overflow-wrap: anywhere;
 }

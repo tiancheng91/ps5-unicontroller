@@ -1,7 +1,9 @@
+#include "../version.h"
 #include "../logging.h"
 #include "../drivers/config/overrides.h"
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
+#include "../core/device_options.h"
 #include "json.h"
 #include "assets.h"
 #include "../drivers/bt.h"
@@ -38,8 +40,8 @@ typedef struct {
     char out[RESPONSE_MAX];
 } Client;
 typedef struct {
-    int recording, page, rumble, swap, bt_auto, bt_auto_resume;
-    int32_t bt_auto_user;
+    int recording, page, rumble, swap, bt_auto, bt_auto_resume, usb_auto;
+    int32_t bt_auto_user, usb_auto_user;
     uint8_t map[32];
 } Settings;
 __attribute__((weak)) const char uc_settings_html[] =
@@ -146,8 +148,10 @@ static int parse_settings(const char *body, Settings *out)
                           "button_mapping",
                           "bluetooth_auto_start",
                           "bluetooth_auto_user",
-                          "bluetooth_auto_trigger"};
-    if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 9))
+                          "bluetooth_auto_trigger",
+                          "usb_auto_start",
+                          "usb_auto_user"};
+    if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 11))
         return -1;
     int64_t version, map[32];
     if (jint(&j, jget(&j, "schema_version"), 1, 1, &version) ||
@@ -171,6 +175,18 @@ static int parse_settings(const char *body, Settings *out)
     if (user >= 0 && jint(&j, user, 0, INT32_MAX, &user_id))
         return -1;
     out->bt_auto_user = (int32_t)user_id;
+    out->usb_auto = 0;
+    out->usb_auto_user = 0;
+    int usb_mode = jget(&j, "usb_auto_start");
+    int usb_user = jget(&j, "usb_auto_user");
+    int64_t usb_user_id = 0;
+    if ((usb_mode >= 0 && jbool(&j, usb_mode, &out->usb_auto)) ||
+        (usb_user >= 0 && jint(&j, usb_user, 0, INT32_MAX, &usb_user_id)))
+        return -1;
+    out->usb_auto_user = (int32_t)usb_user_id;
+    if (out->bt_auto_resume && out->bt_auto && out->usb_auto)
+        return -1;
+
     out->recording = level(&j, jget(&j, "recording_level"));
     out->page = level(&j, jget(&j, "page_level"));
     if (out->recording < 0 || out->page < 0 || jbool(&j, jget(&j, "rumble"), &out->rumble) ||
@@ -182,14 +198,15 @@ static int parse_settings(const char *body, Settings *out)
 }
 static void settings_json(const Settings *s, char *out, size_t cap)
 {
-    int n = snprintf(
-        out, cap,
-        "{\"schema_version\":1,\"recording_level\":\"%s\",\"page_level\":\"%s\","
-        "\"rumble\":%s,\"swap_ab\":%s,\"bluetooth_auto_start\":%s,"
-        "\"bluetooth_auto_user\":%d,\"bluetooth_auto_trigger\":\"%s\",\"button_mapping\":[",
-        levels[s->recording], levels[s->page], s->rumble ? "true" : "false",
-        s->swap ? "true" : "false", s->bt_auto ? "true" : "false", s->bt_auto_user,
-        s->bt_auto_resume ? "resume" : "login");
+    int n = snprintf(out, cap,
+                     "{\"schema_version\":1,\"recording_level\":\"%s\",\"page_level\":\"%s\","
+                     "\"rumble\":%s,\"swap_ab\":%s,\"bluetooth_auto_start\":%s,"
+                     "\"bluetooth_auto_user\":%d,\"bluetooth_auto_trigger\":\"%s\",\"usb_auto_"
+                     "start\":%s,\"usb_auto_user\":%d,\"button_mapping\":[",
+                     levels[s->recording], levels[s->page], s->rumble ? "true" : "false",
+                     s->swap ? "true" : "false", s->bt_auto ? "true" : "false", s->bt_auto_user,
+                     s->bt_auto_resume ? "resume" : "login", s->usb_auto ? "true" : "false",
+                     s->usb_auto_user);
     for (int i = 0; i < 32; i++)
         n += snprintf(out + n, cap - (size_t)n, "%s%u", i ? "," : "", s->map[i]);
     snprintf(out + n, cap - (size_t)n, "]}");
@@ -231,6 +248,8 @@ static int load_settings(void)
     settings.bt_auto = 0;
     settings.bt_auto_resume = 0;
     settings.bt_auto_user = 0;
+    settings.usb_auto = 0;
+    settings.usb_auto_user = 0;
     for (int i = 0; i < 32; i++)
         settings.map[i] = (uint8_t)i;
     int fd = open(store_path, O_RDONLY);
@@ -401,6 +420,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
+        uc_backend_auto_watch(UC_AUTO_OFF);
         usb_start_user = (int32_t)user;
         usb_start_queued = 1;
         usb_start_at = millis() + 50;
@@ -408,6 +428,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/usb/stop")) {
+        uc_backend_auto_watch(UC_AUTO_OFF);
         usb_start_queued = 0;
         int rc = uc_usb_stop();
         response(c, rc ? 202 : 200, "application/json",
@@ -591,10 +612,11 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/system")) {
 #ifdef UC_PS5
         response(c, 200, "application/json",
-                 "{\"version\":\"0.1.0\",\"platform\":\"ps5\",\"adapter_ready\":true}");
+                 "{\"version\":\"" UC_VERSION "\",\"platform\":\"ps5\",\"adapter_ready\":true}");
 #else
         response(c, 200, "application/json",
-                 "{\"version\":\"0.1.0\",\"platform\":\"host-mock\",\"adapter_ready\":true}");
+                 "{\"version\":\"" UC_VERSION
+                 "\",\"platform\":\"host-mock\",\"adapter_ready\":true}");
 #endif
         return;
     }
@@ -618,6 +640,43 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         response(c, 200, "application/json", b);
         return;
     }
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/device-settings")) {
+        Json j;
+        const char *keys[] = {"key", "session_id", "rumble", "swap_ab"};
+        int64_t session;
+        uc_device_options next;
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 4) ||
+            jint(&j, jget(&j, "session_id"), 0, INT64_MAX, &session) ||
+            jbool(&j, jget(&j, "rumble"), &next.rumble) ||
+            jbool(&j, jget(&j, "swap_ab"), &next.swap_ab)) {
+            error_response(c, 400, "invalid_device_settings");
+            return;
+        }
+        int token_index = jget(&j, "key");
+        if (token_index < 0 || j.t[token_index].kind != '"' ||
+            j.t[token_index].end - j.t[token_index].start <= 2 ||
+            j.t[token_index].end - j.t[token_index].start > UC_DEVICE_KEY_MAX + 1) {
+            error_response(c, 400, "invalid_device_key");
+            return;
+        }
+        char key[UC_DEVICE_KEY_MAX];
+        size_t size = (size_t)(j.t[token_index].end - j.t[token_index].start - 2);
+        memcpy(key, body + j.t[token_index].start + 1, size);
+        key[size] = 0;
+        if (!uc_bt_device_options_match(key, (uint64_t)session) &&
+            !uc_usb_device_options_match(key, (uint64_t)session)) {
+            error_response(c, 409, "device_changed");
+            return;
+        }
+        if (uc_device_options_save(key, next)) {
+            error_response(c, 503, "device_settings_save_failed");
+            return;
+        }
+        uc_bt_device_options_changed();
+        uc_usb_device_options_changed();
+        response(c, 200, "application/json", "{\"saved\":true}");
+        return;
+    }
     if (!strcmp(path, "/api/v1/settings")) {
         if (!strcmp(method, "POST")) {
             if (active_session || enable_pending || uc_bt_running() || bt_start_queued ||
@@ -630,8 +689,9 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 error_response(c, 400, "invalid_settings");
                 return;
             }
-            /* Account is learned from a successful manual Bluetooth start. */
+            /* Each source remembers only its successful manual start account. */
             next.bt_auto_user = settings.bt_auto_user;
+            next.usb_auto_user = settings.usb_auto_user;
             if (save_settings(&next)) {
                 if (settings.recording >= 1)
                     uc_log_error("settings_persist_failed");
@@ -639,8 +699,10 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 return;
             }
             settings = next;
-            uc_backend_auto_watch(settings.bt_auto && !settings.bt_auto_resume ? UC_AUTO_DESKTOP
-                                                                               : UC_AUTO_OFF);
+            uc_backend_auto_watch((settings.bt_auto || settings.usb_auto) &&
+                                          !settings.bt_auto_resume
+                                      ? UC_AUTO_DESKTOP
+                                      : UC_AUTO_OFF);
             if (uc_core_settings((uint8_t)settings.recording, (uint8_t)settings.swap,
                                  settings.map)) {
                 if (settings.recording >= 1)
@@ -923,6 +985,14 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     int length = slash ? (int)(slash - settings_path) : 1;
     int written = snprintf(override_path, sizeof override_path, "%.*s/controllers.json", length,
                            slash ? settings_path : ".");
+    char device_path[1024];
+    int device_length = snprintf(device_path, sizeof device_path, "%.*s/device-settings.json",
+                                 length, slash ? settings_path : ".");
+    if (device_length < 0 || (size_t)device_length >= sizeof device_path ||
+        uc_device_options_load(device_path)) {
+        uc_log_error("[device-options] cannot load preferences; startup cancelled");
+        return -1;
+    }
     uc_controller_overrides_clear();
     if (written < 0 || (size_t)written >= sizeof override_path) {
         uc_log_warn("controller override path too long; using builtins");
@@ -968,8 +1038,9 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         close(listener);
         return -1;
     }
-    uc_backend_auto_watch(settings.bt_auto && !settings.bt_auto_resume ? UC_AUTO_DESKTOP
-                                                                       : UC_AUTO_OFF);
+    uc_backend_auto_watch((settings.bt_auto || settings.usb_auto) && !settings.bt_auto_resume
+                              ? UC_AUTO_DESKTOP
+                              : UC_AUTO_OFF);
     listening_port = port;
 #ifdef UC_PS5
     uc_launcher_startup(port);
@@ -992,9 +1063,9 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         uc_backend_poll();
         if (uc_backend_suspend()) {
             uc_launcher_cancel();
-            uc_backend_auto_watch(!settings.bt_auto         ? UC_AUTO_OFF
-                                  : settings.bt_auto_resume ? UC_AUTO_RESUME
-                                                            : UC_AUTO_DESKTOP);
+            uc_backend_auto_watch(!(settings.bt_auto || settings.usb_auto) ? UC_AUTO_OFF
+                                  : settings.bt_auto_resume                ? UC_AUTO_RESUME
+                                                                           : UC_AUTO_DESKTOP);
             bt_start_queued = 0;
             usb_start_queued = 0;
             uc_bt_suspend();
@@ -1014,14 +1085,29 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                        !usb_start_queued && !uc_core_active_session() && !enable_pending;
             uc_launcher_poll(millis(), uc_backend_power_state() == 0 && logged_in, idle);
         }
-        if (settings.bt_auto) {
+        if (settings.bt_auto || settings.usb_auto) {
             int idle = !uc_bt_running() && !bt_start_queued && !uc_usb_running() &&
                        !usb_start_queued && !uc_core_active_session() && !enable_pending;
-            if (uc_backend_auto_due(settings.bt_auto_user, idle)) {
-                int rc = settings.bt_auto_resume ? uc_bt_start_system_assigned()
-                                                 : uc_bt_start(settings.bt_auto_user);
-                uc_log_info("[bluetooth-auto] start result=%d user=%d; no automatic retry", rc,
-                            settings.bt_auto_user);
+            int bt_ready = settings.bt_auto && uc_backend_can_start(settings.bt_auto_user);
+            int usb_ready = settings.usb_auto && uc_backend_can_start(settings.usb_auto_user);
+            int32_t target = bt_ready    ? settings.bt_auto_user
+                             : usb_ready ? settings.usb_auto_user
+                                         : -1;
+            /* USB always needs its saved account; only the explicit Bluetooth
+             * resume experiment may start without one. */
+            int eligible = idle && (!settings.bt_auto_resume || settings.bt_auto || usb_ready);
+            if (uc_backend_auto_due(target, eligible)) {
+                if (settings.bt_auto && (settings.bt_auto_resume || bt_ready)) {
+                    int rc = settings.bt_auto_resume ? uc_bt_start_system_assigned()
+                                                     : uc_bt_start(settings.bt_auto_user);
+                    uc_log_info("[bluetooth-auto] start result=%d user=%d; no automatic retry", rc,
+                                settings.bt_auto_user);
+                }
+                if (usb_ready) {
+                    int rc = uc_usb_start(settings.usb_auto_user);
+                    uc_log_info("[usb-auto] start result=%d user=%d; no automatic retry", rc,
+                                settings.usb_auto_user);
+                }
             }
         }
         if (bt_start_queued && millis() >= bt_start_at) {
@@ -1043,6 +1129,15 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             usb_start_queued = 0;
             int rc = uc_usb_start(usb_start_user);
             uc_log_info("[usb] queued start result=%d user=%d", rc, usb_start_user);
+            if (rc == 0 && settings.usb_auto_user != usb_start_user) {
+                Settings next = settings;
+                next.usb_auto_user = usb_start_user;
+                if (!save_settings(&next)) {
+                    settings = next;
+                    uc_log_info("[usb-auto] remembered user=%d", usb_start_user);
+                } else
+                    uc_log_warn("[usb-auto] could not persist user; previous account retained");
+            }
         }
         uc_bt_poll(millis());
         uc_usb_poll(millis());

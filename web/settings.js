@@ -25,6 +25,7 @@ document.addEventListener("alpine:init", () => {
     form: {
       recording_level: "info",
       page_level: "info",
+      usb_auto_start: false,
       bluetooth_auto_start: false,
       bluetooth_auto_trigger: "login",
       rumble: true,
@@ -68,7 +69,17 @@ document.addEventListener("alpine:init", () => {
         : this.t(this.message);
     },
     get saveDisabled() {
-      return !this.current || this.loading || this.saving;
+      return !this.current || this.loading || this.saving || this.autoConflict;
+    },
+    get autoConflict() {
+      return (
+        this.form.bluetooth_auto_trigger === "resume" &&
+        this.form.bluetooth_auto_start &&
+        this.form.usb_auto_start
+      );
+    },
+    get usbAutoNeedsUser() {
+      return this.form.usb_auto_start && !(this.current?.usb_auto_user > 0);
     },
     get savedUser() {
       return this.current?.bluetooth_auto_user > 0
@@ -100,6 +111,9 @@ document.addEventListener("alpine:init", () => {
           typeof s.rumble !== "boolean" ||
           typeof s.swap_ab !== "boolean" ||
           typeof s.bluetooth_auto_start !== "boolean" ||
+          typeof s.usb_auto_start !== "boolean" ||
+          !Number.isInteger(s.usb_auto_user) ||
+          s.usb_auto_user < 0 ||
           !["login", "resume"].includes(s.bluetooth_auto_trigger) ||
           !Number.isInteger(s.bluetooth_auto_user) ||
           s.bluetooth_auto_user < 0 ||
@@ -130,7 +144,7 @@ document.addEventListener("alpine:init", () => {
         key = el.dataset.form;
       if (["recording_level", "page_level", "bluetooth_auto_trigger"].includes(key))
         this.form[key] = el.value;
-      else if (["rumble", "swap_ab", "bluetooth_auto_start"].includes(key))
+      else if (["rumble", "swap_ab", "bluetooth_auto_start", "usb_auto_start"].includes(key))
         this.form[key] = el.checked;
     },
     get formDisabled() {
@@ -152,6 +166,7 @@ document.addEventListener("alpine:init", () => {
           rumble: this.form.rumble,
           swap_ab: this.form.swap_ab,
           bluetooth_auto_start: this.form.bluetooth_auto_start,
+          usb_auto_start: this.form.usb_auto_start,
           bluetooth_auto_trigger: this.form.bluetooth_auto_trigger,
           button_mapping: this.fields.map((f) => Number(f.value)),
         };

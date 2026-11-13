@@ -10,6 +10,9 @@ static const char valid[] = "{\"schema_version\":1,\"devices\":[{\"match\":{\"tr
                             "hid\",\"name\":\"Test pad\",\"mapping\":{\"button1\":\"touchpad\"}}]}";
 int main(void)
 {
+    assert(profile_device_known(PAD_TRANSPORT_CLASSIC, 0x057e, 0x2009));
+    assert(profile_device_known(PAD_TRANSPORT_USB, 0x3537, 0x1041));
+    assert(!profile_device_known(PAD_TRANSPORT_USB, 0x1234, 0x5678));
     assert(profile_ble_allowed(0x045e, 0x0b13));
     assert(!profile_ble_allowed(0x045e, 0x02e0));
     assert(!profile_ble_allowed(0x057e, 0x2009));

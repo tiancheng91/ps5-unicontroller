@@ -188,9 +188,18 @@
               <div class="settings-group">
                 <div class="setting">
                   <div>
-                    <h3 x-label="bluetoothService"></h3>
+                    <div class="service-heading">
+                      <h3 x-label="bluetoothService"></h3>
+                      <span
+                        class="tag service-status"
+                        id="bt-service-state"
+                        role="status"
+                        :data-state="bt.state"
+                        x-text="btStateText"
+                      ></span>
+                    </div>
                     <p x-label="bluetoothServiceHint"></p>
-                    <p class="service-error" x-text="btStatus"></p>
+                    <p class="service-error" x-show="btServiceNote" x-text="btServiceNote"></p>
                   </div>
                   <div class="service-actions" data-focus-region>
                     <button
@@ -209,9 +218,18 @@
                 </div>
                 <div class="setting">
                   <div>
-                    <h3 x-label="usbService"></h3>
+                    <div class="service-heading">
+                      <h3 x-label="usbService"></h3>
+                      <span
+                        class="tag service-status"
+                        id="usb-service-state"
+                        role="status"
+                        :data-state="usb.state"
+                        x-text="usbStateText"
+                      ></span>
+                    </div>
                     <p x-label="usbHint"></p>
-                    <p class="service-error" x-text="usbStatus"></p>
+                    <p class="service-error" x-show="usbServiceNote" x-text="usbServiceNote"></p>
                   </div>
                   <div class="service-actions" data-focus-region>
                     <button
@@ -240,7 +258,7 @@
                     </p>
                   </template>
                 </div>
-                <p class="group-hint" x-label="serviceGate"></p>
+                <p class="group-hint" x-show="showServiceGate" x-label="serviceGate"></p>
               </div>
               <div x-data="settings" id="settings-form">
                 <h2 class="group-title" x-label="defaults"></h2>
@@ -249,7 +267,7 @@
                   <div class="settings-group">
                     <label class="setting"
                       ><span
-                        ><strong x-label="rumble"></strong
+                        ><strong x-label="rumbleMaster"></strong
                         ><span class="setting-hint" x-label="rumbleHint"></span></span
                       ><input
                         class="switch"
@@ -260,7 +278,7 @@
                     /></label>
                     <label class="setting"
                       ><span
-                        ><strong x-label="swap"></strong
+                        ><strong x-label="testSwap"></strong
                         ><span class="setting-hint" x-label="swapHint"></span></span
                       ><input
                         class="switch"
@@ -304,13 +322,26 @@
                     <label class="setting"
                       ><span
                         ><strong x-label="autoEnabled"></strong
-                        ><span class="setting-hint" x-label="autoHint"></span></span
+                        ><span class="setting-hint" x-label="autoBluetoothHint"></span></span
                       ><input
                         class="switch"
                         type="checkbox"
                         :checked="form.bluetooth_auto_start"
                         data-form="bluetooth_auto_start"
                         @change="formChanged" /></label
+                    ><label class="setting"
+                      ><span
+                        ><strong x-label="autoUsbEnabled"></strong>
+                        <span class="setting-hint" x-label="autoUsbHint"></span
+                      ></span>
+                      <input
+                        class="switch"
+                        type="checkbox"
+                        id="usb-auto-start"
+                        :checked="form.usb_auto_start"
+                        data-form="usb_auto_start"
+                        @change="formChanged"
+                      /> </label
                     ><label class="setting"
                       ><span x-label="autoTrigger"></span
                       ><select
@@ -321,6 +352,9 @@
                         <option value="login" x-label="login"></option>
                         <option value="resume" x-label="resume"></option></select
                     ></label>
+                    <p class="group-hint" x-label="autoHint"></p>
+                    <p class="group-hint" x-show="usbAutoNeedsUser" x-label="usbAutoNeedsUser"></p>
+                    <p class="error" x-show="autoConflict" x-label="autoConflict"></p>
                   </div>
                   <h2 class="group-title" x-label="diagnostics"></h2>
                   <div class="settings-group">
@@ -389,30 +423,10 @@
                       <option value="red" x-label="red"></option>
                       <option value="orange" x-label="orange"></option>
                       <option value="blue" x-label="blue"></option>
-                      <option value="green" x-label="green"></option></select></label
-                  ><label class="setting"
-                    ><span x-label="size"></span
-                    ><select
-                      id="ui-size"
-                      :value="$store.ui.size"
-                      data-preference="size"
-                      @change="preferenceChanged"
-                    >
-                      <option value="normal" x-label="normal"></option>
-                      <option value="tv" x-label="tv"></option></select></label
-                  ><label class="setting"
-                    ><span x-label="navigation"></span
-                    ><select
-                      id="ui-navigation"
-                      :value="$store.ui.navigation"
-                      data-preference="navigation"
-                      @change="preferenceChanged"
-                    >
-                      <option value="native" x-label="native"></option>
-                      <option value="arrows" x-label="arrows"></option></select
+                      <option value="green" x-label="green"></option></select
                   ></label>
                   <p class="group-hint" x-label="appearanceHint"></p>
-                  <p class="group-hint" x-label="navHint"></p>
+                  <p class="group-hint" x-show="$store.ui.consoleBrowser" x-label="navHint"></p>
                 </div>
                 <h2 class="group-title" x-label="launcher"></h2>
                 <div class="settings-group">
@@ -547,6 +561,38 @@
             </dl>
             <p x-show="detailDevice.system_assignment" x-label="systemChoiceHint"></p>
             <p class="error" x-show="detailMissing" x-label="deviceGone"></p>
+            <fieldset :disabled="deviceOptionsDisabled" class="settings-group">
+              <label class="setting">
+                <span
+                  ><strong x-label="rumble"></strong>
+                  <span class="tag" x-show="deviceRumbleExperimental" x-label="experimental"></span>
+                  <span class="setting-hint" x-text="deviceRumbleHint"></span
+                ></span>
+                <input
+                  class="switch"
+                  type="checkbox"
+                  id="device-rumble"
+                  :checked="detailDevice.rumble"
+                  data-option="rumble"
+                  @change="changeDeviceOption"
+                />
+              </label>
+              <label class="setting">
+                <span
+                  ><strong x-label="swap"></strong
+                  ><span class="setting-hint" x-label="swapHint"></span
+                ></span>
+                <input
+                  class="switch"
+                  type="checkbox"
+                  id="device-swap"
+                  :checked="detailDevice.swap_ab"
+                  data-option="swap_ab"
+                  @change="changeDeviceOption"
+                />
+              </label>
+              <p class="muted" x-label="deviceOptionsHint"></p>
+            </fieldset>
             <details class="advanced" x-show="detailDevice.assignable">
               <summary x-label="advancedAssignment"></summary>
               <p x-label="assignmentHint"></p>

@@ -1,6 +1,8 @@
 #include "../../src/drivers/usb.h"
 #include "../../src/drivers/usb/protocol.h"
 #include "../../src/core/uc_core.h"
+#include "../../src/core/device_options.h"
+#include <unistd.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,10 +16,11 @@ static struct {
     int user, active, pending, submits, refreshes, disable_error;
 } sessions[4];
 static uint64_t next_session = 1;
-static int create_error, hid_kind, hid_configured;
+static int create_error, hid_kind, hid_configured, known_device = 1;
 static int gate = 1, wait_creation, init_error, invalid_report, lease_error, feedback, rumble_calls,
            stops;
 static uint8_t desired_strong, desired_weak;
+static uint32_t expected_buttons[5] = {PAD_CROSS, PAD_CROSS, PAD_CROSS, PAD_CROSS, PAD_CROSS};
 static int find(uint64_t id)
 {
     for (int i = 0; i < 4; i++)
@@ -92,7 +95,8 @@ int uc_core_submit(uint64_t id, uint64_t sequence, uint32_t buttons, const int16
     (void)now;
     int i = find(id);
     assert(i >= 0 && sessions[i].active && sequence > sessions[i].sequence);
-    assert(buttons == PAD_CROSS && axes[0] == 32767 && triggers[0] == 65535);
+    assert(buttons == expected_buttons[sessions[i].user] && axes[0] == 32767 &&
+           triggers[0] == 65535);
     sessions[i].sequence = sequence;
     sessions[i].submits++;
     return 0;
@@ -122,6 +126,13 @@ int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
     (void)vid;
     (void)pid;
     return 0;
+}
+int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid)
+{
+    (void)transport;
+    (void)vid;
+    (void)pid;
+    return known_device;
 }
 const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid, uint16_t pid,
                                            const char *profile)
@@ -277,6 +288,7 @@ int main(void)
     uc_usb_set_log_level(0);
     setup(1);
     hid_kind = 1;
+    known_device = 0;
     int configurations_before = hid_configured;
     assert(!uc_usb_start(1));
     uc_usb_poll(0);
@@ -286,15 +298,18 @@ int main(void)
     assert(hid_configured == configurations_before + 1 && by_user(1) >= 0);
     char hid_status[8192];
     assert(uc_usb_status_json(hid_status, sizeof hid_status) &&
-           strstr(hid_status, "generic-hid-usb"));
+           strstr(hid_status, "generic-hid-usb") &&
+           strstr(hid_status, "\"rumble_available\":false") &&
+           strstr(hid_status, "\"rumble\":false") && strstr(hid_status, "\"known_device\":false"));
     ports[0].alive = 0;
     uc_usb_poll(101);
-    assert(!sessions[by_user(1)].active);
+    assert(by_user(1) < 0 || !sessions[by_user(1)].active);
     ports[0].alive = 1;
     ports[0].reports = 1;
     uc_usb_poll(202);
     assert(hid_configured == configurations_before + 2 && sessions[by_user(1)].active);
     finish();
+    known_device = 1;
     setup(1);
     ports[0].reject = 1;
     assert(!uc_usb_start(1));
@@ -472,6 +487,57 @@ int main(void)
     uc_usb_poll(11010);
     assert(by_user(1) < 0 && !uc_usb_running());
     finish();
+    /* Same-model physical devices keep independent layout and motor options. */
+    char options_path[128];
+    snprintf(options_path, sizeof options_path, "/tmp/uc-usb-options-%ld.json", (long)getpid());
+    unlink(options_path);
+    assert(!uc_device_options_load(options_path));
+    setup(2);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(20000);
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 2));
+    ports[1].reports = 1;
+    uc_usb_poll(20010);
+    const char *key = "usb:/dev/ugen1.1:045E:028E";
+    assert(uc_usb_device_options_match(key, sessions[by_user(1)].id));
+    assert(!uc_usb_device_options_match(key, sessions[by_user(2)].id));
+    assert(!uc_device_options_save(key, (uc_device_options){0, 1}));
+    expected_buttons[1] = PAD_CIRCLE;
+    uc_usb_device_options_changed();
+    feedback = 1;
+    r = rumble_calls;
+    before = sessions[by_user(1)].submits;
+    uc_usb_poll(20020);
+    assert(sessions[by_user(1)].submits == before + 1 && rumble_calls == r + 1);
+    assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"swap_ab\":true"));
+    finish();
+    assert(!uc_usb_device_options_match(key, 0));
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(20100); /* Reconnect keeps the saved flip. */
+    assert(sessions[by_user(1)].submits > 0);
+    finish();
+    assert(!unlink(options_path));
+    assert(!uc_device_options_load(options_path));
+    setup(1);
+    known_device = 0;
+    expected_buttons[1] = PAD_CROSS;
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(20200);
+    feedback = 1;
+    r = rumble_calls;
+    uc_usb_poll(20210);
+    assert(rumble_calls == r); /* Unknown XInput identities are opt-in too. */
+    assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"known_device\":false") &&
+           strstr(json, "\"rumble\":false"));
+    assert(!uc_device_options_save(key, (uc_device_options){1, 0}));
+    uc_usb_device_options_changed();
+    uc_usb_poll(20220);
+    assert(rumble_calls == r + 1);
+    finish();
+    assert(!unlink(options_path));
     assert(!uc_usb_set_transport(NULL));
     assert(uc_usb_start(1) < 0);
     puts("USB multi-source manager checks passed");

@@ -16,4 +16,6 @@ size_t uc_usb_diagnostics_json(char *buffer, size_t capacity);
 /* Test injection only while fully stopped; copied transport table/context borrowed. */
 int uc_usb_set_transport(const uc_usb_transport *transport);
 int uc_usb_set_transports(const uc_usb_transport *transports, size_t count);
+int uc_usb_device_options_match(const char *key, uint64_t session);
+void uc_usb_device_options_changed(void);
 #endif

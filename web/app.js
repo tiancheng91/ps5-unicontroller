@@ -30,6 +30,7 @@ document.addEventListener("alpine:init", () => {
     level: "info",
     paused: false,
     ready: false,
+    deviceBusy: false,
     btBusy: false,
     usbBusy: false,
     stopping: false,
@@ -85,7 +86,7 @@ document.addEventListener("alpine:init", () => {
       return !!(this.session.enabled || this.session.session_id || this.session.pending);
     },
     get busy() {
-      return this.btBusy || this.usbBusy || this.stopping;
+      return this.btBusy || this.usbBusy || this.stopping || this.deviceBusy;
     },
     get btStartDisabled() {
       return !this.ready || !this.stableUser || this.busy || this.btRunning || this.virtualRunning;
@@ -177,6 +178,23 @@ document.addEventListener("alpine:init", () => {
     get assignmentDisabled() {
       return !this.ready || !this.stableUser || this.busy;
     },
+    get btStateText() {
+      return this.t(this.bt.state);
+    },
+    get usbStateText() {
+      return this.t(this.usb.state);
+    },
+    get btServiceNote() {
+      return [this.bt.system_assignment ? this.t("systemChoice") : "", this.bt.reason || ""]
+        .filter(Boolean)
+        .join(" · ");
+    },
+    get usbServiceNote() {
+      return this.usb.reason || "";
+    },
+    get showServiceGate() {
+      return !this.stableUser;
+    },
     get btStatus() {
       return (
         this.t(this.bt.state) +
@@ -246,6 +264,10 @@ document.addEventListener("alpine:init", () => {
         assignable: !wireless || !this.bt.system_assignment,
         wireless,
         system_assignment: !!d.system_assignment,
+        known_device: !!d.known_device,
+        rumble: !!d.rumble,
+        swap_ab: !!d.swap_ab,
+        settings_key: d.settings_key || "",
         name: d.model || d.profile || "HID",
         identity: wireless ? d.address : d.node,
         detail: d.vid + ":" + d.pid + " · " + (d.profile || "HID"),
@@ -318,11 +340,53 @@ document.addEventListener("alpine:init", () => {
           batteryText: "—",
           assignable: false,
           system_assignment: false,
+          known_device: false,
+          rumble: false,
+          swap_ab: false,
+          settings_key: "",
         }
       );
     },
     get detailMissing() {
       return !this.devices.some((d) => d.key === this.selectedDeviceKey);
+    },
+    get deviceOptionsDisabled() {
+      return this.busy || this.detailMissing || !this.detailDevice.settings_key;
+    },
+    get deviceRumbleExperimental() {
+      return !this.detailMissing && !this.detailDevice.known_device;
+    },
+    get deviceRumbleHint() {
+      if (!this.detailDevice.known_device) return this.t("experimentalRumbleHint");
+      return this.t(
+        this.detailDevice.rumble_available ? "deviceRumbleHint" : "rumbleUnavailableHint",
+      );
+    },
+    async changeDeviceOption(event) {
+      const d = this.detailDevice;
+      const field = event.currentTarget.dataset.option;
+      if (this.deviceOptionsDisabled || !["rumble", "swap_ab"].includes(field)) return;
+      const input = event.currentTarget;
+      const body = {
+        key: d.settings_key,
+        session_id: d.session_id || 0,
+        rumble: !!d.rumble,
+        swap_ab: !!d.swap_ab,
+      };
+      body[field] = input.checked;
+      this.deviceBusy = true;
+      ++this.btEpoch;
+      ++this.usbEpoch;
+      try {
+        await UCAPI.request("/device-settings", "POST", body);
+        this.notice("deviceSettingsSaved");
+      } catch (e) {
+        input.checked = !!d[field];
+        this.notice("operationFailed", { error: e.message }, true);
+      } finally {
+        this.deviceBusy = false;
+        await this.refresh();
+      }
     },
     get detailAssignmentDisabled() {
       return this.assignmentDisabled || this.detailMissing;

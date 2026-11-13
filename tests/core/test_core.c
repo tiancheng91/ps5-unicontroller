@@ -120,6 +120,12 @@ int main(void)
     assert(uc_core_logs(logs, 8, UC_LOG_TRACE) == 0 && logs[0] == 0);
     assert(uc_core_logs(logs, sizeof logs, UC_LOG_OFF) > 0 && strstr(logs, "\"entries\":[]"));
     assert(uc_core_disable() == 0);
+    /* Physical adapters have already applied their own device layout. Global
+     * test-controller swapping must not flip it a second time before mapping. */
+    next = 0;
+    assert(uc_core_enable_physical(1, 1150, &next) == 0);
+    assert(uc_core_submit(next, 1, 1u << 13, zero, tz, 1151) == 0 && last_buttons == (1u << 7));
+    assert(uc_core_disable() == 0);
     assert(uc_core_settings(UC_LOG_OFF, 0, mapping) == 0);
     assert(uc_core_logs(logs, sizeof logs, UC_LOG_TRACE) > 0);
     char before[32768];

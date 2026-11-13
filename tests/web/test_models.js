@@ -91,6 +91,8 @@ const assert = require("assert"),
       bluetooth_auto_start: false,
       bluetooth_auto_trigger: "login",
       bluetooth_auto_user: 2,
+      usb_auto_start: false,
+      usb_auto_user: 1,
       button_mapping: Array.from({ length: 32 }, (_, i) => i),
     };
   s.responder((route, method, body) =>
@@ -103,11 +105,25 @@ const assert = require("assert"),
   await s.model.save();
   const saved = s.calls.find((c) => c.method === "POST").body;
   assert(saved.swap_ab && saved.bluetooth_auto_user === 2 && saved.button_mapping[14] === 11);
+  s.model.form.usb_auto_start = true;
+  s.model.form.bluetooth_auto_start = true;
+  s.model.form.bluetooth_auto_trigger = "resume";
+  assert(s.model.autoConflict && s.model.saveDisabled);
+  const saveCount = s.calls.filter((c) => c.method === "POST").length;
+  await s.model.save();
+  assert.equal(s.calls.filter((c) => c.method === "POST").length, saveCount);
+  s.model.form.bluetooth_auto_trigger = "login";
+  assert(!s.model.autoConflict && !s.model.saveDisabled);
+  await s.model.save();
+  assert(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_start);
+  assert.equal(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_user, 1);
+
+  const lastSaved = s.model.current;
   s.responder(() => {
     throw Error("disk_full");
   });
   await s.model.save();
-  assert(s.model.statusText.includes("disk_full") && s.model.current === saved);
+  assert(s.model.statusText.includes("disk_full") && s.model.current === lastSaved);
   s.ui.lang = "en";
   assert(s.model.statusText.startsWith("Operation not confirmed"));
   console.log(

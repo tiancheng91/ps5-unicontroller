@@ -374,7 +374,7 @@ static int read_log(int identify)
                         int previous_home = home_gate.home;
                         uc_bt_auto_line(&home_gate, line);
                         if (previous_home != home_gate.home)
-                            uc_log_info("[bluetooth-auto] fresh desktop focus=%d", home_gate.home);
+                            uc_log_info("[input-auto] fresh desktop focus=%d", home_gate.home);
                     }
                     if (identify)
                         candidate(line);
@@ -400,7 +400,7 @@ void uc_backend_auto_watch(int mode)
     home_waiting = mode != UC_AUTO_OFF;
     home_foreground = -1;
     uc_bt_auto_cancel(&home_gate);
-    uc_log_info("[bluetooth-auto] mode=%d (%s)", mode,
+    uc_log_info("[input-auto] mode=%d (%s)", mode,
                 mode == UC_AUTO_RESUME
                     ? "waiting for stable resume; system user-selection experiment"
                 : mode == UC_AUTO_DESKTOP ? "waiting for fresh desktop event"
@@ -426,7 +426,7 @@ static void poll_home(uint64_t now)
             home_waiting = 0;
             uc_bt_auto_arm(&home_gate, now);
             home_gate.fresh = home_gate.home = 1; /* Power event; no log dependency. */
-            uc_log_info("[bluetooth-auto] resume observed; waiting 5000ms; no user required");
+            uc_log_info("[input-auto] resume observed; waiting 5000ms; no user required");
         }
         return;
     }
@@ -436,15 +436,15 @@ static void poll_home(uint64_t now)
         home_connect_at = now;
         close_log();
         if (open_log()) {
-            uc_log_warn("[bluetooth-auto] log source unavailable; manual start required");
+            uc_log_warn("[input-auto] log source unavailable; manual start required");
             uc_bt_auto_cancel(&home_gate);
             return;
         }
         home_owns_log = 1;
-        uc_log_info("[bluetooth-auto] observing desktop for 120000ms; draining history");
+        uc_log_info("[input-auto] observing desktop for 120000ms; draining history");
     }
     if (now < home_gate.last || now >= home_gate.until) {
-        uc_log_warn("[bluetooth-auto] observation expired; manual start required");
+        uc_log_warn("[input-auto] observation expired; manual start required");
         uc_backend_auto_watch(0);
         return;
     }
@@ -458,7 +458,7 @@ static void poll_home(uint64_t now)
                 now - home_connect_at < 1000)
                 return;
             if (raw_log_open()) {
-                uc_log_error("[bluetooth-auto] log connection failed; manual start required");
+                uc_log_error("[input-auto] log connection failed; manual start required");
                 uc_backend_auto_watch(0);
                 return;
             }
@@ -469,13 +469,13 @@ static void poll_home(uint64_t now)
     int drained = read_log(0);
     phase = saved_phase; /* Observation failures do not corrupt output ownership. */
     if (fd < 0) {
-        uc_log_warn("[bluetooth-auto] log stream lost; manual start required");
+        uc_log_warn("[input-auto] log stream lost; manual start required");
         uc_backend_auto_watch(0);
     } else if (drained && !home_gate.fresh) {
         used = 0;
         discard_line = 0;
         home_gate.fresh = 1;
-        uc_log_info("[bluetooth-auto] history drained; awaiting new desktop focus");
+        uc_log_info("[input-auto] history drained; awaiting new desktop focus");
     }
 }
 int uc_backend_auto_due(int32_t target_user, int idle)
@@ -488,8 +488,7 @@ int uc_backend_auto_due(int32_t target_user, int idle)
         if (due || (!home_waiting && !home_gate.armed)) {
             uc_backend_auto_watch(UC_AUTO_OFF);
             if (due)
-                uc_log_info(
-                    "[bluetooth-auto] resume delay complete; system-choice experimental start");
+                uc_log_info("[input-auto] resume delay complete; system-choice experimental start");
         }
         return due && uc_backend_transport_ready();
     }
@@ -505,15 +504,14 @@ int uc_backend_auto_due(int32_t target_user, int idle)
     int armed = home_gate.armed;
     int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
     if (!timing && home_gate.timing)
-        uc_log_info(
-            "[bluetooth-auto] desktop and users ready; waiting 5000ms foreground=%d target=%d",
-            foreground, target_user);
+        uc_log_info("[input-auto] desktop and users ready; waiting 5000ms foreground=%d target=%d",
+                    foreground, target_user);
     else if (timing && !home_gate.timing && !due && home_gate.armed)
-        uc_log_warn("[bluetooth-auto] readiness lost; delay cancelled");
+        uc_log_warn("[input-auto] readiness lost; delay cancelled");
     if (due || (armed && !home_gate.armed)) {
         uc_backend_auto_watch(0);
         if (due)
-            uc_log_info("[bluetooth-auto] desktop delay complete; starting once");
+            uc_log_info("[input-auto] desktop delay complete; starting once");
     }
     return due;
 }

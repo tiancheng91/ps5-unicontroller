@@ -1,3 +1,4 @@
+#include "../version.h"
 #include "../logging.h"
 #include "uc_backend.h"
 #include "../drivers/bt.h"
@@ -60,9 +61,9 @@ int main(void)
         close(instance_fd);
         return 1;
     }
-    uc_log_info(
-        "UniController 0.1.0: starting time=%lld pid=%d; physical inputs require manual start",
-        (long long)time(NULL), (int)getpid());
+    uc_log_info("UniController " UC_VERSION
+                ": starting time=%lld pid=%d; physical inputs follow startup preferences",
+                (long long)time(NULL), (int)getpid());
     if (atexit(shutdown_payload) != 0) {
         close(instance_fd);
         return 1;

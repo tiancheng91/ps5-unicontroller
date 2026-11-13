@@ -1,6 +1,7 @@
 #include "../logging.h"
 /* Per-device physical sessions; only the first source inherits the start account. */
 #include "bt.h"
+#include "../core/device_options.h"
 #include "common/log.h"
 #include "protocols/profiles.h"
 #include "../core/uc_core.h"
@@ -18,6 +19,9 @@
 extern int uc_backend_can_start(int32_t user);
 typedef struct {
     int connected, valid;
+    char options_key[UC_DEVICE_KEY_MAX];
+    int known;
+    uc_device_options options;
     pad_transport transport;
     uint16_t vid, pid;
     unsigned char addr[6];
@@ -112,7 +116,9 @@ static int submit_latest(int slot)
     const pad_state *p = &s->latest;
     int16_t axes[4] = {axis(p->lx), axis(p->ly), axis(p->rx), axis(p->ry)};
     uint16_t triggers[2] = {(uint16_t)(p->l2 * 257u), (uint16_t)(p->r2 * 257u)};
-    if (uc_core_submit(s->session, ++s->sequence, p->buttons, axes, triggers, bt.now)) {
+    if (uc_core_submit(s->session, ++s->sequence,
+                       uc_device_options_buttons(p->buttons, s->options.swap_ab), axes, triggers,
+                       bt.now)) {
         s->closing = 1;
         bt.error = "input_submit_failed";
         uc_log_error("[bluetooth] %s", bt.error);
@@ -143,6 +149,14 @@ static void on_connect(void *unused, int slot, const pad_info *info)
     s->pid = info->pid;
     memcpy(s->addr, info->addr, 6);
     snprintf(s->profile, sizeof(s->profile), "%s", info->profile ? info->profile : "unknown");
+    snprintf(s->options_key, sizeof s->options_key, "%s:%02X:%02X:%02X:%02X:%02X:%02X:%04X:%04X",
+             s->transport == PAD_TRANSPORT_BLE ? "ble" : "classic", s->addr[5], s->addr[4],
+             s->addr[3], s->addr[2], s->addr[1], s->addr[0], s->vid, s->pid);
+    s->known = profile_device_known(s->transport, s->vid, s->pid);
+    s->options = uc_device_options_get(s->options_key, s->known);
+    s->notice_pending = rumble_enabled && s->options.rumble;
+    uc_log_info("[bluetooth] device options key=%s known=%d rumble=%d swap_ab=%d", s->options_key,
+                s->known, s->options.rumble, s->options.swap_ab);
     log_code("physical_connected");
 }
 static void on_state(void *unused, int slot, const pad_state *state)
@@ -329,7 +343,7 @@ static void poll_connection_notice(uint64_t now)
         Slot *s = &bt.slots[slot];
         if (!s->connected || !s->notice_pending)
             continue;
-        if (now < s->connected_at || !rumble_enabled) {
+        if (now < s->connected_at || !rumble_enabled || !s->options.rumble) {
             s->notice_pending = 0;
             continue;
         }
@@ -463,7 +477,7 @@ void uc_bt_poll(uint64_t now)
             continue;
         }
         (void)submit_latest(slot);
-        if (rumble_enabled && own_output(s)) {
+        if (rumble_enabled && s->options.rumble && own_output(s)) {
             uint8_t strong = 0, weak = 0;
             int sample = uc_core_read_rumble(s->session, now, &strong, &weak);
             if (sample == 1)
@@ -648,6 +662,11 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
         ADD(",\"system_assignment\":%s,\"output_active\":%s",
             bt.system_assignment ? "true" : "false", own_output(s) ? "true" : "false");
         ADD(",\"output_failed\":%s", s->failed ? "true" : "false");
+        ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s,\"rumble_"
+            "available\":%s",
+            s->options_key, s->options.rumble ? "true" : "false",
+            s->options.swap_ab ? "true" : "false", s->known ? "true" : "false",
+            host_output_ready(bt.host, i) ? "true" : "false");
         ADD(",\"charging\":%s}", s->valid && s->latest.charging ? "true" : "false");
     }
     ADD("],\"discovered\":[");
@@ -755,3 +774,30 @@ size_t uc_bt_diagnostics_json(char *buffer, size_t capacity)
 }
 
 #undef ADD
+
+int uc_bt_device_options_match(const char *key, uint64_t session)
+{
+    for (int i = 0; i < HOST_MAX_PADS; ++i) {
+        Slot *s = &bt.slots[i];
+        if (s->connected && s->session == session && !strcmp(s->options_key, key))
+            return 1;
+    }
+    return 0;
+}
+void uc_bt_device_options_changed(void)
+{
+    for (int i = 0; i < HOST_MAX_PADS; ++i) {
+        Slot *s = &bt.slots[i];
+        if (!s->connected)
+            continue;
+        uc_device_options next = uc_device_options_get(s->options_key, s->known);
+        if (s->options.rumble && !next.rumble) {
+            s->notice_pending = 0;
+            if (bt.host)
+                (void)host_rumble_stop(bt.host, i);
+        }
+        if (s->options.swap_ab != next.swap_ab)
+            s->submitted = 0;
+        s->options = next;
+    }
+}

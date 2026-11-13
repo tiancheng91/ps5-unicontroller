@@ -1,5 +1,6 @@
 #include "../logging.h"
 #include "usb.h"
+#include "../core/device_options.h"
 #include "usb/protocol.h"
 #include "../core/uc_core.h"
 #include "../ps5/uc_backend.h"
@@ -15,6 +16,9 @@ typedef struct {
     uc_usb_protocol protocol;
     pad_state latest;
     int attached, valid, pending, cleanup, health_valid, transport_live, native_lease;
+    char options_key[UC_DEVICE_KEY_MAX];
+    int known;
+    uc_device_options options;
     int scanned, assigning, failed;
     int32_t user, next_user;
     uint64_t session, sequence, frames, submitted, latest_at, health_at, last_scan;
@@ -242,7 +246,9 @@ static int submit(usb_slot *s, uint64_t now)
     pad_state *p = &s->latest;
     int16_t axes[4] = {axis(p->lx), axis(p->ly), axis(p->rx), axis(p->ry)};
     uint16_t triggers[2] = {(uint16_t)(p->l2 * 257u), (uint16_t)(p->r2 * 257u)};
-    if (uc_core_submit(s->session, ++s->sequence, p->buttons, axes, triggers, now))
+    if (uc_core_submit(s->session, ++s->sequence,
+                       uc_device_options_buttons(p->buttons, s->options.swap_ab), axes, triggers,
+                       now))
         return -1;
     s->submitted = s->frames;
     return 0;
@@ -344,6 +350,10 @@ static void poll_slot(unsigned index, uint64_t now)
             if (c < 32 || c >= 127 || c == '"' || c == '\\')
                 s->device.node[i] = '_';
         }
+        snprintf(s->options_key, sizeof s->options_key, "usb:%s:%04X:%04X", s->device.node,
+                 s->device.vid, s->device.pid);
+        s->known = profile_device_known(PAD_TRANSPORT_USB, device.vid, device.pid);
+        s->options = uc_device_options_get(s->options_key, s->known);
         s->attached = 1;
         if (device.kind != UC_USB_XINPUT && device.kind != UC_USB_GENERIC_HID) {
             fail_slot(index, "unsupported_device", 0, now);
@@ -358,6 +368,8 @@ static void poll_slot(unsigned index, uint64_t now)
             fail_slot(index, "hid_descriptor_unsupported", 0, now);
             return;
         }
+        uc_log_info("[usb] device options key=%s known=%d rumble=%d swap_ab=%d", s->options_key,
+                    s->known, s->options.rumble, s->options.swap_ab);
         log_code(3, index, "device_opened");
     }
     if (!s->health_valid || now - s->health_at >= 100) {
@@ -369,7 +381,7 @@ static void poll_slot(unsigned index, uint64_t now)
         s->health_at = now;
         s->health_valid = 1;
     }
-    if (active(s) && usb.rumble && s->device.kind == UC_USB_XINPUT) {
+    if (active(s) && usb.rumble && s->options.rumble && s->device.kind == UC_USB_XINPUT) {
         uint8_t strong = 0, weak = 0;
         int feedback = uc_core_read_rumble(s->session, now, &strong, &weak);
         if (feedback > 0)
@@ -651,8 +663,13 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             comma++ ? "," : "", i, s->device.node, s->device.vid, s->device.pid, profile, escaped,
             s->user, s->attached ? "true" : "false", (unsigned long long)s->frames,
             active(s) ? "true" : "false", s->pending ? "true" : "false",
-            usb.rumble && s->protocol.ready && !s->protocol.rumble_failed ? "true" : "false",
+            s->device.kind == UC_USB_XINPUT && s->protocol.ready && !s->protocol.rumble_failed
+                ? "true"
+                : "false",
             (unsigned long long)s->session, s->reason ? s->reason : "");
+        ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s",
+            s->options_key, s->options.rumble ? "true" : "false",
+            s->options.swap_ab ? "true" : "false", s->known ? "true" : "false");
         if (diagnostic_fields(buffer, capacity, &used, &s->device, 0)) {
             buffer[0] = 0;
             return 0;
@@ -674,4 +691,29 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
     ADD("]}");
 #undef ADD
     return used;
+}
+
+int uc_usb_device_options_match(const char *key, uint64_t session)
+{
+    for (unsigned i = 0; i < usb.count; ++i) {
+        usb_slot *s = &usb.slots[i];
+        if (s->attached && s->session == session && !strcmp(s->options_key, key))
+            return 1;
+    }
+    return 0;
+}
+void uc_usb_device_options_changed(void)
+{
+    for (unsigned i = 0; i < usb.count; ++i) {
+        usb_slot *s = &usb.slots[i];
+        if (!s->attached)
+            continue;
+        uc_device_options next = uc_device_options_get(s->options_key, s->known);
+        if (s->options.rumble && !next.rumble)
+            stop_motors(s, usb.clock);
+        if (s->options.swap_ab != next.swap_ab && usb.clock >= s->latest_at &&
+            usb.clock - s->latest_at < 500)
+            s->submitted = 0;
+        s->options = next;
+    }
 }

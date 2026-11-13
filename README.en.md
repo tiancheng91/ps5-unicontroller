@@ -12,13 +12,15 @@
 
 [Download test builds](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [Report an issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [Hardware test checklist](docs/test-checklist.md) (Chinese)
 
+[Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) · [Changelog](CHANGELOG.md)
+
 ## Quick start
 
 ### 1. Load the payload
 
 You need a **PS5 capable of loading homebrew ELF payloads**, Payload Manager or another compatible loader, and a phone or computer on the same LAN. A complete firmware compatibility matrix is not available. Unmodified retail systems are not supported.
 
-1. Choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
+1. Download versioned files from [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases). If no release is available or you need newer changes, choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
 2. Run `unicontroller.elf` using your loader. The artifact includes `build-info.txt` and a SHA256 checksum.
 3. Open `http://<PS5-IP>:7456/`. If the port is busy, try **7457**; the startup log records the actual port.
 
@@ -75,9 +77,9 @@ Settings also includes rumble and log levels. Stop input sources before making c
 
 ### Rest mode and reconnection
 
-Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. Startup is manual by default, and USB does not restart automatically.
+Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. Startup is manual by default; Bluetooth and USB each have an optional automatic-start switch.
 
-Optional Bluetooth automatic startup offers two triggers, both delayed by **five seconds**:
+Bluetooth and USB automatic-start switches share two triggers, both delayed by **five seconds**:
 
 | Trigger                                  | Behavior                                                                                                                                                                   |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -85,6 +87,8 @@ Optional Bluetooth automatic startup offers two triggers, both delayed by **five
 | After resume (experimental)              | Start without waiting for login; after a third-party controller connects, create an application-unbound virtual controller and inject input to test system user selection. |
 
 The experiment permits one input source, ignores the saved account and lets you press PS/Home to choose a user on PS5. **User selection and game input still require hardware validation.** “System binding unverified” is not a success indicator. This mode does not start immediately when settings are saved or the payload loads, and it cannot wake the console with a third-party controller. Use the console power button for this test and keep an original controller available.
+
+USB must first be started manually to remember its account, which must be signed in for automatic startup. Resume mode permits only Bluetooth or USB; after-login mode supports both.
 
 Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 
@@ -128,3 +132,7 @@ GitHub Actions uses a pinned PS5 SDK; local Docker is not required. Optional loc
 ## License
 
 Licensed under [GNU GPLv3](LICENSE). Third-party sources and licensing requirements are documented in [NOTICE](NOTICE).
+
+### Maintenance and releases
+
+Maintain user-facing changes in [CHANGELOG.md](CHANGELOG.md). Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)

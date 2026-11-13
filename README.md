@@ -10,7 +10,7 @@
 
 > **开发测试阶段**：协议适配与自动化构建已接入，具体型号、固件、游戏及休眠共存仍需实机验证。“Make Any Controller Work on PS5”是项目目标，不是全设备兼容承诺。首次使用请保留原装手柄备用，并关闭自动启动。
 
-[下载测试构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
+[下载版本](https://github.com/tiancheng91/ps5-unicontroller/releases) · [更新日志](CHANGELOG.md) · [下载测试构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
 
 ## 快速开始
 
@@ -18,7 +18,7 @@
 
 你需要一台**可以加载自制 ELF payload 的 PS5**、Payload Manager 或其他兼容加载器，以及同一局域网的手机或电脑。目前没有完整的固件兼容矩阵，也不适用于未修改的零售系统。
 
-1. 在 [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) 中选择目标提交的成功构建，下载并解压 **UniController-PS5** 产物。下载可能需要登录 GitHub。
+1. 优先从 [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) 下载版本文件；尚无发布版或需要测试最新修改时，在 [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) 中选择目标提交的成功构建，下载并解压 **UniController-PS5** 产物。下载可能需要登录 GitHub。
 2. 用加载器运行其中的 `unicontroller.elf`；`build-info.txt` 记录构建版本，SHA256 文件用于校验。
 3. 在浏览器访问 `http://<PS5-IP>:7456/`。如果端口占用，尝试 **7457**，以启动日志为准。
 
@@ -75,9 +75,9 @@ Switch 协议默认按位置映射：B（下）→×、A（右）→○、Y（�
 
 ### 休眠与回连
 
-休眠时会停止蓝牙/USB、释放本应用的虚拟手柄，**保留蓝牙配对记录**。恢复后重新连接即可，通常不必重新配对。默认需要从网页手动启动；USB 不自动恢复。
+休眠时会停止蓝牙/USB、释放本应用的虚拟手柄，**保留蓝牙配对记录**。恢复后重新连接即可，通常不必重新配对。默认需要从网页手动启动；可分别开启蓝牙或 USB 自动启动。
 
-可在设置中开启蓝牙自动启动，两种时机均延迟 **5 秒**：
+可在设置中分别开启蓝牙、USB 自动启动，共用启动时机，均延迟 **5 秒**：
 
 | 时机                   | 行为                                                                                                     |
 | ---------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -85,6 +85,8 @@ Switch 协议默认按位置映射：B（下）→×、A（右）→○、Y（�
 | 休眠恢复后（实验）     | 不等待账号登录；连接第三方手柄后，创建未由应用绑定的虚拟手柄并注入按键，用于验证系统用户选择。           |
 
 实验模式仅允许一只输入源，忽略保存的账号，由你在 PS5 上按 PS/Home 选择用户。**是否能完成用户选择并控制游戏仍待实机验证**；页面的“系统绑定未确认”不是成功提示。它不会在保存设置或加载程序时立即启动，也不支持第三方手柄唤醒主机。测试时用主机电源按钮恢复，并保留原装手柄备用。
+
+USB 需先手动成功启动一次以记住账号，自动启动时该账号必须已登录。恢复实验下只能选择蓝牙或 USB 一种，登录桌面模式可以同时开启。
 
 每轮自动启动只尝试一次。没有触发、超时或失败时可改用手动启动。[完整恢复逻辑](docs/bluetooth.md#可选自动启动) · [实验验证步骤](docs/test-checklist.md)
 
@@ -128,3 +130,7 @@ PS5 构建由 GitHub Actions 使用固定版本 SDK 完成，无需本地 Docker
 ## 许可
 
 项目采用 [GNU GPLv3](LICENSE)。第三方代码来源与许可要求见 [NOTICE](NOTICE)。
+
+### 维护与发布
+
+变更记录维护在 [CHANGELOG.md](CHANGELOG.md)。发布时推送 `v0.1.0` 这类版本标签；`v0.1.0-beta.1` 会标记为预览版。测试与交叉构建全部通过后自动发布，安装文件仍为 `unicontroller.elf`。[发布流程与重试说明](docs/releasing.md)
