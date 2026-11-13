@@ -14,20 +14,11 @@ UniController 在 HTTP 成功监听后只做一次只读安装检查，使用独
 
 API：`GET /api/v1/launcher` 查询本进程状态及端口；`POST` 强制重试安装；`DELETE` 移除。写请求沿用HTTP会话令牌及Origin校验。主机模拟后端返回 unsupported。成功标记不是系统数据库查询结果，若外部删除入口可手动重装。
 
-## Logo 与主题
+## Logo
 
-图形保留用户提供SVG的手柄外轮廓、十字键、两个圆按钮及顶部短线，统一为填充轮廓，没有文字、阴影或渐变。默认橙底 `#FF8C00`、炭黑图形 `#0D0E11`。
+PS5 和网页共用 UC 字母手柄标识：黑底、白色图形和红点。唯一方形 SVG 源是 `assets/branding/icon.svg`；`assets/branding/icon0.png` 为 PS5 的 512px 导出，`web/icon.png` 为网页的 128px 导出。不再维护旧橙底图标和独立配色模板。
 
-- `assets/branding/icon.template.svg`：几何源文件，背景与前景为两个独立配色参数。
-- `assets/branding/icon.svg`：当前配色的可编辑矢量版本。
-- `assets/branding/icon0.png`：PS5实际安装资源，提交到仓库；CI无需图形渲染器。
-- `tools/build_icon.py`：修改配色并用 `rsvg-convert`（librsvg）导出512px PNG。也支持 `--svg-only`，之后用其他SVG渲染工具导出同尺寸PNG。
-
-```sh
-python3 tools/build_icon.py --background '#FF8C00' --foreground '#0D0E11'
-```
-
-换色后同时提交 SVG 和 PNG，重新构建并加载 payload 即可更新安装资源。PS5桌面图标使用静态PNG，不随网页CSS主题实时变化。设计使用用户指定的 [logo-design 技能](https://github.com/kaankiziltug/logo-design-skill)，已检查512px及32px渲染。
+使用 `node tools/build_branding.js` 同时生成两个尺寸和 README Banner，具体依赖及源文件见[品牌资源说明](../assets/branding/README.md)。修改后同时提交 SVG 与 PNG。PS5 图标为静态资源，不随网页主题改变；重新构建并加载 payload 后，启动检查会发现资源变化，待安装条件满足后更新，也可在设置页手动安装／更新。
 
 ## 实机验证
 

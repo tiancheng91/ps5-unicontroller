@@ -1,11 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="512" height="512" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
   <title id="title">UniController</title>
-  <rect width="48" height="48" fill="#FF8C00" />
-  <g fill="#0D0E11" transform="translate(6 6) scale(.75)">
-    <path fill-rule="evenodd" d="M18 11H30A16 16 0 0 1 30 43H18A16 16 0 0 1 18 11ZM18 15A12 12 0 0 0 18 39H30A12 12 0 0 0 30 15Z" />
-    <rect x="22" y="5" width="4" height="8" rx="2" />
-    <path d="M15 24V22A2 2 0 0 1 19 22V25H22A2 2 0 0 1 22 29H19V32A2 2 0 0 1 15 32V29H12A2 2 0 0 1 12 25H15Z" />
-    <circle cx="31" cy="22" r="2" />
-    <circle cx="35" cy="27" r="2" />
+  <desc id="desc">A white UC controller monogram with a red dot on a black background.</desc>
+  <rect width="512" height="512" fill="#111111"/>
+  <g transform="translate(-16 0)">
+    <path d="M116 166V278C116 321 140 344 181 344H197C240 344 264 318 264 275V253C264 209 289 184 333 184H396" stroke="#F2F2F2" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M310 284C322 306 344 317 374 317H389C404 317 416 329 416 344S404 371 389 371H355C326 371 304 364 286 350C299 332 307 310 310 284Z" fill="#F2F2F2"/>
+    <path d="M156 249H196M176 229V269" stroke="#F2F2F2" stroke-width="17" stroke-linecap="round"/>
+    <circle cx="338" cy="252" r="15" fill="#F2F2F2"/>
+    <circle cx="374" cy="286" r="15" fill="#F2F2F2"/>
+    <circle cx="456" cy="344" r="18" fill="#E5484D"/>
   </g>
 </svg>

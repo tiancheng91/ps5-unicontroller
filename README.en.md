@@ -69,7 +69,7 @@ Switch protocol defaults follow physical positions: B (bottom)→×, A (right)�
 
 **Swap A/B and X/Y** exchanges both pairs, is off by default, and runs before custom button mapping. It affects all application input sources. If the controller also swaps these pairs, the two swaps cancel out; choose the combination that produces your intended output and check it in the web interface.
 
-Connected Bluetooth and USB controllers share one list; “Connect a controller” opens pairing and adapter controls. The management page supports Chinese/English, initially chosen from the browser language, four color themes and a large-text TV mode. Appearance is stored in this browser and does not affect connections. Optional arrow-key/standard Gamepad navigation is experimental and still needs PS5 WebView validation.
+Connected Bluetooth and USB controllers share one list; “Add Bluetooth device” opens discovery and pairing, while USB is enabled in Settings. The management page supports Chinese/English, initially chosen from the browser language, a black-and-white default with red accents, optional orange/blue/green accents, and a large-text TV mode. Appearance is stored in this browser and does not affect connections. Optional arrow-key/standard Gamepad navigation is experimental and still needs PS5 WebView validation.
 
 Settings also includes rumble and log levels. Stop input sources before making changes. File editing is generally unnecessary; advanced adaptation is described in [custom controller configuration](docs/controller-config.md) (Chinese).
 

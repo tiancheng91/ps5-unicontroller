@@ -59,6 +59,7 @@ const root = path.resolve(__dirname, "../..");
       () => document.querySelector("#devices h3")?.textContent === "Sample Switch Pro",
     );
     assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "red");
     assert((await page.locator(".preview-notice").innerText()).includes("Demo preview"));
     await page.evaluate(() => {
       window.commands = [];

@@ -6,13 +6,16 @@
   --line: #383838;
   --text: #f2f2f2;
   --muted: #a4a4a4;
-  --accent: #ff8c00;
+  --accent: #e5484d;
   --danger: #ff9b9b;
   --font: "DIN Alternate", "Bahnschrift", "Microsoft YaHei", sans-serif;
   --mono: "SF Mono", Consolas, monospace;
   --body-size: 15px;
   --target: 44px;
   font: var(--body-size) / 1.5 var(--font);
+}
+:root[data-theme="orange"] {
+  --accent: #ff8c00;
 }
 :root[data-theme="blue"] {
   --accent: #73a9ff;
@@ -21,7 +24,7 @@
   --accent: #63d7b0;
 }
 :root[data-theme="red"] {
-  --accent: #ff8a98;
+  --accent: #e5484d;
 }
 :root[data-size="tv"] {
   --body-size: 20px;

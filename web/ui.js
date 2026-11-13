@@ -16,7 +16,7 @@
   const preferred = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
   const state = {
     lang: /^zh/i.test(preferred) ? "zh" : "en",
-    theme: "orange",
+    theme: "red",
     size: "normal",
     navigation: "native",
     page: "controllers",
