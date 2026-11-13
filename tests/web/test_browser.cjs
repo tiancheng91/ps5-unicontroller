@@ -205,6 +205,14 @@ const root = path.resolve(__dirname, "../..");
       "native select keeps arrows",
     );
     await page.keyboard.press("Escape");
+    // Native selects commit ArrowDown differently across Linux and macOS.
+    // Restore the explicit preference before testing persistence after reload.
+    await page.locator("#ui-theme").selectOption("blue");
+    await page.waitForFunction(
+      () =>
+        document.documentElement.dataset.theme === "blue" &&
+        JSON.parse(localStorage.getItem("unicontroller.appearance.v1")).theme === "blue",
+    );
     await page.locator('nav a[data-page="settings"]').focus();
     await page.keyboard.press("ArrowDown");
     assert.notEqual(
