@@ -44,6 +44,7 @@
 #define CID_SDP 0x0040
 #define CID_CTRL 0x0041
 #define CID_INTR 0x0042
+#define CID_SDP_SERVER 0x0043
 
 /* L2CAP signaling codes. */
 #define SIG_REJECT 0x01
@@ -198,7 +199,7 @@ typedef struct {
     unsigned char sdp_buf[1024]; /* attribute lists gathered so far */
     int sdp_len;
 
-    chan sdp, ctrl, intr;
+    chan sdp, sdp_server, ctrl, intr;
     int ready, disconnecting;
 
     unsigned char rx[1024];

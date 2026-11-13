@@ -39,6 +39,7 @@ document.addEventListener("alpine:init", () => {
     timer: null,
     clockTimer: null,
     scanDeadline: 0,
+    scanWallDeadline: 0,
     scanNow: performance.now(),
     message: "waiting",
     messageValues: {},
@@ -114,7 +115,14 @@ document.addEventListener("alpine:init", () => {
       );
     },
     get scanRemaining() {
-      return Math.max(0, Math.ceil((this.scanDeadline - this.scanNow) / 1000));
+      // Let either clock advance the display if the other stalls.
+      // Status polling can only shorten the current scan.
+      return Math.max(
+        0,
+        Math.ceil(
+          Math.min(this.scanDeadline - this.scanNow, this.scanWallDeadline - this.now) / 1000,
+        ),
+      );
     },
     get scanning() {
       return this.scanRemaining > 0;
@@ -125,11 +133,19 @@ document.addEventListener("alpine:init", () => {
       this.scanNow = now;
       if (latest.scan_seconds > 0) {
         const deadline = now + latest.scan_seconds * 1000;
+        const wallDeadline = this.now + latest.scan_seconds * 1000;
+        this.scanWallDeadline =
+          latest.scan_id !== this.bt.scan_id || !this.scanWallDeadline
+            ? wallDeadline
+            : Math.min(this.scanWallDeadline, wallDeadline);
         this.scanDeadline =
           latest.scan_id !== this.bt.scan_id || !this.scanDeadline
             ? deadline
             : Math.min(this.scanDeadline, deadline);
-      } else this.scanDeadline = 0;
+      } else {
+        this.scanDeadline = 0;
+        this.scanWallDeadline = 0;
+      }
       this.bt = latest;
     },
     get discovered() {

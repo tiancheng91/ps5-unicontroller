@@ -246,6 +246,7 @@ const root = path.resolve(__dirname, "../..");
     await page.locator("#add-controller").click();
     await page.locator("#bt-scan").click();
     await page.locator(".discovered-device").first().waitFor({ state: "visible" });
+    const firstScanTitle = await page.locator(".search-panel h3").innerText();
     const firstSeconds = await page.evaluate(
       () => Alpine.$data(document.querySelector("#management")).scanRemaining,
     );
@@ -254,6 +255,11 @@ const root = path.resolve(__dirname, "../..");
       () => Alpine.$data(document.querySelector("#management")).scanRemaining,
     );
     assert(nextSeconds < firstSeconds, "scan countdown must tick instead of displaying fixed 60");
+    assert.notEqual(
+      await page.locator(".search-panel h3").innerText(),
+      firstScanTitle,
+      "visible countdown must update, not only the model getter",
+    );
     let writes = await page.evaluate(() => window.commands.map((c) => c[0]));
     assert(writes.indexOf("/bluetooth/start") < writes.lastIndexOf("/bluetooth/scan"));
     assert(!writes.includes("/bluetooth/pair"), "discovering a device must not pair it");

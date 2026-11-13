@@ -83,6 +83,13 @@ const touchMessages = {
   "页面已隐藏 · 已释放，返回后请重新启用": "Page hidden · input released; enable again on return",
   "网络已断开 · 输入停止；服务器将在 500ms 内释放":
     "Network offline · input stopped; server releases within 500ms",
+  "正在同步手柄状态…": "Synchronizing controller state…",
+  "模拟手柄已启用 · 可停用后重新启用":
+    "Test controller registered · disable it before enabling here",
+  "模拟手柄正在初始化 · 可取消": "Test controller initializing · you can cancel",
+  "蓝牙手柄使用中 · 请先关闭蓝牙": "Bluetooth input active · stop Bluetooth first",
+  "USB 手柄使用中 · 请先关闭 USB": "USB input active · stop USB first",
+  "状态同步失败：": "State synchronization failed: ",
   专注操控: "Focus mode",
   退出专注: "Exit focus mode",
   "默认关闭 · 正在读取已登录用户": "Off by default · loading signed-in users",
@@ -126,6 +133,11 @@ function fillUsers(data) {
     $("user").append(o);
   }
 }
+let stateReady = false,
+  statePending = false,
+  externalSource = null,
+  syncing = false,
+  disabling = false;
 let session = null,
   sequence = 0,
   inflight = false,
@@ -165,8 +177,12 @@ function render() {
     null,
     2,
   );
-  $("enable").disabled = active || enabling;
-  $("disable").disabled = session === null && !enabling;
+  $("enable").disabled =
+    !stateReady || !!externalSource || session !== null || statePending || enabling || disabling;
+  $("disable").disabled =
+    disabling || !!externalSource || (session === null && !statePending && !enabling);
+  $("user").disabled =
+    !stateReady || !!externalSource || session !== null || statePending || enabling || disabling;
 }
 function reset() {
   held.clear();
@@ -217,16 +233,64 @@ function releaseAll(keepalive = false) {
     }
   }
 }
+// Observe registration separately from this page's input pump. Reloading a page
+// must not silently adopt another sender's sequence or leave its output invisible.
+async function syncState() {
+  if (syncing || enabling || disabling || document.hidden) return;
+  syncing = true;
+  const revision = enableEpoch;
+  try {
+    const data = await api("/test-controller");
+    if (revision !== enableEpoch || enabling || disabling) return;
+    if (
+      typeof data.enabled !== "boolean" ||
+      (data.enabled && !Number.isSafeInteger(data.session_id))
+    )
+      throw Error("服务器会话编号无效");
+    stateReady = true;
+    statePending = !!data.pending;
+    externalSource = data.source === "bluetooth" || data.source === "usb" ? data.source : null;
+    const serverSession = data.enabled ? data.session_id : null;
+    if (active && serverSession !== session) {
+      epoch++;
+      stop();
+    }
+    session = serverSession;
+    if (data.enabled && data.user_id) $("user").value = String(data.user_id);
+    if (!active) {
+      status(
+        externalSource === "bluetooth"
+          ? "蓝牙手柄使用中 · 请先关闭蓝牙"
+          : externalSource === "usb"
+            ? "USB 手柄使用中 · 请先关闭 USB"
+            : statePending
+              ? "模拟手柄正在初始化 · 可取消"
+              : session !== null
+                ? "模拟手柄已启用 · 可停用后重新启用"
+                : "默认关闭 · 选择已登录用户后启用",
+      );
+    }
+  } catch (e) {
+    if (revision === enableEpoch && !enabling && !disabling) {
+      stateReady = false;
+      status("状态同步失败：" + e.message, true);
+    }
+  } finally {
+    syncing = false;
+    render();
+  }
+}
 async function init() {
   try {
     fillUsers(await api("/users"));
-    status("默认关闭 · 选择已登录用户后启用");
+    await syncState();
   } catch (e) {
     status("读取账号失败：" + e.message, true);
   }
 }
 $("enable").onclick = async () => {
-  if (enabling) return;
+  if (enabling || disabling || !stateReady || externalSource || session !== null || statePending)
+    return;
   if (!$("user").value) return status("没有可用的已登录用户", true);
   enabling = true;
   const operation = ++enableEpoch;
@@ -256,16 +320,22 @@ $("enable").onclick = async () => {
   }
 };
 $("disable").onclick = async () => {
+  if (disabling || externalSource) return;
   ++enableEpoch;
+  disabling = true;
   epoch++;
   stop();
   try {
     await api("/test-controller", "DELETE");
     session = null;
+    statePending = false;
     render();
     status("输出已关闭");
   } catch (e) {
     status("关闭失败，请重试：" + e.message, true);
+  } finally {
+    disabling = false;
+    render();
   }
 };
 $("release").onclick = () => {
@@ -353,6 +423,8 @@ document.addEventListener("visibilitychange", () => {
     epoch++;
     stop();
     status("页面已隐藏 · 已释放，返回后请重新启用");
+  } else {
+    syncState();
   }
 });
 window.addEventListener("pagehide", () => {
@@ -377,6 +449,8 @@ window.addEventListener("offline", () => {
 });
 init();
 render();
+setInterval(syncState, 2000);
+window.addEventListener("focus", syncState);
 
 // A CSS focus view works on mobile browsers without a Fullscreen API.
 function focusMode(enabled) {

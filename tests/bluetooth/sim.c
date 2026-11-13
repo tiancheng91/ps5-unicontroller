@@ -38,6 +38,9 @@ struct sim {
     rchan sdp, ctrl, intr;
     unsigned char sig_id;
     int sdp_queries, sdp_conts, outputs, dropped;
+    unsigned last_acl_cid;
+    unsigned char last_acl[256];
+    int last_acl_len;
     unsigned drop_count;
     unsigned char last_out[128];
     int last_out_len;
@@ -563,6 +566,9 @@ static int op_acl_send(void *ctx, const unsigned char *pkt, int len)
     n = (int)le16(pkt + 4);
     cid = le16(pkt + 6);
     d = pkt + 8;
+    s->last_acl_cid = cid;
+    s->last_acl_len = n < (int)sizeof s->last_acl ? n : (int)sizeof s->last_acl;
+    memcpy(s->last_acl, d, (size_t)s->last_acl_len);
 
     if (cid == RCID_INTR && n >= 2 && d[0] == 0xA2) {
         long gap = g_clock - s->last_output_at;
@@ -829,5 +835,13 @@ int sim_last_output(const sim_t *s, unsigned char *out, int max)
 {
     int n = s->last_out_len < max ? s->last_out_len : max;
     memcpy(out, s->last_out, (size_t)n);
+    return n;
+}
+
+int sim_last_acl(const sim_t *s, unsigned *cid, unsigned char *out, int max)
+{
+    int n = s->last_acl_len < max ? s->last_acl_len : max;
+    *cid = s->last_acl_cid;
+    memcpy(out, s->last_acl, (size_t)n);
     return n;
 }

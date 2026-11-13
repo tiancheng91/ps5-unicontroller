@@ -59,6 +59,21 @@ const assert = require("assert"),
   h.advance(5001);
   await m.refresh();
   assert(m.stableUser && m.selectedUser === "2");
+  const clock = harness();
+  clock.model.acceptBluetooth({ ...clock.state.bt, scan_id: 1, scan_seconds: 60 });
+  assert.equal(clock.model.scanRemaining, 60);
+  clock.model.now += 4000;
+  assert.equal(
+    clock.model.scanRemaining,
+    56,
+    "wall clock advances countdown when performance clock stalls",
+  );
+  clock.model.acceptBluetooth({ ...clock.state.bt, scan_id: 1, scan_seconds: 55 });
+  assert(clock.model.scanRemaining <= 55, "polling cannot extend the same scan");
+  clock.model.acceptBluetooth({ ...clock.state.bt, scan_id: 2, scan_seconds: 60 });
+  assert.equal(clock.model.scanRemaining, 60, "new scans get a fresh countdown");
+  clock.model.acceptBluetooth({ ...clock.state.bt, scan_id: 2, scan_seconds: 0 });
+  assert.equal(clock.model.scanRemaining, 0);
   const preferred = harness();
   preferred.state.users.preferred_user_id = 2;
   await preferred.model.refresh();

@@ -104,6 +104,51 @@ static void xbox_pad(sim_le_pad *p, int sc, int rpa)
     p->mtu = 185;
 }
 
+static void test_scan_response_and_inquiry(void)
+{
+    unlink(DB);
+    sim_le_pad pad;
+    xbox_pad(&pad, 1, 0);
+    sim_le_t *sim = sim_le_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h && host_scan(h, 10));
+    if (!h) {
+        sim_le_free(sim);
+        return;
+    }
+    run(h, 50);
+    host_discovered_info found;
+    CHECK(host_discovered_get(h, 0, &found));
+    /* A harmless non-connectable report precedes the name-only scan response. */
+    unsigned char reports[64] = {2, 2, 3, 0, 1, 2, 3, 4, 5, 6, 0, 0xc0};
+    int offset = 12;
+    const char *name = "Xbox Wireless Controller";
+    int length = (int)strlen(name);
+    reports[offset] = 4;
+    reports[offset + 1] = 0;
+    memcpy(reports + offset + 2, pad.addr, 6);
+    reports[offset + 8] = (unsigned char)(length + 2);
+    reports[offset + 9] = (unsigned char)(length + 1);
+    reports[offset + 10] = 9;
+    memcpy(reports + offset + 11, name, (size_t)length);
+    reports[offset + 11 + length] = 0xc0;
+    sim_le_inject_event(sim, 0x3e, reports, offset + 12 + length);
+    run(h, 5);
+    CHECK(host_discovered_count(h) == 1);
+    CHECK(host_discovered_get(h, 0, &found) && !strcmp(found.name, name));
+    CHECK(sim_le_creates(sim) == 0);
+    CHECK(host_pair_device(h, found.id));
+    run(h, 300);
+    CHECK(sim_le_creates(sim) == 0); /* Wait for Classic inquiry; no conflicting create. */
+    run(h, 8000);
+    CHECK(sim_le_creates(sim) == 1 && observed.connects == 1);
+    CHECK(sim_le_cancels(sim) == 0);
+    host_close(h);
+    sim_le_free(sim);
+    unlink(DB);
+}
+
 static void test_manual_le_discovery(void)
 {
     unlink(DB);
@@ -542,6 +587,7 @@ static void test_ble_rejected_without_saved_pairing(uint16_t vid, uint16_t pid)
 
 int main(void)
 {
+    test_scan_response_and_inquiry();
     test_manual_le_discovery();
     test_ble_rejected_without_saved_pairing(0x057e, 0x2009);
     test_ble_rejected_without_saved_pairing(0x1234, 0x5678);

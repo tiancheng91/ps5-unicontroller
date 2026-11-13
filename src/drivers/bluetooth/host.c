@@ -79,6 +79,7 @@ link_t *link_new(host_t *h, const unsigned char *addr)
         memcpy(l->addr, addr, 6);
         l->t_create = now_ms();
         chan_init(&l->sdp, PSM_SDP, CID_SDP);
+        chan_init(&l->sdp_server, PSM_SDP, CID_SDP_SERVER);
         chan_init(&l->ctrl, PSM_HID_CTRL, CID_CTRL);
         chan_init(&l->intr, PSM_HID_INTR, CID_INTR);
         pad_state_reset(&l->st);
@@ -357,6 +358,8 @@ static chan *chan_by_scid(link_t *l, unsigned cid)
 {
     if (l->sdp.st != CH_CLOSED && l->sdp.scid == cid)
         return &l->sdp;
+    if (l->sdp_server.st != CH_CLOSED && l->sdp_server.scid == cid)
+        return &l->sdp_server;
     if (l->ctrl.st != CH_CLOSED && l->ctrl.scid == cid)
         return &l->ctrl;
     if (l->intr.st != CH_CLOSED && l->intr.scid == cid)
@@ -366,11 +369,13 @@ static chan *chan_by_scid(link_t *l, unsigned cid)
 
 static chan *chan_by_psm(link_t *l, unsigned psm)
 {
+    if (psm == PSM_SDP)
+        return &l->sdp_server;
     if (psm == PSM_HID_CTRL)
         return &l->ctrl;
     if (psm == PSM_HID_INTR)
         return &l->intr;
-    return NULL; /* SDP is only ever opened by us */
+    return NULL;
 }
 
 static void chan_set(chan *c, chan_state st)
@@ -429,7 +434,7 @@ static void chan_close(host_t *h, link_t *l, chan *c)
 static void chan_lost(host_t *h, link_t *l, chan *c)
 {
     chan_set(c, CH_CLOSED);
-    if (c != &l->sdp && l->ready)
+    if (c != &l->sdp && c != &l->sdp_server && l->ready)
         link_disconnect(h, l, "HID channel closed");
 }
 
@@ -481,11 +486,19 @@ static void on_signaling(host_t *h, link_t *l, const unsigned char *d, int len)
             if (clen < 4)
                 break;
             ch = chan_by_psm(l, le16(c));
+            log_line("pad %s: incoming channel psm=%#x peer_cid=%#x", addr_str(l->addr), le16(c),
+                     le16(c + 2));
             put16(r + 2, le16(c + 2));
             put16(r + 6, 0);
             if (!ch) {
                 put16(r, 0);
                 put16(r + 4, 0x0002); /* PSM not supported */
+                sig_send(h, l, SIG_CONN_RSP, id, r, 8);
+                break;
+            }
+            if (le16(c + 2) < 0x0040 || (ch == &l->sdp_server && ch->st != CH_CLOSED)) {
+                put16(r, 0);
+                put16(r + 4, 0x0004); /* bounded: only one inbound SDP channel */
                 sig_send(h, l, SIG_CONN_RSP, id, r, 8);
                 break;
             }
@@ -999,6 +1012,38 @@ void init_tick(host_t *h, link_t *l, long now)
 
 /* ---- inbound ACL ---------------------------------------------------------- */
 
+/* This payload is an HID host, with no local services to advertise. Some
+ * controllers browse it before answering our SDP client. Complete those searches
+ * with an empty result rather than refusing their channel indefinitely. */
+static void on_sdp_server(host_t *h, link_t *l, const unsigned char *d, int len)
+{
+    unsigned char reply[10] = {0x01, 0, 0, 0, 2, 0, 3}; /* invalid syntax */
+    int count = 7;
+    if (len < 5 || be16(d + 3) != (unsigned)(len - 5) || l->sdp_server.st != CH_OPEN)
+        return;
+    reply[1] = d[1];
+    reply[2] = d[2];
+    if (d[0] == 0x02 && len >= 13 && d[len - 1] == 0) { /* ServiceSearch */
+        reply[0] = 0x03;
+        reply[4] = 5;
+        memset(reply + 5, 0, 5); /* total/current handle counts + continuation */
+        count = 10;
+    } else if (d[0] == 0x06 && len >= 16 && d[len - 1] == 0) { /* SearchAttribute */
+        reply[0] = 0x07;
+        reply[4] = 5;
+        reply[5] = 0;
+        reply[6] = 2; /* empty data-element sequence */
+        reply[7] = 0x35;
+        reply[8] = reply[9] = 0;
+        count = 10;
+    } else if (d[0] == 0x04 && len >= 12) {
+        reply[6] = 2; /* no such local service record */
+    }
+    log_line("pad %s: inbound SDP request=%#x len=%d response=%#x", addr_str(l->addr), d[0], len,
+             reply[0]);
+    l2_send(h, l, l->sdp_server.dcid, reply, count);
+}
+
 static void on_frame(host_t *h, link_t *l, unsigned cid, const unsigned char *d, int len)
 {
     chan *c;
@@ -1026,7 +1071,9 @@ static void on_frame(host_t *h, link_t *l, unsigned cid, const unsigned char *d,
         }
         return;
     }
-    if (c == &l->sdp)
+    if (c == &l->sdp_server)
+        on_sdp_server(h, l, d, len);
+    else if (c == &l->sdp)
         on_sdp(h, l, d, len);
     else
         on_hid(h, l, c, d, len);
@@ -1508,6 +1555,7 @@ static void link_step(host_t *h, link_t *l, long now)
         link_disconnect(h, l, "pairings cleared");
         return;
     }
+    chan_tick(h, l, &l->sdp_server, now);
     if (!l->ready && now - l->t_conn > T_SETUP_TIMEOUT) {
         log_line("pad %s: setup timeout auth=%d/%d enc=%d/%d sdp=%d ctrl=%d intr=%d",
                  addr_str(l->addr), l->auth_sent, l->auth_ok, l->enc_sent, l->enc_on, l->sdp_query,
@@ -1655,7 +1703,7 @@ void host_poll(host_t *h, int timeout_ms)
         if (!h->links[i].used)
             continue;
         link_step(h, l, now);
-        if (l->used && l->pairing && !l->ready && !l->le)
+        if (l->used && !l->ready && !l->disconnecting)
             linking = 1;
         if (!l->used || !l->ready || l->disconnecting)
             continue;
@@ -1763,12 +1811,14 @@ int host_discovered_get(const host_t *h, int index, host_discovered_info *out)
         int paired = 0;
         for (int i = 0; i < h->ndb; i++)
             paired |= h->db[i].le == out->le && !memcmp(h->db[i].addr, out->addr, 6);
-        out->state = paired ? "paired" : "failed";
+        out->state = out->reason[0] ? "failed" : paired ? "paired" : "failed";
         for (int i = 0; i < HOST_MAX_PADS; i++) {
             const link_t *l = &h->links[i];
             if (l->used && l->le == out->le && !memcmp(l->addr, out->addr, 6)) {
                 out->state = l->ready           ? "connected"
-                             : l->disconnecting ? (paired ? "paired" : "failed")
+                             : l->disconnecting ? (out->reason[0] ? "failed"
+                                                   : paired       ? "paired"
+                                                                  : "failed")
                                                 : "pairing";
                 break;
             }

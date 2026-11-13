@@ -85,7 +85,7 @@ function harness(relative) {
     if (method === "POST") return new Promise((resolve, reject) => queue.push({ resolve, reject }));
     return Promise.resolve({});
   };
-  vm.runInContext("api = request;", context);
+  vm.runInContext("api = request; stateReady = true;", context);
   return { context, events, element, calls, queue, timers };
 }
 async function flush() {
@@ -135,7 +135,40 @@ async function flush() {
     "hidden pending enable must clean late result",
   );
   assert.equal(vm.runInContext("active", h.context), false);
-  console.log("UI cancellation checks passed");
+  const remote = harness("touch.js");
+  remote.context.reply = { enabled: true, session_id: 42, user_id: 1 };
+  vm.runInContext("api = async () => reply;", remote.context);
+  await vm.runInContext("syncState()", remote.context);
+  assert.equal(
+    remote.element("disable").disabled,
+    false,
+    "reload must expose remote registration for cleanup",
+  );
+  assert.equal(remote.element("enable").disabled, true);
+  assert.equal(
+    vm.runInContext("active", remote.context),
+    false,
+    "observing must not resume input injection",
+  );
+  assert(remote.element("status").textContent.includes("模拟手柄已启用"));
+  remote.context.reply = { enabled: false, session_id: null, source: "bluetooth" };
+  await vm.runInContext("syncState()", remote.context);
+  assert.equal(remote.element("enable").disabled, true);
+  assert.equal(
+    remote.element("disable").disabled,
+    true,
+    "test page must not delete physical controller output",
+  );
+  assert(remote.element("status").textContent.includes("蓝牙手柄使用中"));
+  remote.context.reply = { enabled: false, session_id: null, pending: false };
+  await vm.runInContext("syncState()", remote.context);
+  assert.equal(remote.element("enable").disabled, false);
+  assert.equal(vm.runInContext("session", remote.context), null);
+  remote.context.reply = { enabled: false, session_id: null, pending: true };
+  await vm.runInContext("syncState()", remote.context);
+  assert.equal(remote.element("disable").disabled, false, "remote pending output can be cancelled");
+  assert.equal(remote.element("enable").disabled, true);
+  console.log("UI cancellation and backend state synchronization checks passed");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

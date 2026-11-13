@@ -55,7 +55,7 @@
 #define SMP_DHKEY_CHECK 0x0D
 
 /* Connecting, one LE link at a time (le_link.cstate). */
-enum { LC_NONE, LC_SCAN_OFF, LC_CREATING, LC_PENDING, LC_BACKOFF };
+enum { LC_NONE, LC_SCAN_OFF, LC_CREATING, LC_PENDING, LC_BACKOFF, LC_INQUIRY_WAIT };
 
 /* Pairing as initiator. */
 enum {
@@ -377,6 +377,13 @@ static void le_create(host_t *h, link_t *l, long now)
 {
     uint8_t p[25];
 
+    if (h->inquiring) {
+        l->le_s.cstate = LC_INQUIRY_WAIT;
+        l->le_s.t_cstate = now;
+        log_line("le pad %s: waiting for current Classic inquiry to finish before connect",
+                 addr_str(l->addr));
+        return;
+    }
     put16(p, 0x0060);     /* scan interval */
     put16(p + 2, 0x0030); /* scan window */
     p[4] = 0;             /* this address, not the accept list */
@@ -450,7 +457,7 @@ static void le_try_again(host_t *h, link_t *l, long now)
                  "in %d s",
                  addr_str(l->addr), e->ctries, T_LE_ADDR_REST / 1000);
         le_hold(h, l->addr, now + T_LE_ADDR_REST);
-        link_free(h, l);
+        link_disconnect(h, l, "controller_busy_create_0x0c");
         return;
     }
     LE_DIAG(h, "le pad %s: try %d refused: scan=%s create=%s; no foreign cancel, backoff=%ld ms",
@@ -562,8 +569,20 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
     addr = r + 2;
     dlen = r[8];
     data = r + 9;
-    if (9 + dlen > n || evtype > 1)
-        return; /* connectable adverts only */
+    if (10 + dlen > n)
+        return;
+    if (evtype == 4) { /* Scan response: update only an already discovered candidate. */
+        for (i = 0; i < h->discovered_count; i++) {
+            host_discovered_info *found = &h->discovered[i].info;
+            if (found->le && found->addr_type == type && !memcmp(found->addr, addr, 6)) {
+                host_found(h, 1, type, addr, data, dlen, NULL, 1, (int8_t)r[9 + dlen]);
+                break;
+            }
+        }
+        return;
+    }
+    if (evtype > 1)
+        return; /* New candidates require connectable advertisements. */
     if (link_by_addr(h, addr) || le_held(h, addr, now_ms()))
         return;
     for (i = 0; i < HOST_MAX_PADS; i++) /* one connection attempt at a time */
@@ -654,9 +673,17 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
         l->le_s.cstate = LC_NONE;
         break;
 
-    case 0x02: /* Advertising Report: one report per event, in practice */
-        if (len >= 3 && ev[1] >= 1)
-            on_advert(h, ev + 2, len - 2);
+    case 0x02: /* Advertising Report: every variable-length report in this event */
+        if (len >= 2) {
+            int offset = 2;
+            for (int report = 0; report < ev[1] && offset + 10 <= len; report++) {
+                int size = 10 + ev[offset + 8];
+                if (size > len - offset)
+                    break;
+                on_advert(h, ev + offset, size);
+                offset += size;
+            }
+        }
         break;
 
     case 0x08: /* Read Local P-256 Public Key Complete */
@@ -1467,6 +1494,12 @@ void le_step(host_t *h, link_t *l, long now)
 
     if (!l->connected) {
         switch (e->cstate) {
+        case LC_INQUIRY_WAIT:
+            if (!h->inquiring)
+                le_scan_off(h, l, now);
+            else if (now - e->t_cstate > 12000)
+                link_disconnect(h, l, "classic_inquiry_did_not_finish");
+            return;
         case LC_SCAN_OFF: /* its answer may have gone to the system */
             if (now - e->t_cstate > T_LE_SCAN_OFF) {
                 h->le_scan_out = 0;

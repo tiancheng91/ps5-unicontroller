@@ -42,7 +42,7 @@ struct sim_le {
     uint8_t cur_addr[6]; /* the address advertised now */
     uint8_t cur_type;
     int powered, scanning, connected, encrypted;
-    long t_adv, t_report;
+    long t_adv, t_report, inquiry_until;
 
     /* pairing, as the responder; MSB first like the spec */
     int pairings, paired, sc;
@@ -656,6 +656,10 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
 
     (void)plen;
     switch (op) {
+    case 0x0401:
+        s->inquiry_until = g_clock + 1000;
+        cmd_status(s, op, 0);
+        break;
     case 0x1005:
         memset(r, 0, 8);
         put16(r + 1, 1021);
@@ -701,7 +705,7 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         break;
     case 0x200D: /* create connection */
         s->creates++;
-        if (s->pad.foreign_pending) { /* one attempt at a time */
+        if (s->inquiry_until || s->pad.foreign_pending) { /* one attempt at a time */
             cmd_status(s, op, 0x0C);
             break;
         }
@@ -813,6 +817,11 @@ static int op_pump(void *ctx, int timeout_ms)
     sim_le_t *s = ctx;
 
     g_clock += timeout_ms > 0 ? timeout_ms : 1;
+    if (s->inquiry_until && g_clock >= s->inquiry_until) {
+        unsigned char status = 0;
+        s->inquiry_until = 0;
+        event(s, 0x01, &status, 1);
+    }
     if (s->powered && s->scanning && !s->connected && g_clock - s->t_adv >= 30) {
         /* flags, appearance gamepad, 16-bit services: HID */
         static const uint8_t ad[] = {0x02, 0x01, 0x06, 0x03, 0x19, 0xC4,

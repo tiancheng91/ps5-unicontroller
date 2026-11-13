@@ -965,8 +965,64 @@ static void test_recording_level(void)
     unlink(path);
 }
 
+static void test_inbound_sdp(void)
+{
+    unlink(DB);
+    sim_pad pad = {.mode = SIM_WAIT_PAIRING,
+                   .addr = {1, 2, 3, 4, 5, 6},
+                   .cod = 0x002508,
+                   .vid = 0x054c,
+                   .pid = 0x05c4};
+    pad.report_len = ds4_report(pad.report);
+    sim_t *sim = sim_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h != NULL);
+    if (!h)
+        return;
+    CHECK(select_first(h, 30));
+    run(h, 10000);
+    CHECK(observed.connects == 1);
+    link_t *l = link_by_addr(h, pad.addr);
+    CHECK(l && l->ready);
+    if (!l) {
+        host_close(h);
+        sim_free(sim);
+        return;
+    }
+    const unsigned char connect[] = {2, 91, 4, 0, 1, 0, 0x60, 0};
+    sim_inject_acl(sim, CID_SIGNALING, connect, sizeof connect);
+    run(h, 5);
+    CHECK(l->sdp_server.st == CH_CONFIG && l->sdp_server.dcid == 0x60);
+    CHECK(l->sdp_server.scid != l->sdp.scid);
+    const unsigned char config[] = {
+        4, 92, 4, 0, CID_SDP_SERVER, 0, 0, 0, 5, 93, 6, 0, CID_SDP_SERVER, 0, 0, 0, 0, 0};
+    sim_inject_acl(sim, CID_SIGNALING, config, sizeof config);
+    run(h, 5);
+    CHECK(l->sdp_server.st == CH_OPEN);
+    const unsigned char query[] = {6,    0x12, 0x34, 0, 15,   0x35, 3, 0x19, 0x11, 0x24,
+                                   0xff, 0xff, 0x35, 5, 0x0a, 0,    0, 0xff, 0xff, 0};
+    sim_inject_acl(sim, CID_SDP_SERVER, query, sizeof query);
+    run(h, 5);
+    unsigned cid;
+    unsigned char reply[64];
+    int n = sim_last_acl(sim, &cid, reply, sizeof reply);
+    CHECK(cid == 0x60 && n == 10 && reply[0] == 7);
+    CHECK(reply[1] == 0x12 && reply[2] == 0x34 && reply[6] == 2 && reply[7] == 0x35);
+    /* A second server connection cannot replace the first one. */
+    sim_inject_acl(sim, CID_SIGNALING, connect, sizeof connect);
+    run(h, 5);
+    n = sim_last_acl(sim, &cid, reply, sizeof reply);
+    CHECK(cid == CID_SIGNALING && n == 12 && reply[0] == 3 && le16(reply + 8) == 4);
+    CHECK(l->ready && observed.disconnects == 0);
+    host_close(h);
+    sim_free(sim);
+    unlink(DB);
+}
+
 int main(void)
 {
+    test_inbound_sdp();
     test_system_controller_filter();
     test_discovery_cache();
     test_manual_switch_discovery();

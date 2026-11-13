@@ -58,6 +58,7 @@ void sim_inject_event(sim_t *s, unsigned char code, const unsigned char *p,
                       int n); /* stops answering, as after rest mode */
 
 /* What the host did. */
+int sim_last_acl(const sim_t *s, unsigned *cid, unsigned char *out, int max);
 int sim_sdp_queries(const sim_t *s);
 int sim_outputs(const sim_t *s);
 int sim_output_attempts(const sim_t *s);
