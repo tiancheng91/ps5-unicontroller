@@ -1,47 +1,47 @@
-# USB 有线手柄接入方案
+# USB XInput 手柄接入
 
-USB手柄接入已实现，已有版本通过主机测试与Actions构建，最新提交的验证结果需单独核对，PS5实机待验证。蓝牙连接提示震动独立实现。USB 不通过蓝牙 host，不访问或重置内部 HCI。
+当前 USB 只保留 **Xbox 360 风格 XInput**。Switch USB、USB HID/DInput、Xbox One/Series GIP 和专用 Xbox 无线接收器暂不接入。第三方 2.4GHz 接收器如果实际暴露相同 XInput 接口和报告，可以测试；商品名称或 VID/PID 本身不能证明兼容。蓝牙 Switch 支持不受此收敛影响。
 
-## 支持范围
+主机回归包括协议、管理器及原生收发逻辑的 syscall 模拟。PS5 ABI 由 GitHub Actions SDK 构建检查，真实设备的接口接管、输入和震动仍需实机验证。
 
-当前实现Switch Pro精确057e:2009及有线XInput接口FF/5D/01；XInput未知VID/PID需实际00/14头的20字节报告才能绑定虚拟输出，不能仅凭字符串识别。045e:028e及已登记Nova原生XInput身份允许先发LED激活；未知候选在首个有效输入前不发命令。通用 USB HID、Xbox One/Series GIP、无线接收器与更多第三方 ID 后续接入，不凭名称选择协议。
+## 识别与接管
 
-## 最小目录与数据流
+1. 用户在设置中启动 USB。要求账号已登录且系统稳定；休眠停止后不自动重启。
+2. 遍历 `/dev/ugenB.A`，打开对应 `/dev/usb/B.A.0` 读取设备及当前配置描述符。
+3. 只选择 alt0 的 `FF/5D/01` 接口，要求唯一匹配接口和一对 interrupt IN/OUT，端点包长 20–64 字节。拒绝畸形、歧义描述符；原装 Sony 与内部蓝牙厂商继续排除。非零 alternate setting、多个匹配接口暂不支持。
+4. 对该已验证接口执行 `USB_IFACE_DRIVER_DETACH`，然后 claim。没有 VID/PID 型号白名单要求。detach 不支持或无驱动时仍尝试 claim；claim ioctl 明确不支持（ENOTTY/ENOSYS/EOPNOTSUPP）时允许尝试指定端点，由内核访问权限决定。claim 返回 busy 等其它错误则不打开端点，不复位设备、不修改配置、不分离其它接口。
+5. 按描述符端点号打开对应 `/dev/usb/B.A.E`，分别使用非阻塞 `read/write`，不遍历猜测端点，不使用 `USB_FS_*`。空包和 EAGAIN/EINTR 不是拔线。
+6. 发标准三字节玩家 LED 激活命令；只有真实输入报告头为 `00 14` 且长度为 20–64 字节时才认定输入可用。允许端点填充，不将 LED/status 通知当成错误按键报告。4.8 秒内没有有效输入则失败。
+7. 输入解析成 `pad_state`，经 core 映射、会话和现有 PS5 backend 创建独立虚拟手柄。不因设备出现或 LED 命令成功就注册虚拟输出。
 
-src/drivers/usb.c、usb.h处理有线源启停与core路由；drivers/usb/下transport处理ugen、protocol处理非阻塞初始化和有线报文；共享Nintendo/HID解析在drivers/protocols，不增加通用插件框架。现有 Switch 解析函数可通过 pad_profile 接口复用，不复制整份蓝牙 host。XInput 的20字节输入新增独立解析，不能调用 xbox_parse 蓝牙解析器。
+启动、首次输入、账号绑定和资源释放沿用现有生命周期。每次轮询读取最多八个报告；空闲槽每 100ms 最多处理一个候选节点。端点读写非阻塞，没有等待 ACK 的 sleep 或无限读取循环；描述符控制 ioctl 仍受固件/内核的超时行为约束，不能把 O_NONBLOCK 理解为所有控制查询都会立即返回。
 
-```text
-USB手柄 -> ugen接口/端点 -> Switch USB握手 或 XInput解析
-       -> pad_state -> core映射与会话 -> 现有PS5 backend -> 独立虚拟手柄
-```
+## 释放与共存
 
-直接 /dev/hid 虚拟输出是另一项独立改造；实现 USB 输入不要求替换现有 libScePad/libSceMbus 后端，也不引入 SDL。
+停止、拔线、休眠或失败清理时关闭本应用端点句柄，release 已 claim 的接口并删除自有虚拟输出。FreeBSD 接口没有可依赖的通用驱动重新 attach ioctl，因此 detach 后不能保证系统驱动立即恢复；需要时重新插拔该外部手柄。不会为此 reset 设备。
 
-## 运行边界
+蓝牙和 USB 可同时运行，共享最多四个虚拟输出；网页测试手柄独占。额外实体手柄仍需独立账号配置。USB 输入静默不直接等于断线，传输健康检查与输入序号分开；需要真实报告续期的已登记接收器保留 watchdog。
 
-- 默认关闭，选择独立已登录账号后手动启动；沿用明确工作状态持续5秒的门禁。USB与蓝牙可同时运行，总计最多四个独立输出；虚拟设备识别/注册串行推进。网页测试输入仍独占。
-- 根据配置描述符选择匹配接口及 interrupt/bulk IN、OUT端点。
-- 仅处理明确支持的外部手柄；排除原装Sony手柄、内部蓝牙、Hub、存储等设备。不reset设备或detach已有系统驱动；接口占用、claim失败则退出该设备并记录原因，不继续读写。
-- Switch USB加入0x80/0x81握手、可选波特率、禁用USB超时，再复用Nintendo子命令和完整报告解析。ACK、步骤、重试、总初始化时间均受限，使用非阻塞状态机。
-- XInput读取0x00/0x14头的20字节输入，转换有符号双摇杆、Y方向、扳机、按键；LED初始化仅用于已确认设备，不向未知USB设备发送命令。
-- 初始化成功且首个有效输入后创建虚拟输出，拒绝旧设备实例的延迟数据；拔线、休眠、账号离线、停止立即释放并删除自有虚拟手柄，关闭并释放持有的接口。
-- USB静默不等于断线。必须验证长按时仅状态变化上报的设备；将输入状态更新与连接健康/输出租约分开，不能直接把500ms无报文当成设备离线，也不能伪造收到的物理输入帧数。
-- 日志覆盖发现、VID/PID、接口与端点选择、claim、握手步骤/ACK/超时、输入计数、源选择、账号绑定、断开和资源释放。不记录无限量原始载荷。
+游戏震动回传使用 XInput 标准八字节输出；LED 优先，输出背压可重试，过期反馈会停止。运行期震动输出失败不主动关闭可用输入。
 
-实机验收先原装手柄单独，再有线手柄独立账号与原装共存；覆盖游戏输入、PS键、长按、反复插拔、停止和待机。未完成这些验证不能声称 USB 已支持。
+## 日志与控制面
 
-## 当前实现与限制
+设置页显示本次启动最近扫描到但未接入的候选，包含节点、VID/PID、失败阶段和 errno。`GET /api/v1/usb` 的 `rejected` 数组最多保存 16 个按节点去重的诊断快照；它不是实时在线设备列表，重新启动 USB 清空，成功打开对应节点也移除旧失败。Sony 身份显示为 `system_device_excluded` 诊断，不是待桥接候选，也不会 detach。
 
-默认关闭；控制面提供USB启动/停止、设备节点、VID/PID、输入帧数与绑定状态。检测周期不超过100ms；只续期已提交且仍有明确传输健康证据的状态。拔线关闭接口并清理输出，已启用时可重新枚举；休眠/账号离线/主动停止后必须手动启动。
+## Generic HID 诊断与空实现
 
-Switch握手等待ACK，单步250ms、最多3次、全程4.8秒，无sleep。已知XInput可发送LED激活，未知候选首帧前只读。连续3个无效输入报告拒绝该设备。USB接口只选择alt0、单interrupt IN/OUT对；不支持的布局暂时拒绝，不猜测端点。
+Generic HID Gamepad 只新增识别及空实现入口。`uc_usb_generic_hid_parse` 固定返回 `UC_USB_HID_UNIMPLEMENTED`，不修改输入状态，不注册虚拟输出；不会 detach/claim HID，也不会打开 HID 端点或发送 LED、震动和 SET_REPORT。USB 当前仍只有 XInput 会实际桥接。
 
-FreeBSD原生USB_FS收发只开选中设备的两个传输槽；USB_IFACE_DRIVER_ACTIVE、CLAIM_INTERFACE等所有权检查在PS5是否完整实现仍需实机。缺失/占用即拒绝，不通过detach绕过。已接入Switch及Xbox360/XInput游戏震动回传，初始化与震动共用输出调度，反馈超过500ms停止。具体型号需实机验证。
+配置诊断保留设备类别、配置索引/值、接口 number/index/alt/class/subclass/protocol，以及端点方向、类型、包长和间隔。对第一个 alt0、非 Boot subclass 的 HID 接口，通过只读标准 GET_DESCRIPTOR（0x22）查询报告描述符，查看顶层 Application Collection 的 Game Pad/Joystick/Keyboard/Mouse usage。接口类别 03 或 VID/PID 本身不证明是 Generic Gamepad；已知 Switch 身份仍标记为专用协议。
 
-## FreeBSD、Linux参考
+报告描述符只做诊断分类，不是完整协议解析。多个 HID 接口只探测第一个符合条件的接口；读取失败、截断和格式不完整都保留诊断，不作为 Gamepad 证据。探测结果按节点、VID/PID、配置摘要与配置索引共享缓存，最多 16 条，失败也缓存。重新启动 USB 清空缓存；配置变化或缓存淘汰后可重新探测。
 
-ugen是FreeBSD的原始USB访问接口，不是统一手柄驱动；Linux对应usbfs(/dev/bus/usb)，读取事件还可通过hidraw/evdev。USB设备描述符和协议一致，节点、ioctl、异步传输与接口占用API不同。PS5的FreeBSD衍生实现不能等同当前FreeBSD。
+USB 服务开启期间，每 100ms 最多检查一个已缓存 HID 节点，16 条缓存完整检查一轮约需 1.6 秒（还受事件循环调度影响）。确认控制节点消失时，清除该节点所有描述符缓存和页面诊断记录。支持时比较 `USB_GET_PLUGTIME` 插入时间标记，同时比较节点 inode/device，识别快速拔插或地址复用；使用缓存前也检查设备实例是否变化。没有 detach/claim 或输入输出命令。EACCES、EBUSY 等不确定错误不会当作拔出。固件若不支持插入标记，且快速拔插同时复用了节点 inode，轮询可能无法识别这次变化，仍可手动重启 USB 强制重读。未缓存的其它拒绝记录仍是诊断快照。
 
-FreeBSD已有[通用HID游戏手柄hgame](https://github.com/freebsd/freebsd-src/blob/main/sys/dev/hid/hgame.c)与[Xbox360 xb360gp](https://github.com/freebsd/freebsd-src/blob/main/sys/dev/hid/xb360gp.c)。xb360gp用合成HID描述符适配没有标准HID描述符的Xbox360协议，可参考其识别、按键与坐标映射；不能把FreeBSD内核模块直接载入PS5。参考[ugen手册源码](https://github.com/freebsd/freebsd-src/blob/main/share/man/man4/ugen.4)、[Linux xpad](https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c)。本轮未复制FreeBSD驱动实现。
+`GET /api/v1/usb/diagnostics` 仅导出已有快照，不执行新硬件查询。网页日志页的复制/导出会自动包含完整 JSON：最多 8 个接口和 16 个端点，配置描述符前 256 字节、HID 报告描述符最多 512 字节的十六进制数据，以及声明/捕获长度、截断标记、读取 errno、detach/claim 结果。XInput 还保留首个原始输入包最多 64 字节；它可能是状态通知，不等同有效按键。
 
-Nova系列型号、接收器输入静默保护及不扩展USB DInput的范围见[型号说明](gamesir-nova.md)。
+切换启明星模式时，建议先导出当前模式，再切换模式或重新插拔，并另存一份诊断。常规拔插会自动重新读取 HID 描述符；如果没有捕获到设备实例变化，可停止再启动 USB 强制重读。拔出后的 HID 快照会清除，需保留证据时先导出。
+
+关键阶段包括 `control_open`、`device_descriptor`、`configuration_descriptor`、`not_supported_xinput`、`claim_interface`、`input_endpoint_open`、`output_endpoint_open` 和 `short_transfer`。日志还记录选中接口、detach、LED 激活、首包长度/头部、首个有效输入及关闭；相同节点与原因不会每次扫描重复打印。
+
+实机先测试原装手柄独立工作，再启动 USB 插入 XInput 手柄：确认设备列表、输入帧数、独立账号的游戏控制、PS 键、震动、拔插、停止和休眠。验证前不要将主机模拟通过视为 PS5 实机可用。

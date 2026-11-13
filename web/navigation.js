@@ -85,17 +85,20 @@
   let lastFocus, lastRegion;
   document.addEventListener("focusin", (e) => {
     lastFocus = e.target;
-    lastRegion = e.target.closest("section,details,header,.row");
+    lastRegion = e.target.closest("[data-focus-region],section,details,header,.row");
   });
   document.addEventListener("DOMContentLoaded", () => {
     new MutationObserver(() => {
       if (!lastFocus || (lastFocus.isConnected && !lastFocus.matches(":disabled"))) return;
       if (document.activeElement !== document.body && document.activeElement !== lastFocus) return;
       const region = lastRegion?.isConnected ? lastRegion : document;
-      focus(
-        [...region.querySelectorAll(selector)].find((el) => el.getClientRects().length) ||
-          document.querySelector('nav a[aria-current="page"]'),
+      const next = [...region.querySelectorAll(selector)].find(
+        (el) => !el.closest("[hidden],[inert]") && el.getClientRects().length,
       );
+      // Service actions may all be disabled while a request is pending. Wait
+      // for an action in this group instead of jumping to a different service.
+      if (!next && region.matches("[data-focus-region]")) return;
+      focus(next || document.querySelector('nav a[aria-current="page"]'));
     }).observe(document.body, {
       childList: true,
       subtree: true,

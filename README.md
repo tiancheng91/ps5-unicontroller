@@ -50,10 +50,10 @@
 
 | 设备 / 协议         | 蓝牙                          | USB                              | 当前限制                                              |
 | ------------------- | ----------------------------- | -------------------------------- | ----------------------------------------------------- |
-| Switch Pro 兼容手柄 | Classic                       | `057e:2009` 兼容协议             | Switch 身份的 BLE 入口会拒绝，避免无效设备占位        |
+| Switch Pro 兼容手柄 | Classic                       | 暂不支持                         | Switch 身份的 BLE 入口会拒绝，避免无效设备占位        |
 | Joy-Con             | 左、右独立解析                | —                                | 不支持左右合并                                        |
 | Xbox                | 已登记的 Xbox HID 型号        | Xbox 360 / XInput 兼容接口及报告 | 不支持 Xbox One/Series USB GIP 或专用 Xbox 无线接收器 |
-| Android / 通用 HID  | 可解析的 HID 描述符及已知布局 | —                                | 不保证任意 Android 模式或 USB HID 可用                |
+| Android / 通用 HID  | 可解析的 HID 描述符及已知布局 | 仅 HID 诊断，未接入输入          | 不保证任意 Android 模式或 USB HID 可用                |
 
 BLE 默认采用白名单，当前内置仅开放 Xbox `045e:0b13`。第三方手柄建议先用已知的 **Switch Classic 模式**验证；不能仅凭 VID/PID、设备名称或“支持 XInput”的商品描述认定兼容。
 

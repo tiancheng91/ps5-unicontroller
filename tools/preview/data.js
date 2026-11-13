@@ -51,6 +51,21 @@
     input_frames: 10,
     battery: -1,
   };
+  const usbHidDiagnostic = {
+    node: "/dev/ugen1.5",
+    vid: "3537",
+    pid: "1041",
+    reason: "generic_hid_not_implemented",
+    errno: 0,
+    protocol_hint: "generic-hid-gamepad",
+    interface_summary: "IF0 alt0 03/00/00",
+    hid_report_captured: 7,
+    hid_report_declared: 7,
+    hid_report_valid: true,
+    report_descriptor_hex: "05010905a101c0",
+    config_descriptor_hex: "",
+    preview: true,
+  };
   const usb = {
     state: "off",
     reason: "",
@@ -115,7 +130,9 @@
     }
     let data = {},
       status = 200;
-    if (path === "/session") data = { token: "preview-only-token" };
+    if (path === "/usb/diagnostics")
+      data = { schema_version: 1, snapshot: true, devices: usb.rejected || [], preview: true };
+    else if (path === "/session") data = { token: "preview-only-token" };
     else if (path === "/users")
       data = {
         users: [
@@ -184,7 +201,10 @@
           bt.paired.forEach((bond) => {
             bond.connected = state.devices.some((d) => d.address === bond.address);
           });
-        } else state.devices = [usbDevice];
+        } else {
+          state.devices = [usbDevice];
+          state.rejected = [usbHidDiagnostic];
+        }
       } else if (action === "stop") {
         state.state = "off";
         state.running = false;

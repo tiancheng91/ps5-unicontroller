@@ -24,8 +24,11 @@ static struct {
     usb_slot slots[USB_SLOTS];
     uc_usb_transport injected[USB_SLOTS];
     unsigned injected_count, count, level;
+    uc_usb_device rejected[16];
+    unsigned rejected_count;
     int enabled, rumble, clock_valid;
-    uint64_t clock;
+    uint64_t clock, last_presence;
+    int presence_valid;
     const char *reason;
 } usb = {.level = 3, .rumble = 1};
 static int transport_valid(const uc_usb_transport *t)
@@ -148,6 +151,7 @@ int uc_usb_start(int32_t user)
         return -1;
     }
     memset(usb.slots, 0, sizeof(usb.slots));
+    usb.rejected_count = 0;
     usb.count = 0;
     unsigned wanted = usb.injected_count ? usb.injected_count : USB_SLOTS;
     for (unsigned i = 0; i < wanted; i++) {
@@ -174,12 +178,14 @@ int uc_usb_start(int32_t user)
     usb.slots[0].user = user;
     usb.enabled = 1;
     usb.reason = NULL;
-    usb.clock_valid = 0;
+    usb.clock_valid = usb.presence_valid = 0;
+    uc_log_info("[usb] started slots=%u user=%d; XInput interfaces only", usb.count, user);
     return 0;
 }
 int uc_usb_stop(void)
 {
     usb.enabled = 0;
+    uc_log_info("[usb] stopping and releasing owned interfaces");
     int result = 0;
     for (unsigned i = 0; i < usb.count; i++) {
         usb_slot *s = &usb.slots[i];
@@ -240,6 +246,47 @@ static int submit(usb_slot *s, uint64_t now)
     s->submitted = s->frames;
     return 0;
 }
+static void record_rejection(const uc_usb_device *device)
+{
+    for (unsigned i = 0; i < usb.rejected_count; i++)
+        if (!strcmp(usb.rejected[i].node, device->node)) {
+            if (usb.rejected[i].vid == device->vid && usb.rejected[i].pid == device->pid &&
+                usb.rejected[i].error_number == device->error_number &&
+                !strcmp(usb.rejected[i].reason, device->reason) &&
+                usb.rejected[i].diagnostic.config_hash == device->diagnostic.config_hash &&
+                usb.rejected[i].diagnostic.report_errno == device->diagnostic.report_errno &&
+                usb.rejected[i].diagnostic.report_saved == device->diagnostic.report_saved &&
+                usb.rejected[i].diagnostic.report_valid == device->diagnostic.report_valid &&
+                !memcmp(usb.rejected[i].diagnostic.report, device->diagnostic.report,
+                        sizeof(device->diagnostic.report)))
+                return;
+            usb.rejected[i] = *device;
+            goto changed;
+        }
+    if (usb.rejected_count == 16) {
+        memmove(usb.rejected, usb.rejected + 1, 15 * sizeof(usb.rejected[0]));
+        --usb.rejected_count;
+    }
+    usb.rejected[usb.rejected_count++] = *device;
+changed:
+    uc_log_warn("[usb] node=%s vid=%04x pid=%04x rejected=%s errno=%d", device->node, device->vid,
+                device->pid, device->reason, device->error_number);
+    uc_log_info("[usb] node=%s protocol=%s interfaces=%s config_valid=%d report=%u/%u errno=%d",
+                device->node, uc_usb_diagnostic_hint(device->vid, device->pid, &device->diagnostic),
+                device->diagnostic.summary, device->diagnostic.config_valid,
+                device->diagnostic.report_saved, device->diagnostic.report_declared,
+                device->diagnostic.report_errno);
+}
+static void forget_rejection(const char *node)
+{
+    for (unsigned i = 0; i < usb.rejected_count; i++)
+        if (!strcmp(usb.rejected[i].node, node)) {
+            memmove(usb.rejected + i, usb.rejected + i + 1,
+                    (usb.rejected_count - i - 1) * sizeof(usb.rejected[0]));
+            --usb.rejected_count;
+            return;
+        }
+}
 static void poll_slot(unsigned index, uint64_t now)
 {
     usb_slot *s = &usb.slots[index];
@@ -263,7 +310,7 @@ static void poll_slot(unsigned index, uint64_t now)
         return;
     }
     if (!s->attached) {
-        if (s->scanned && now - s->last_scan < 1000)
+        if (s->scanned && now - s->last_scan < 100)
             return;
         s->scanned = 1;
         s->last_scan = now;
@@ -276,6 +323,13 @@ static void poll_slot(unsigned index, uint64_t now)
         }
         if (!found)
             return;
+        if (found == 2) {
+            device.node[sizeof(device.node) - 1] = 0;
+            device.reason[sizeof(device.reason) - 1] = 0;
+            record_rejection(&device);
+            return;
+        }
+        forget_rejection(device.node);
         s->device = device;
         s->device.node[sizeof(s->device.node) - 1] = 0;
         for (size_t i = 0; s->device.node[i]; i++) {
@@ -284,7 +338,7 @@ static void poll_slot(unsigned index, uint64_t now)
                 s->device.node[i] = '_';
         }
         s->attached = 1;
-        if (device.kind != UC_USB_SWITCH && device.kind != UC_USB_XINPUT) {
+        if (device.kind != UC_USB_XINPUT) {
             fail_slot(index, "unsupported_device", 0, now);
             return;
         }
@@ -292,8 +346,6 @@ static void poll_slot(unsigned index, uint64_t now)
         s->frames = s->submitted = 0;
         s->reason = NULL;
         uc_usb_protocol_begin(&s->protocol, device.kind, now);
-        s->protocol.xinput_known =
-            device.kind == UC_USB_XINPUT && profile_usb_xinput_activation(device.vid, device.pid);
         log_code(3, index, "device_opened");
     }
     if (!s->health_valid || now - s->health_at >= 100) {
@@ -326,6 +378,14 @@ static void poll_slot(unsigned index, uint64_t now)
         }
         if (!count)
             break;
+        uc_usb_diagnostics *diag = &s->device.diagnostic;
+        if (!diag->first_input_length) {
+            diag->first_input_length = (unsigned)count;
+            diag->first_input_saved = (unsigned)count < sizeof(diag->first_input)
+                                          ? (unsigned)count
+                                          : sizeof(diag->first_input);
+            memcpy(diag->first_input, packet, diag->first_input_saved);
+        }
         pad_state state = {0};
         int valid = uc_usb_protocol_feed(&s->protocol, packet, (size_t)count, &state, now);
         if (valid < 0) {
@@ -399,6 +459,16 @@ void uc_usb_poll(uint64_t now)
     }
     usb.clock = now;
     usb.clock_valid = 1;
+    if (usb.enabled && (!usb.presence_valid || now - usb.last_presence >= 100)) {
+        usb.presence_valid = 1;
+        usb.last_presence = now;
+        char node[24];
+        if (uc_usb_transport_take_removed(node, sizeof(node))) {
+            forget_rejection(node);
+            uc_log_info("[usb] node=%s removed diagnostic snapshot after HID unplug/replacement",
+                        node);
+        }
+    }
     for (unsigned i = 0; i < usb.count; i++)
         poll_slot(i, now);
 }
@@ -414,6 +484,101 @@ static int append(char *b, size_t cap, size_t *used, const char *fmt, ...)
         return -1;
     *used += (size_t)n;
     return 0;
+}
+static int diagnostic_fields(char *b, size_t cap, size_t *used, const uc_usb_device *device,
+                             int full)
+{
+    const uc_usb_diagnostics *d = &device->diagnostic;
+#define FIELD(...)                                                                                 \
+    do {                                                                                           \
+        if (append(b, cap, used, __VA_ARGS__))                                                     \
+            return -1;                                                                             \
+    } while (0)
+    FIELD(",\"protocol_hint\":\"%s\",\"interface_summary\":\"%s\",\"device_class\":%u,"
+          "\"config_index\":%u,\"config_value\":%u,\"config_length\":%u,\"config_valid\":%s,"
+          "\"hid_report_interface\":%d,\"hid_report_declared\":%u,\"hid_report_captured\":%u,"
+          "\"hid_report_attempted\":%s,\"hid_report_errno\":%d,\"hid_report_valid\":%s,"
+          "\"hid_gamepad\":%s,\"hid_joystick\":%s,\"hid_keyboard\":%s,\"hid_mouse\":%s",
+          uc_usb_diagnostic_hint(device->vid, device->pid, d), d->summary, d->device_class,
+          d->config_index, d->config_value, d->config_length, d->config_valid ? "true" : "false",
+          d->report_interface, d->report_declared, d->report_saved,
+          d->report_attempted ? "true" : "false", d->report_errno,
+          d->report_valid ? "true" : "false", d->gamepad ? "true" : "false",
+          d->joystick ? "true" : "false", d->keyboard ? "true" : "false",
+          d->mouse ? "true" : "false");
+    FIELD(",\"detach_attempted\":%s,\"driver_detached\":%s,\"detach_errno\":%d,"
+          "\"claim_attempted\":%s,\"interface_claimed\":%s,\"claim_errno\":%d,"
+          "\"first_input_length\":%u",
+          d->detach_attempted ? "true" : "false", d->detached ? "true" : "false", d->detach_errno,
+          d->claim_attempted ? "true" : "false", d->claimed ? "true" : "false", d->claim_errno,
+          d->first_input_length);
+    if (!full)
+        return 0;
+    FIELD(",\"interfaces_truncated\":%s,\"endpoints_truncated\":%s,\"interfaces\":[",
+          d->interfaces_truncated ? "true" : "false", d->endpoints_truncated ? "true" : "false");
+    for (unsigned i = 0; i < d->interface_count && i < UC_USB_DIAG_INTERFACES; i++) {
+        const uc_usb_interface_info *p = &d->interfaces[i];
+        FIELD("%s{\"number\":%u,\"index\":%u,\"alternate\":%u,\"class\":%u,\"subclass\":%u,"
+              "\"protocol\":%u,\"endpoints\":%u,\"hid_report_length\":%u}",
+              i ? "," : "", p->number, p->index, p->alternate, p->class_code, p->subclass,
+              p->protocol, p->endpoints, p->report_length);
+    }
+    FIELD("],\"endpoints\":[");
+    for (unsigned i = 0; i < d->endpoint_count && i < UC_USB_DIAG_ENDPOINTS; i++) {
+        const uc_usb_endpoint_info *p = &d->endpoints[i];
+        FIELD("%s{\"interface\":%u,\"alternate\":%u,\"address\":%u,\"attributes\":%u,"
+              "\"packet_size\":%u,\"interval\":%u}",
+              i ? "," : "", p->interface_number, p->alternate, p->address, p->attributes,
+              p->packet_size, p->interval);
+    }
+    FIELD("],\"config_descriptor_truncated\":%s,\"report_descriptor_truncated\":%s,"
+          "\"config_descriptor_hex\":\"",
+          d->config_saved < d->config_length ? "true" : "false",
+          d->report_saved < d->report_declared ? "true" : "false");
+    for (unsigned i = 0; i < d->config_saved && i < sizeof(d->config); i++)
+        FIELD("%02x", d->config[i]);
+    FIELD("\",\"report_descriptor_hex\":\"");
+    for (unsigned i = 0; i < d->report_saved && i < sizeof(d->report); i++)
+        FIELD("%02x", d->report[i]);
+    FIELD("\",\"first_input_hex\":\"");
+    for (unsigned i = 0; i < d->first_input_saved && i < sizeof(d->first_input); i++)
+        FIELD("%02x", d->first_input[i]);
+    FIELD("\"");
+#undef FIELD
+    return 0;
+}
+size_t uc_usb_diagnostics_json(char *buffer, size_t capacity)
+{
+    if (!buffer || !capacity)
+        return 0;
+    size_t used = 0;
+    buffer[0] = 0;
+    if (append(buffer, capacity, &used, "{\"schema_version\":1,\"snapshot\":true,\"devices\":["))
+        return 0;
+    unsigned count = 0;
+    for (unsigned i = 0; i < usb.count + usb.rejected_count; i++) {
+        int opened = i < usb.count;
+        const uc_usb_device *d = opened ? &usb.slots[i].device : &usb.rejected[i - usb.count];
+        if (!d->node[0])
+            continue;
+        if (append(buffer, capacity, &used,
+                   "%s{\"node\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"opened\":%s,"
+                   "\"reason\":\"%s\",\"errno\":%d",
+                   count++ ? "," : "", d->node, d->vid, d->pid,
+                   opened && usb.slots[i].attached ? "true" : "false",
+                   opened && usb.slots[i].reason ? usb.slots[i].reason : d->reason,
+                   d->error_number) ||
+            diagnostic_fields(buffer, capacity, &used, d, 1) ||
+            append(buffer, capacity, &used, "}")) {
+            buffer[0] = 0;
+            return 0;
+        }
+    }
+    if (append(buffer, capacity, &used, "]}")) {
+        buffer[0] = 0;
+        return 0;
+    }
+    return used;
 }
 size_t uc_usb_status_json(char *buffer, size_t capacity)
 {
@@ -447,7 +612,7 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
         usb_slot *s = &usb.slots[i];
         if (!s->device.node[0])
             continue;
-        const char *profile = s->device.kind == UC_USB_SWITCH ? "switch-usb" : "xinput-usb";
+        const char *profile = "xinput-usb";
         const char *model = pad_display_name_for_transport(PAD_TRANSPORT_USB, s->device.vid,
                                                            s->device.pid, profile);
         /* Model aliases are ASCII but may contain quotes: quote them as JSON. */
@@ -461,12 +626,29 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
         escaped[at] = 0;
         ADD("%s{\"slot\":%u,\"node\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"profile\":\"%s\","
             "\"model\":\"%s\",\"user_id\":%d,\"connected\":%s,\"input_frames\":%llu,\"bound\":%s,"
-            "\"pending\":%s,\"rumble_available\":%s,\"session_id\":%llu,\"reason\":\"%s\"}",
+            "\"pending\":%s,\"rumble_available\":%s,\"session_id\":%llu,\"reason\":\"%s\"",
             comma++ ? "," : "", i, s->device.node, s->device.vid, s->device.pid, profile, escaped,
             s->user, s->attached ? "true" : "false", (unsigned long long)s->frames,
             active(s) ? "true" : "false", s->pending ? "true" : "false",
             usb.rumble && s->protocol.ready && !s->protocol.rumble_failed ? "true" : "false",
             (unsigned long long)s->session, s->reason ? s->reason : "");
+        if (diagnostic_fields(buffer, capacity, &used, &s->device, 0)) {
+            buffer[0] = 0;
+            return 0;
+        }
+        ADD("}");
+    }
+    ADD("],\"rejected\":[");
+    for (unsigned i = 0; i < usb.rejected_count; i++) {
+        const uc_usb_device *d = &usb.rejected[i];
+        ADD("%s{\"node\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\","
+            "\"reason\":\"%s\",\"errno\":%d",
+            i ? "," : "", d->node, d->vid, d->pid, d->reason, d->error_number);
+        if (diagnostic_fields(buffer, capacity, &used, d, 0)) {
+            buffer[0] = 0;
+            return 0;
+        }
+        ADD("}");
     }
     ADD("]}");
 #undef ADD

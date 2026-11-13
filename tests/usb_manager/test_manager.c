@@ -6,7 +6,7 @@
 #include <string.h>
 typedef struct {
     unsigned id;
-    int scans, reads, closes, health, available, alive, reports, read_error;
+    int scans, reads, closes, health, available, alive, reports, read_error, reject;
 } transport_mock;
 static transport_mock ports[4];
 static struct {
@@ -139,6 +139,12 @@ static int scan(void *ctx, uc_usb_device *out)
         return 0;
     *out = (uc_usb_device){.kind = UC_USB_XINPUT, .vid = 0x045e, .pid = 0x028e};
     snprintf(out->node, sizeof(out->node), "/dev/ugen1.%u", m->id + 1);
+    if (m->reject) {
+        out->kind = UC_USB_NONE;
+        snprintf(out->reason, sizeof(out->reason), "claim_interface");
+        out->error_number = 16;
+        return 2;
+    }
     return 1;
 }
 static int read_packet(void *ctx, uint8_t *out, size_t cap)
@@ -171,6 +177,15 @@ static void close_device(void *ctx)
     ((transport_mock *)ctx)->closes++;
 }
 static const uc_usb_ops ops = {scan, read_packet, write_packet, alive, close_device};
+static int hid_removed;
+int uc_usb_transport_take_removed(char *node, size_t capacity)
+{
+    if (!hid_removed)
+        return 0;
+    snprintf(node, capacity, "/dev/ugen1.1");
+    hid_removed = 0;
+    return 1;
+}
 int uc_usb_transport_open(uc_usb_transport *out)
 {
     (void)out;
@@ -252,6 +267,33 @@ static int by_user(int user)
 int main(void)
 {
     uc_usb_set_log_level(0);
+    setup(1);
+    ports[0].reject = 1;
+    assert(!uc_usb_start(1));
+    uc_usb_poll(0);
+    char diagnostic[8192];
+    assert(uc_usb_status_json(diagnostic, sizeof(diagnostic)));
+    assert(strstr(diagnostic, "claim_interface") && strstr(diagnostic, "\"errno\":16"));
+    assert(!uc_core_active_session());
+    assert(uc_usb_diagnostics_json(diagnostic, sizeof(diagnostic)));
+    assert(strstr(diagnostic, "config_descriptor_hex") &&
+           strstr(diagnostic, "report_descriptor_hex"));
+    char diagnostic_tiny[8];
+    assert(!uc_usb_diagnostics_json(diagnostic_tiny, sizeof(diagnostic_tiny)));
+    uc_usb_poll(100);
+    assert(uc_usb_status_json(diagnostic, sizeof(diagnostic)));
+    const char *entry = strstr(diagnostic, "claim_interface");
+    assert(entry && !strstr(entry + 1, "claim_interface")); /* Deduplicated scan rejection. */
+    ports[0].reject = ports[0].available = 0;
+    hid_removed = 1;
+    uc_usb_poll(200);
+    assert(uc_usb_status_json(diagnostic, sizeof(diagnostic)));
+    assert(!strstr(diagnostic, "claim_interface"));
+    ports[0].available = 1;
+    uc_usb_poll(300);
+    assert(uc_usb_status_json(diagnostic, sizeof(diagnostic)));
+    assert(!strstr(diagnostic, "claim_interface"));
+    finish();
     setup(4);
     assert(uc_usb_start(1) == 0);
     uc_usb_poll(0);
@@ -272,7 +314,7 @@ int main(void)
     for (int user = 1; user <= 4; user++)
         assert(by_user(user) >= 0);
     assert(uc_usb_assign(1, "/dev/ugen1.2", 1) < 0);
-    char json[4096];
+    char json[32768];
     assert(uc_usb_status_json(json, sizeof(json)) && strstr(json, "\"slot\":3") &&
            strstr(json, "\"user_id\":4"));
     char tiny[2];
@@ -308,8 +350,10 @@ int main(void)
     assert(!uc_usb_start(1));
     uc_usb_poll(3000);
     int scans = ports[0].scans;
-    uc_usb_poll(3100);
+    uc_usb_poll(3099);
     assert(ports[0].scans == scans);
+    uc_usb_poll(3100);
+    assert(ports[0].scans == scans + 1);
     c = ports[0].closes;
     finish();
     assert(ports[0].closes == c + 1);

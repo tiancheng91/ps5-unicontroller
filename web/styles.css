@@ -87,8 +87,7 @@ button:focus,
 select:focus,
 input:focus,
 summary:focus,
-a:focus,
-h1:focus {
+a:focus {
   outline: 3px solid var(--text);
   outline-offset: 4px;
 }

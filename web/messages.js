@@ -33,7 +33,8 @@ window.UCMessages = {
     account: "账号 {id}",
     gate: "选择已登录用户并等待稳定 5 秒后可启动。",
     btHint: "Switch 模式使用 Classic；额外手柄需分别分配账号。",
-    usbHint: "使用数据线连接支持的 Switch 或 XInput 手柄。",
+    usbHint:
+      "使用数据线或接收器连接 XInput 模式手柄；Generic HID 仅提供诊断，暂不桥接输入；USB Switch 暂不支持。",
     systemChoice: "系统用户选择实验 · 绑定未确认",
     outputActive: "虚拟输出已启用",
     outputWaiting: "等待虚拟输出",
@@ -141,6 +142,8 @@ window.UCMessages = {
     bluetoothService: "蓝牙服务",
     bluetoothServiceHint: "启用连接及已配对设备回连；添加设备从“手柄”页进入。",
     usbService: "USB 服务",
+    usbRejected: "未接入设备（本次启动的最近扫描结果）",
+    usbDiagnosticsHint: "完整接口、端点与描述符信息可在日志页复制或导出。",
     serviceGate:
       "启动需有已登录账号，且系统保持工作状态。页面读取到账号后先等待 5 秒；测试输出需先关闭。",
     rumbleHint: "允许支持的实体手柄接收震动反馈。",
@@ -216,7 +219,8 @@ window.UCMessages = {
     account: "User {id}",
     gate: "Select a signed-in user and allow five stable seconds before starting.",
     btHint: "Use Classic for Switch mode. Assign additional controllers to separate users.",
-    usbHint: "Use a data cable with a supported Switch or XInput controller.",
+    usbHint:
+      "Connect a controller or receiver in XInput mode. Generic HID is diagnostic-only; USB Switch is not supported.",
     systemChoice: "System user-selection experiment · binding unverified",
     outputActive: "Virtual output active",
     outputWaiting: "Waiting for virtual output",
@@ -335,6 +339,8 @@ window.UCMessages = {
     bluetoothService: "Bluetooth service",
     bluetoothServiceHint: "Enable connections and reconnection. Add new devices from Controllers.",
     usbService: "USB service",
+    usbRejected: "Devices not opened (recent scan results from this run)",
+    usbDiagnosticsHint: "Copy or export logs for complete interfaces, endpoints and descriptors.",
     serviceGate:
       "A signed-in account and stable awake state are required. Wait 5 seconds after loading users; disable test output first.",
     rumbleHint: "Allow supported physical controllers to receive rumble.",

@@ -99,11 +99,9 @@
       });
       if (changed)
         Alpine.nextTick(() => {
-          const heading = document.querySelector("#" + next + "-view h1");
-          if (heading) {
-            heading.tabIndex = -1;
-            heading.focus();
-          }
+          // Page titles are display-only. Keep route focus on an actionable
+          // navigation item so Tab/arrows can continue without a heading stop.
+          document.querySelector('nav a[aria-current="page"]')?.focus();
         });
     };
     route();

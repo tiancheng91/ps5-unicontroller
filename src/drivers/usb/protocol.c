@@ -3,11 +3,9 @@
 #include <string.h>
 
 #define INIT_DEADLINE_MS 4800u
-#define ACK_TIMEOUT_MS 250u
 static int fail(uc_usb_protocol *p)
 {
-    uc_log_error("usb protocol: initialization/input failed kind=%d step=%d attempts=%d", p->kind,
-                 p->step, p->attempts);
+    uc_log_error("usb xinput: initialization/input failed rejected=%u", p->rejected_reports);
     p->failed = 1;
     p->ready = 0;
     return -1;
@@ -17,21 +15,12 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     memset(p, 0, sizeof(*p));
     p->kind = kind;
     p->started = now;
-    if (kind != UC_USB_SWITCH && kind != UC_USB_XINPUT)
+    if (kind != UC_USB_XINPUT)
         p->failed = 1;
-}
-static void advance(uc_usb_protocol *p)
-{
-    log_line("usb switch: initialization step=%d acknowledged", p->step);
-    p->step++;
-    p->attempts = p->waiting = p->pending_length = 0;
-    if (p->step == 9)
-        p->ready = 1;
 }
 int uc_usb_protocol_rumble(uc_usb_protocol *p, uint8_t strong, uint8_t weak, uint64_t now)
 {
-    if (!p || !p->ready || p->failed || p->rumble_failed ||
-        (p->kind != UC_USB_SWITCH && p->kind != UC_USB_XINPUT))
+    if (!p || !p->ready || p->failed || p->rumble_failed || p->kind != UC_USB_XINPUT)
         return -1;
     int changed = !p->rumble_seen || p->rumble_strong != strong || p->rumble_weak != weak;
     p->rumble_seen = 1;
@@ -84,19 +73,9 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
             now - p->rumble_sent_at < 60)
             return 0;
         memset(p->rumble_packet, 0, sizeof(p->rumble_packet));
-        if (p->kind == UC_USB_SWITCH) {
-            const pad_profile *profile = profile_builtin_named("switch");
-            pad_output output = {.strong = p->rumble_strong, .weak = p->rumble_weak};
-            if (!profile || !profile->build_output ||
-                profile->build_output(p->context.bytes, &output, p->rumble_packet,
-                                      sizeof(p->rumble_packet)) != 10)
-                return rumble_fail(p);
-            p->rumble_length = 64; /* USB uses the same motor encoding, zero-padded. */
-        } else {
-            const uint8_t packet[8] = {0, 8, 0, p->rumble_strong, p->rumble_weak, 0, 0, 0};
-            memcpy(p->rumble_packet, packet, sizeof(packet));
-            p->rumble_length = sizeof(packet);
-        }
+        const uint8_t packet[8] = {0, 8, 0, p->rumble_strong, p->rumble_weak, 0, 0, 0};
+        memcpy(p->rumble_packet, packet, sizeof(packet));
+        p->rumble_length = sizeof(packet);
         p->rumble_queued_at = now;
         p->rumble_attempts = 0;
     }
@@ -117,82 +96,24 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
 }
 int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
 {
-    static const uint8_t commands[] = {1, 2, 3, 2, 4};
     if (!p || p->failed)
         return -1;
-    if (p->kind == UC_USB_XINPUT) {
-        if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
-            return fail(p);
-        if (p->led_sent)
-            return p->ready ? rumble_poll(p, t, now) : 0;
-        if (now < p->started || now - p->started >= INIT_DEADLINE_MS)
-            return fail(p);
-        /* Unknown VID/PID candidates receive no commands until a real 00/14
-         * frame proves the interface protocol. Known native XInput identities
-         * may need LED activation before it will start streaming. */
-        if (!p->xinput_known && !p->ready)
-            return 0;
-        if (!t || !t->ops || !t->ops->write)
-            return fail(p);
-        static const uint8_t led[] = {0x01, 0x03, 0x06};
-        int written = t->ops->write(t->context, led, sizeof(led));
-        if (written < 0 || (written > 0 && written != (int)sizeof(led)))
-            return fail(p);
-        if (written == (int)sizeof(led))
-            p->led_sent = 1;
-        return 0;
-    }
-    if (p->ready)
-        return rumble_poll(p, t, now);
-    if (now < p->started || now - p->started >= INIT_DEADLINE_MS)
+    if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
         return fail(p);
+    if (p->led_sent)
+        return p->ready ? rumble_poll(p, t, now) : 0;
+    /* FF/5D/01 plus validated interrupt endpoints authorizes the standard LED
+     * activation, including third-party VID/PIDs that wait for host output. */
     if (!t || !t->ops || !t->ops->write)
         return fail(p);
-    if (p->waiting) {
-        if (now < p->sent_at)
-            return fail(p);
-        if (now - p->sent_at < ACK_TIMEOUT_MS)
-            return 0;
-        p->waiting = 0;
-        if (p->attempts >= 3)
-            return fail(p);
-    }
-    if (!p->pending_length) {
-        memset(p->pending, 0, sizeof(p->pending));
-        if (p->step < 5) {
-            p->pending[0] = 0x80;
-            p->pending[1] = commands[p->step];
-            p->pending_length = 2;
-            p->expected_ack = commands[p->step];
-        } else {
-            const pad_profile *profile = profile_find(0x057e, 0x2009);
-            pad_output output = {0};
-            output.player = 1;
-            if (!profile || !profile->init_report)
-                return fail(p);
-            int n = profile->init_report(p->context.bytes, p->step - 5, &output, p->pending,
-                                         sizeof(p->pending));
-            if (n < 11 || n > (int)sizeof(p->pending))
-                return fail(p);
-            p->pending_length = (unsigned)n;
-            p->expected_ack = p->pending[10];
-        }
-    }
-    /* Switch USB interrupt reports are zero-padded to the 64-byte endpoint size.
-     * A would-block return retains the exact command/counter, with no busy loop. */
-    int written = t->ops->write(t->context, p->pending, sizeof(p->pending));
-    if (written < 0 || (written > 0 && written != (int)sizeof(p->pending)))
+    static const uint8_t led[] = {0x01, 0x03, 0x06};
+    int written = t->ops->write(t->context, led, sizeof(led));
+    if (written < 0 || (written > 0 && written != (int)sizeof(led)))
         return fail(p);
-    if (!written)
-        return 0;
-    ++p->attempts;
-    log_line("usb switch: initialization step=%d attempt=%d command=%#x", p->step, p->attempts,
-             p->expected_ack);
-    p->sent_at = now;
-    if (p->step == 4)
-        advance(p); /* 80/04 disables USB timeout; no reply is defined. */
-    else
-        p->waiting = 1;
+    if (written == (int)sizeof(led)) {
+        p->led_sent = 1;
+        log_line("usb xinput: player LED activation sent; waiting for input");
+    }
     return 0;
 }
 static uint8_t axis(const uint8_t *bytes, int invert)
@@ -207,7 +128,7 @@ static uint8_t axis(const uint8_t *bytes, int invert)
 }
 static int xinput(const uint8_t *r, size_t n, pad_state *s)
 {
-    if (n != 20 || r[0] != 0 || r[1] != 20)
+    if (n < 20 || n > 64 || r[0] != 0 || r[1] != 20)
         return 0;
     pad_state_reset(s);
     static const uint32_t first[] = {PAD_UP,      PAD_DOWN,   PAD_LEFT, PAD_RIGHT,
@@ -239,47 +160,19 @@ int uc_usb_protocol_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_sta
         return -1;
     if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
         return fail(p);
-    if (p->kind == UC_USB_XINPUT) {
-        int valid = xinput(r, n, state);
-        if (valid) {
-            p->ready = 1;
-            p->rejected_reports = 0;
-        } else if (++p->rejected_reports >= 3) {
-            return fail(p);
-        }
-        return valid;
-    }
-    if (p->waiting && p->step < 5 && n >= 2 && r[0] == 0x81 && r[1] == p->expected_ack) {
-        advance(p);
-        return 0;
-    }
-    if (p->waiting && p->step >= 5 && n >= 15 && r[0] == 0x21 && r[14] == p->expected_ack) {
-        if (!(r[13] & 0x80))
-            return fail(p);
-        advance(p);
-        return 0;
-    }
-    if (!p->ready)
-        return 0;
-    /* Initialization ACKs may arrive late; they never renew the input lease. */
-    if (n >= 2 && r[0] == 0x81)
-        return 0;
-    if (n >= 15 && r[0] == 0x21)
-        return 0;
-    if (n < 49 || n > 64 || r[0] != 0x30) {
-        if (++p->rejected_reports >= 3)
-            return fail(p);
-        return 0;
-    }
-    const pad_profile *profile = profile_find(0x057e, 0x2009);
-    if (!profile)
+    if (p->kind != UC_USB_XINPUT)
         return fail(p);
-    pad_state_reset(state);
-    if (profile->parse(p->context.bytes, r, (int)n, state) == PARSE_NONE) {
-        if (++p->rejected_reports >= 3)
-            return fail(p);
+    int valid = xinput(r, n, state);
+    if (valid) {
+        if (!p->ready)
+            log_line("usb xinput: first valid input bytes=%zu", n);
+        p->ready = 1;
+        p->rejected_reports = 0;
+    } else if (n >= 3 && r[0] == 1 && r[1] == 3) {
+        /* Player LED/status notification is not a malformed input report. */
         return 0;
+    } else if (++p->rejected_reports >= 3) {
+        return fail(p);
     }
-    p->rejected_reports = 0;
-    return 1;
+    return valid;
 }

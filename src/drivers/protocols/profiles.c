@@ -729,10 +729,6 @@ const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid
     const uc_controller_override *r = uc_controller_override_find(transport, vid, pid);
     return r && r->has_name ? r->name : pad_display_name(vid, pid, profile);
 }
-int profile_usb_protocol_hint(uint16_t vid, uint16_t pid)
-{
-    return uc_controller_override_usb_hint(vid, pid);
-}
 
 int profile_system_bluetooth(uint16_t vid, uint16_t pid)
 {

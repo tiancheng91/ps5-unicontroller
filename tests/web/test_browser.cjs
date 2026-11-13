@@ -117,6 +117,25 @@ const root = path.resolve(__dirname, "../..");
     await page.locator('nav a[data-page="logs"]').click();
     await page.locator("#logs-view").waitFor({ state: "visible" });
     assert(!(await page.locator("#controllers-view").isVisible()));
+    for (const route of ["controllers", "settings", "logs"]) {
+      const navigation = page.locator('nav a[data-page="' + route + '"]');
+      await navigation.click();
+      await page.locator("#" + route + "-view").waitFor({ state: "visible" });
+      await page.waitForFunction(
+        (name) => document.activeElement?.matches('nav a[data-page="' + name + '"]'),
+        route,
+      );
+      const title = page.locator("#" + route + "-view h1");
+      assert.equal(await title.getAttribute("tabindex"), null);
+      await title.click();
+      assert(await page.evaluate(() => !document.activeElement?.matches("h1,h2,h3,p")));
+      await page.keyboard.press("Tab");
+      assert(
+        await page.evaluate(() =>
+          document.activeElement?.matches("a[href],button,input,select,summary"),
+        ),
+      );
+    }
     await page.locator('nav a[data-page="settings"]').click();
     await page.locator("#settings-view").waitFor({ state: "visible" });
     const beforeAppearance = await page.evaluate(() => window.commands.length);
@@ -131,6 +150,37 @@ const root = path.resolve(__dirname, "../..");
       "appearance has no hardware writes",
     );
     await page.locator("#ui-size").selectOption("normal");
+    // Disabling USB Start must not hand focus to Bluetooth Stop. Delay the
+    // request so both USB buttons remain disabled long enough to test recovery.
+    await page.evaluate(() => {
+      const request = UCAPI.request;
+      window.pendingUSBStarts = [];
+      UCAPI.request = async (...args) => {
+        if (args[0] === "/usb/start" && args[1] === "POST")
+          await new Promise((resolve) => window.pendingUSBStarts.push(resolve));
+        return request(...args);
+      };
+    });
+    await page.locator("#usb-start").focus();
+    await page.locator("#usb-start").click();
+    await page.waitForFunction(() => window.pendingUSBStarts.length === 1);
+    await page.waitForTimeout(100);
+    assert(await page.locator("#usb-start").isDisabled());
+    assert(await page.locator("#usb-stop").isDisabled());
+    assert.notEqual(await page.evaluate(() => document.activeElement?.id), "bt-stop");
+    await page.evaluate(() => window.pendingUSBStarts.shift()());
+    await page.waitForFunction(() => document.activeElement?.id === "usb-stop");
+    await page.locator("#usb-stop").click();
+    await page.waitForFunction(() => document.activeElement?.id === "usb-start");
+    // If the user moves elsewhere while waiting, completion cannot steal focus.
+    await page.locator("#usb-start").click();
+    await page.waitForFunction(() => window.pendingUSBStarts.length === 1);
+    await page.locator("#ui-theme").focus();
+    await page.evaluate(() => window.pendingUSBStarts.shift()());
+    await page.waitForFunction(() => !document.querySelector("#usb-stop").disabled);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "ui-theme");
+    await page.locator("#usb-stop").click();
+    await page.waitForFunction(() => document.activeElement?.id === "usb-start");
     await page.locator("#bt-stop").click();
     await page.waitForFunction(() => !document.querySelector("#save").disabled);
     await page.locator('summary[x-label="mapping"]').click();
@@ -231,6 +281,9 @@ const root = path.resolve(__dirname, "../..");
       };
     });
     await page.locator("#enable").click();
+    assert.equal(await page.locator("h1").getAttribute("tabindex"), null);
+    await page.locator("h1").click();
+    assert(await page.evaluate(() => !document.activeElement?.matches("h1")));
     const ps = page.locator('.padbutton[data-bit="65536"]');
     await page.waitForFunction(
       () => !document.querySelector('.padbutton[data-bit="65536"]').disabled,
@@ -269,6 +322,36 @@ const root = path.resolve(__dirname, "../..");
     assert(
       await np.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       "mobile page must not overflow horizontally",
+    );
+    // Rejected USB candidates remain diagnostic rows, never connected devices.
+    np.on("pageerror", (e) => errors.push(e.message));
+    await np.evaluate(() => {
+      const request = UCAPI.request;
+      UCAPI.request = async (...args) => {
+        const data = await request(...args);
+        if (args[0] === "/usb")
+          data.rejected = [
+            {
+              node: "/dev/ugen2.7",
+              vid: "3537",
+              pid: "1040",
+              reason: "claim_interface",
+              errno: 16,
+              protocol_hint: "generic-hid-gamepad",
+              interface_summary: "IF0 alt0 03/00/00",
+              hid_report_captured: 7,
+              hid_report_declared: 7,
+            },
+          ];
+        return data;
+      };
+    });
+    await np.getByText("3537:1040 · claim_interface · errno=16", { exact: true }).waitFor();
+    assert(await np.getByText("/dev/ugen2.7", { exact: true }).isVisible());
+    assert(
+      await np
+        .getByText("generic-hid-gamepad · IF0 alt0 03/00/00 · HID 7/7", { exact: true })
+        .isVisible(),
     );
     assert.deepEqual(errors, [], "no CSP or Alpine runtime errors");
     console.log(

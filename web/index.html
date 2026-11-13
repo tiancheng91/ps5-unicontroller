@@ -46,7 +46,7 @@
             <section id="controllers-view" class="view" x-show="$store.ui.controllersPage" x-cloak>
               <div class="page-heading">
                 <div>
-                  <h1 tabindex="-1" x-label="control"></h1>
+                  <h1 x-label="control"></h1>
                   <p x-label="intro"></p>
                 </div>
                 <button
@@ -130,7 +130,7 @@
             <section id="logs-view" class="view" x-show="$store.ui.logsPage" x-cloak>
               <div class="page-heading">
                 <div>
-                  <h1 tabindex="-1" x-label="logsTitle"></h1>
+                  <h1 x-label="logsTitle"></h1>
                   <p x-label="logsHint"></p>
                 </div>
                 <button id="export" @click="exportLogs" x-label="export"></button>
@@ -180,7 +180,7 @@
             >
               <div class="page-heading">
                 <div>
-                  <h1 tabindex="-1" x-label="settings"></h1>
+                  <h1 x-label="settings"></h1>
                   <p x-label="settingsIntro"></p>
                 </div>
               </div>
@@ -192,7 +192,7 @@
                     <p x-label="bluetoothServiceHint"></p>
                     <p class="service-error" x-text="btStatus"></p>
                   </div>
-                  <div class="service-actions">
+                  <div class="service-actions" data-focus-region>
                     <button
                       id="bt-start"
                       @click="startBT"
@@ -213,7 +213,7 @@
                     <p x-label="usbHint"></p>
                     <p class="service-error" x-text="usbStatus"></p>
                   </div>
-                  <div class="service-actions">
+                  <div class="service-actions" data-focus-region>
                     <button
                       id="usb-start"
                       @click="startUSB"
@@ -227,6 +227,18 @@
                       x-label="stopUSB"
                     ></button>
                   </div>
+                </div>
+                <div x-show="usbRejected.length">
+                  <h3 x-label="usbRejected"></h3>
+                  <p class="group-hint" x-label="usbDiagnosticsHint"></p>
+                  <template x-for="candidate in usbRejected" :key="candidate.node">
+                    <p class="service-error">
+                      <span x-text="candidate.node"></span><br /><span
+                        x-text="candidate.detail"
+                      ></span>
+                      <br /><span x-text="candidate.diagnostic"></span>
+                    </p>
+                  </template>
                 </div>
                 <p class="group-hint" x-label="serviceGate"></p>
               </div>

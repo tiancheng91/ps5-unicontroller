@@ -6,21 +6,14 @@
 /* Caller-owned, zero-copy protocol state; no sleeps or I/O in feed. */
 typedef struct {
     uc_usb_kind kind;
-    int step, attempts, waiting, ready, failed;
-    uint64_t started, sent_at;
-    uint8_t pending[64], expected_ack;
-    unsigned pending_length;
-    int xinput_known; /* Manager validates the XInput interface and native activation allowlist. */
+    int ready, failed;
+    uint64_t started;
     int led_sent;
     unsigned rejected_reports; /* Three malformed input packets fail the device. */
     uint8_t rumble_strong, rumble_weak, rumble_packet[64];
     unsigned rumble_length, rumble_attempts, rumble_stops;
     int rumble_seen, rumble_sample, rumble_dirty, rumble_sent, rumble_failed;
     uint64_t rumble_sample_at, rumble_sent_at, rumble_retry_at, rumble_queued_at;
-    union {
-        max_align_t align;
-        uint8_t bytes[PROFILE_CTX_MAX];
-    } context;
 } uc_usb_protocol;
 void uc_usb_protocol_begin(uc_usb_protocol *, uc_usb_kind, uint64_t now);
 /* Advances at most one initialization command per call; 0 progress/ready, -1 failed. */

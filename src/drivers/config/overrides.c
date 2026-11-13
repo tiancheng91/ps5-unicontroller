@@ -15,7 +15,6 @@
 static struct {
     uc_controller_override rule;
     const pad_profile *profile;
-    int usb_hint;
 } active[UC_OVERRIDE_MAX];
 static size_t active_count;
 
@@ -38,8 +37,7 @@ static int validate(const uc_controller_overrides *rules, char *error, size_t ca
         if (r->transport == PAD_TRANSPORT_USB) {
             if (r->has_mapping)
                 return invalid(error, cap, "USB HID mapping is not supported");
-            if (r->has_profile && strcmp(r->profile, "switch-usb") &&
-                strcmp(r->profile, "xinput-usb"))
+            if (r->has_profile && strcmp(r->profile, "xinput-usb"))
                 return invalid(error, cap, "unknown USB profile");
         } else {
             if (r->has_profile && strcmp(r->profile, "generic-hid")) {
@@ -99,9 +97,8 @@ int uc_controller_overrides_load(const char *path, char *error, size_t capacity)
         for (size_t i = 0; i < rules->count; i++) {
             active[i].rule = rules->devices[i];
             const uc_controller_override *r = &active[i].rule;
-            if (r->transport == PAD_TRANSPORT_USB && r->has_profile)
-                active[i].usb_hint = strcmp(r->profile, "switch-usb") == 0 ? 1 : 2;
-            else if (r->has_profile && strcmp(r->profile, "generic-hid"))
+            if (r->transport != PAD_TRANSPORT_USB && r->has_profile &&
+                strcmp(r->profile, "generic-hid"))
                 active[i].profile = profile_builtin_named(r->profile);
         }
         active_count = rules->count;
@@ -132,13 +129,5 @@ int uc_controller_override_profile(pad_transport transport, uint16_t vid, uint16
             return 1;
         }
     }
-    return 0;
-}
-int uc_controller_override_usb_hint(uint16_t vid, uint16_t pid)
-{
-    for (size_t i = 0; i < active_count; i++)
-        if (active[i].rule.transport == PAD_TRANSPORT_USB && active[i].rule.vid == vid &&
-            active[i].rule.pid == pid)
-            return active[i].usb_hint;
     return 0;
 }

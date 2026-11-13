@@ -37,5 +37,4 @@ const uc_controller_override *uc_controller_override_find(pad_transport transpor
 /* 1 means explicit profile override (NULL = generic HID), 0 means builtin. */
 int uc_controller_override_profile(pad_transport transport, uint16_t vid, uint16_t pid,
                                    const void **profile);
-int uc_controller_override_usb_hint(uint16_t vid, uint16_t pid);
 #endif

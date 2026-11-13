@@ -74,7 +74,6 @@ const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t 
 profile_family profile_classify_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);
 const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid, uint16_t pid,
                                            const char *profile);
-int profile_usb_protocol_hint(uint16_t vid, uint16_t pid);
 
 /* The pad's model as people know it ("Xbox Series X|S"), or NULL. */
 const char *profile_model_name(uint16_t vid, uint16_t pid);

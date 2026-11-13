@@ -4,7 +4,13 @@ const assert = require("assert"),
 (async () => {
   const h = harness(),
     m = h.model;
+  h.state.usb.rejected = [
+    { node: "/dev/ugen2.7", vid: "3537", pid: "1040", reason: "claim_interface", errno: 16 },
+  ];
   await m.refresh();
+  assert(m.usbRejected.length === 1 && m.usbRejected[0].detail.includes("claim_interface"));
+  assert(m.usbRejected[0].detail.includes("errno=16"));
+  assert(m.usbDevices.length === 0);
   assert(m.usbStartDisabled);
   h.advance(5001);
   await m.refresh();

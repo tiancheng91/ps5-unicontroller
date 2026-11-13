@@ -352,6 +352,15 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         response(c, 200, "application/json", status);
         return;
     }
+    if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/usb/diagnostics")) {
+        char *status = malloc(RESPONSE_MAX - 1024);
+        if (!status || !uc_usb_diagnostics_json(status, RESPONSE_MAX - 1024))
+            error_response(c, 503, "usb_diagnostics_unavailable");
+        else
+            response(c, 200, "application/json", status);
+        free(status);
+        return;
+    }
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/usb")) {
         if (usb_start_queued) {
             response(c, 200, "application/json",
@@ -359,7 +368,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                      "\"pending\":true,\"bound\":false}");
             return;
         }
-        char status[8192];
+        char status[32768];
         if (!uc_usb_status_json(status, sizeof(status)))
             error_response(c, 503, "usb_status_overflow");
         else
@@ -1023,7 +1032,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         }
         if (usb_start_queued && millis() >= usb_start_at) {
             usb_start_queued = 0;
-            (void)uc_usb_start(usb_start_user);
+            int rc = uc_usb_start(usb_start_user);
+            uc_log_info("[usb] queued start result=%d user=%d", rc, usb_start_user);
         }
         uc_bt_poll(millis());
         uc_usb_poll(millis());

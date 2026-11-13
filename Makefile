@@ -25,7 +25,8 @@ DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/generic.
 	src/drivers/common/util.c src/drivers/common/crc32.c $(LOG_SOURCES)
 BT_MANAGER := src/drivers/bt.c
 
-USB_SOURCES := src/drivers/usb.c src/drivers/usb/transport.c src/drivers/usb/protocol.c
+USB_SOURCES := src/drivers/usb.c src/drivers/usb/transport.c src/drivers/usb/protocol.c \
+	src/drivers/usb/diagnostics.c src/drivers/usb/generic_hid.c
 
 CONFIG_SOURCES := src/drivers/config/json.c src/drivers/config/overrides.c
 
@@ -149,22 +150,36 @@ $(BUILD)/test-bt-manager: src/drivers/bt.c src/drivers/bt.h tests/bt_manager/tes
 test-bt-ui:
 	node tests/web/test_bt_ui.js
 
-test-usb-protocol: $(BUILD)/test-usb-protocol
+test-usb-protocol: $(BUILD)/test-usb-protocol $(BUILD)/test-usb-native
 	./$(BUILD)/test-usb-protocol
+	./$(BUILD)/test-usb-native
 
 $(BUILD)/test-usb-protocol: src/drivers/usb/transport.c src/drivers/usb/protocol.c \
+	src/drivers/usb/diagnostics.c src/drivers/usb/generic_hid.c \
 	tests/usb_protocol/test_usb_protocol.c $(C_HEADERS) $(DRIVER_SHARED) $(CONTROLLER_DATA) \
 	$(CONFIG_SOURCES)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb/transport.c src/drivers/usb/protocol.c \
+		src/drivers/usb/diagnostics.c src/drivers/usb/generic_hid.c \
 		tests/usb_protocol/test_usb_protocol.c $(DRIVER_SHARED) $(CONFIG_SOURCES) -o $@
+
+$(BUILD)/test-usb-native: tests/usb_native/test_native.c src/drivers/usb/transport.c \
+	src/drivers/usb/diagnostics.c \
+	tests/usb_native/include/dev/usb/usb.h tests/usb_native/include/dev/usb/usb_ioctl.h \
+	$(C_HEADERS) $(LOG_SOURCES)
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Itests/usb_native/include tests/usb_native/test_native.c \
+		src/drivers/usb/diagnostics.c \
+		$(LOG_SOURCES) -o $@
 
 test-usb-manager: $(BUILD)/test-usb-manager
 	./$(BUILD)/test-usb-manager
 
-$(BUILD)/test-usb-manager: src/drivers/usb.c tests/usb_manager/test_manager.c $(C_HEADERS) $(LOG_SOURCES)
+$(BUILD)/test-usb-manager: src/drivers/usb.c src/drivers/usb/diagnostics.c \
+	tests/usb_manager/test_manager.c $(C_HEADERS) $(LOG_SOURCES)
 	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb.c tests/usb_manager/test_manager.c $(LOG_SOURCES) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb.c src/drivers/usb/diagnostics.c \
+		tests/usb_manager/test_manager.c $(LOG_SOURCES) -o $@
 
 test-usb-ui:
 	node tests/web/test_usb_ui.js

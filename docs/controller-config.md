@@ -82,7 +82,7 @@
 | `profile` | 选择已有协议，不能定义新解码器                     |
 | `mapping` | 原始通用 HID 的按键/轴字段映射，不是解码后全局映射 |
 
-profile 白名单为 `switch`、`joycon-left`、`joycon-right`、`ds4`、`ds5`、`xbox`、`generic-hid`；USB 专用入口另有 `switch-usb`、`xinput-usb`。协议仍受传输及现有驱动能力限制，不能把任意 profile 跨传输使用。`generic-hid` 表示请求 HID 描述符解析，不意味着兼容任意报告格式。
+profile 白名单为 `switch`、`joycon-left`、`joycon-right`、`ds4`、`ds5`、`xbox`、`generic-hid`；USB 专用入口仅有 `xinput-usb`。协议仍受传输及现有驱动能力限制，不能把任意 profile 跨传输使用。`generic-hid` 表示请求 HID 描述符解析，不意味着兼容任意报告格式。
 
 USB profile hint 只能选择已经实现且接口描述符满足要求的入口，不能凭改名把 DInput 转成 XInput。配置不能绕过 Sony/内部设备保护、系统驱动占用、接口所有权、报告长度、初始化时限、超时释放或休眠清理；不会 detach Sony 系统驱动。
 
@@ -110,7 +110,7 @@ USB profile hint 只能选择已经实现且接口描述符满足要求的入口
 
 内置 layout 只接受 `bindings`。构建期未知字段、重复 VID/PID/JSON 键、非法 implementation、错误引用与越界映射均导致构建失败。新报文协议仍需 C 实现；生成物不手工维护、不入 Git。
 
-`usb.xinput_activation` 只在既有 FF/5D/01 接口验证通过后使用已有 LED 激活命令。`usb.input_watchdog` 用于需要实际输入续期的接收器身份，不允许仅因 USB 节点在线而保留旧按键。
+`usb.xinput_activation` 是旧型号元数据；USB 当前对所有通过 FF/5D/01 接口校验的候选发送标准 LED 激活，不再依赖该标记。`usb.input_watchdog` 用于需要实际输入续期的接收器身份，不允许仅因 USB 节点在线而保留旧按键。
 
 ```sh
 python3 tools/embed_controllers.py

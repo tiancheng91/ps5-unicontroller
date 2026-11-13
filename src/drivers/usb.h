@@ -11,6 +11,8 @@ void uc_usb_set_log_level(unsigned level);
 void uc_usb_set_rumble_enabled(int enabled);
 int uc_usb_assign(unsigned slot, const char *node, int32_t user);
 size_t uc_usb_status_json(char *buffer, size_t capacity);
+/* Full bounded descriptor snapshots; no hardware I/O when exported. */
+size_t uc_usb_diagnostics_json(char *buffer, size_t capacity);
 /* Test injection only while fully stopped; copied transport table/context borrowed. */
 int uc_usb_set_transport(const uc_usb_transport *transport);
 int uc_usb_set_transports(const uc_usb_transport *transports, size_t count);

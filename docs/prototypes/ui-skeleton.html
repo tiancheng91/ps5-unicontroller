@@ -632,7 +632,7 @@
         <section class="view" id="devices">
           <div class="page-heading">
             <div>
-              <h1 tabindex="-1">手柄</h1>
+              <h1>手柄</h1>
               <p>查看连接状态，管理你的手柄。</p>
             </div>
             <button class="primary" data-action="add">新增蓝牙设备</button>
@@ -709,7 +709,7 @@
         <section class="view" id="test" hidden>
           <div class="page-heading">
             <div>
-              <h1 tabindex="-1">模拟手柄</h1>
+              <h1>模拟手柄</h1>
               <p>独立的测试入口，默认关闭。</p>
             </div>
             <button class="primary" data-action="test">启用模拟手柄</button>
@@ -725,7 +725,7 @@
         <section class="view" id="logs" hidden>
           <div class="page-heading">
             <div>
-              <h1 tabindex="-1">日志</h1>
+              <h1>日志</h1>
               <p>连接与输入故障的诊断入口。</p>
             </div>
             <button data-action="mock">导出诊断</button>
@@ -758,7 +758,7 @@
         <section class="view" id="settings" hidden>
           <div class="page-heading">
             <div>
-              <h1 tabindex="-1">设置</h1>
+              <h1>设置</h1>
               <p>连接服务、默认手柄行为与页面偏好。</p>
             </div>
           </div>
@@ -944,7 +944,7 @@
           if (button.dataset.view === id) button.setAttribute("aria-current", "page");
           else button.removeAttribute("aria-current");
         });
-        $("#" + id + " h1").focus();
+        document.querySelector('.navigation button[aria-current="page"]')?.focus();
       }
       function openDrawer(id, button) {
         opener = button;

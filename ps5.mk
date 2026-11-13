@@ -24,6 +24,8 @@ SOURCES := \
 	vendor/rxi-log/log.c \
 	src/drivers/usb.c \
 	src/drivers/usb/transport.c \
+	src/drivers/usb/diagnostics.c \
+	src/drivers/usb/generic_hid.c \
 	src/drivers/usb/protocol.c \
 	src/drivers/bt.c \
 	src/drivers/config/json.c \

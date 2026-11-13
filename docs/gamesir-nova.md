@@ -25,7 +25,7 @@ Nova Lite（启明星一代）、Nova 2 Lite（启明星二代）、Nova（NS版
 
 两者本来是Windows输入API。XInput面向Xbox风格的统一状态，DirectInput覆盖较广设备、布局不固定。PS5不调用这些Windows库；我们实际实现的是Xbox360 USB、Xbox蓝牙、Nintendo报告和HID描述符解析，不能把“支持一种API”理解为兼容所有设备。
 
-输入和震动是不同链路。本轮沿用蓝牙连接后短震动；USB游戏震动回传已接通支持的Switch/XInput路径，仍需按型号实测。
+输入和震动是不同链路。本轮沿用蓝牙连接后短震动；USB游戏震动回传只保留XInput路径，仍需按型号实测。
 
 ## 型号配置与身份边界
 
@@ -33,7 +33,7 @@ Nova Lite（启明星一代）、Nova 2 Lite（启明星二代）、Nova（NS版
 
 运行时使用固定版本 LibJSON 0.2.5 事件解析器，最多 32 KiB、32 条规则，启动时加载一次。文件不存在正常使用内置规则；整份文件任一项无效时全部回退内置并记录错误。通过 FTP 手动上传后重启 payload，不热重载，也没有网页写入 JSON 的 API。
 
-匹配必须精确包含 transport（classic/ble/usb）与四位十六进制 VID/PID，没有通配规则。显示别名不认证设备；同一个模拟身份不能被自动视为 Nova，也不能因改名就开放原本不支持的接口。USB 的 xinput-usb/switch-usb hint 仍受既有接口描述符约束，不能开启 DInput 或绕过 Sony/内核驱动保护。
+匹配必须精确包含 transport（classic/ble/usb）与四位十六进制 VID/PID，没有通配规则。显示别名不认证设备；同一个模拟身份不能被自动视为 Nova，也不能因改名就开放原本不支持的接口。USB 仅接受 xinput-usb；协议由 FF/5D/01 接口和真实报告确认，别名不能开启 Switch USB/DInput 或绕过 Sony 设备排除。确认 XInput 接口后允许 detach 此接口的驱动。
 
 必须拆开三类信息：
 

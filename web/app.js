@@ -190,6 +190,20 @@ document.addEventListener("alpine:init", () => {
     get btDevices() {
       return this.bt.devices.map((d) => this.deviceView(d, true));
     },
+    get usbRejected() {
+      return (this.usb.rejected || []).map((d) => ({
+        ...d,
+        detail: d.vid + ":" + d.pid + " · " + d.reason + " · errno=" + d.errno,
+        diagnostic:
+          (d.protocol_hint || "unknown") +
+          " · " +
+          (d.interface_summary || "-") +
+          " · HID " +
+          (d.hid_report_captured || 0) +
+          "/" +
+          (d.hid_report_declared || 0),
+      }));
+    },
     get usbDevices() {
       return this.usb.devices.map((d) => this.deviceView(d, false));
     },
@@ -564,7 +578,7 @@ document.addEventListener("alpine:init", () => {
     },
     async diagnosticText() {
       // Independent sections remain available even if one endpoint fails.
-      const routes = ["/system", "/bluetooth", "/usb", "/test-controller"];
+      const routes = ["/system", "/bluetooth", "/usb", "/usb/diagnostics", "/test-controller"];
       const sections = await Promise.all(
         routes.map(async (route) => {
           try {
