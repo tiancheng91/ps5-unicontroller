@@ -35,4 +35,6 @@ typedef struct {
 int uc_bt_set_factory(const uc_bt_factory *factory, const char *database_path);
 int uc_bt_device_options_match(const char *key, uint64_t session);
 void uc_bt_device_options_changed(void);
+/* 500ms pulse: 0 accepted, 2 rate-limited, negative unavailable. Identity must match. */
+int uc_bt_test_rumble(const char *key, uint64_t session, uint64_t now);
 #endif

@@ -55,6 +55,16 @@ with tempfile.TemporaryDirectory() as directory:
         assert request("POST", "/api/v1/launcher", auth=False)[0] == 403
         assert request("POST", "/api/v1/launcher")[0] == 503
         assert request("DELETE", "/api/v1/launcher")[0] == 503
+        assert request("POST", "/api/v1/rumble-test", auth=False)[0] == 403
+        assert request("POST", "/api/v1/rumble-test", {})[0] == 400
+        assert (
+            request(
+                "POST",
+                "/api/v1/rumble-test",
+                {"key": "usb:/dev/ugen1.2:3537:1040", "session_id": 1},
+            )[0]
+            == 409
+        )
         assert request("POST", "/api/v1/device-settings", auth=False)[0] == 403
         assert request("POST", "/api/v1/device-settings", {})[0] == 400
         assert (
@@ -312,7 +322,28 @@ with tempfile.TemporaryDirectory() as directory:
         assert request("GET", "/api/v1/settings")[1] == changed
         status, state = request("POST", "/api/v1/test-controller", {"user_id": 1})
         assert status == 200 and state["enabled"]
-        assert request("POST", "/api/v1/settings", settings)[0] == 409
+        live = dict(
+            changed,
+            rumble=False,
+            page_level="warn",
+            recording_level="info",
+            bluetooth_auto_start=True,
+            usb_auto_start=True,
+        )
+        assert request("POST", "/api/v1/settings", live)[1] == live
+        assert json.loads(path.read_text()) == live
+        assert (
+            request("GET", "/api/v1/test-controller")[1]["session_id"]
+            == state["session_id"]
+        )
+        assert request("POST", "/api/v1/settings", settings)[1] == settings
+        assert request("GET", "/api/v1/settings")[1] == settings
+        assert json.loads(path.read_text()) == settings
+        assert request("POST", "/api/v1/settings", changed)[1] == changed
+        assert (
+            request("GET", "/api/v1/test-controller")[1]["session_id"]
+            == state["session_id"]
+        )
         # Stopping an unrelated physical transport must not tear down the
         # manually enabled test-controller session or accept a stale assignment.
         assert request("POST", "/api/v1/bluetooth/stop")[0] == 200

@@ -69,7 +69,7 @@ int main(void)
     assert(uc_core_active_session() == 0 && writes == 0);
     assert(uc_core_enable(1, 10, &session) == 0 && session);
     assert(last_buttons == 0);
-    assert(uc_core_settings(3, 0, mapping) == 2);
+    assert(uc_core_settings(3, 0, mapping) == 0);
     assert(uc_core_submit(session, 0, 16384, axes, triggers, 20) == 0);
     assert(last_axes[0] == 123 && last_triggers[1] == 44);
     assert(uc_core_submit(session, 0, 0, zero, tz, 21) < 0);
@@ -137,7 +137,8 @@ int main(void)
     mapping[0] = 0;
     create_pending = 1;
     assert(uc_core_enable(1, 1200, &next) == 2 && next == 0);
-    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 2);
+    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 0); /* Live/pending logging only. */
+    assert(uc_core_settings_check(1, mapping) == 0);
     assert(uc_core_enable(2, 1201, &next) == 2);
     delete_failure = 1;
     assert(uc_core_suspend() < 0);
@@ -145,6 +146,15 @@ int main(void)
     assert(uc_core_tick(1202) == 0);
     create_pending = 0;
     assert(uc_core_enable(1, 1203, &next) == 0);
+    unsigned settings_writes = writes;
+    assert(uc_core_settings(UC_LOG_WARN, 0, mapping) == 0);
+    assert(uc_core_session_active(next) && writes == settings_writes);
+    assert(uc_core_settings(UC_LOG_WARN, 1, mapping) == 0);
+    assert(uc_core_session_active(next) && writes == settings_writes);
+    assert(uc_core_submit(next, 1, 1u << 14, zero, tz, 1204) == 0 &&
+           last_buttons == (1u << mapping[13]));
+    assert(uc_core_settings(UC_LOG_WARN, 0, mapping) == 0);
+    assert(uc_core_submit(next, 2, 0, zero, tz, 1204) == 0 && last_buttons == 0);
     assert(uc_core_disable() == 0);
     write_failure = 1;
     delete_failure = 1;
@@ -270,7 +280,8 @@ static void test_multiple_sessions(void)
     assert(uc_core_enable_physical(3, 7102, &duplicate) == 2 && duplicate == 0 &&
            create_calls == calls);
     assert(uc_core_enable_physical(2, 7103, &ids[1]) == 2 && ids[1] == pending);
-    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 2);
+    assert(uc_core_settings(UC_LOG_INFO, 0, mapping) == 0); /* Live/pending logging only. */
+    assert(uc_core_settings_check(1, mapping) == 0);
     unsigned cancellation = cancel_calls;
     other_deleted = deletes_by_handle[0];
     assert(uc_core_disable_session(pending) == 0 && cancel_calls == cancellation + 1);

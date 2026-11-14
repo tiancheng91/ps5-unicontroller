@@ -121,8 +121,12 @@ $(BUILD)/test-backend: tests/ps5/test_backend.c src/ps5/backend.c src/ps5/uc_bac
 test-web: host
 	$(PYTHON) tests/web/test_runtime.py $(HOST_BINARY)
 
-test-ports: host
-	$(PYTHON) tests/web/test_ports.py $(HOST_BINARY)
+test-ports: host $(BUILD)/test-http-recovery
+	$(PYTHON) tests/web/test_ports.py $(HOST_BINARY) $(BUILD)/test-http-recovery
+
+$(BUILD)/test-http-recovery: $(HOST_SOURCES) tests/web/fault_runtime.c $(C_HEADERS) $(BUILD)/assets.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter-out src/web/runtime.c,$(HOST_SOURCES)) \
+		tests/web/fault_runtime.c $(BUILD)/assets.c -o $@
 
 # Install formatter versions from requirements-dev.txt and docs/code-style.md.
 format:

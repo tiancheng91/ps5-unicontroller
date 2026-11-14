@@ -123,12 +123,28 @@ const root = path.resolve(__dirname, "../..");
     const deviceRumble = page.locator("#device-rumble");
     await page.waitForFunction(() => !document.querySelector("#device-rumble").disabled);
     assert(await deviceRumble.isChecked());
+    const rumbleTest = page.locator("#device-rumble-test");
+    await page.waitForFunction(() => !document.querySelector("#device-rumble-test").disabled);
+    await rumbleTest.click();
+    assert(
+      await rumbleTest.evaluate((el) => el === document.activeElement),
+      "test cooldown preserves focus",
+    );
+
+    assert(
+      await page.evaluate(() =>
+        window.commands.some((c) => c[0] === "/rumble-test" && c[2].session_id === 101),
+      ),
+    );
+    await page.waitForTimeout(1100);
+
     await deviceRumble.uncheck();
     await page.waitForFunction(
       () =>
         !document.querySelector("#device-rumble").checked &&
         !document.querySelector("#device-rumble").disabled,
     );
+    assert(await rumbleTest.isDisabled());
     await page.locator("#device-swap").check();
     await page.waitForFunction(
       () =>
@@ -298,9 +314,14 @@ const root = path.resolve(__dirname, "../..");
         mapping: "standard",
         buttons: Array.from({ length: 16 }, () => ({ pressed: false })),
       };
-      navigator.getGamepads = () => [window.fakePad];
+      window.padReads = 0;
+      navigator.getGamepads = () => {
+        window.padReads++;
+        return [window.fakePad];
+      };
       document.hasFocus = () => true;
     });
+    await page.waitForFunction(() => window.padReads >= 2);
     await page.waitForTimeout(400);
     await page.evaluate(() => {
       window.fakePad.buttons[0].pressed = true;

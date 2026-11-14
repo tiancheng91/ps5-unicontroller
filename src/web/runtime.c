@@ -61,6 +61,12 @@ static int32_t bt_start_user;
 static uint64_t bt_start_at;
 static int enable_pending;
 static volatile sig_atomic_t stop_requested;
+static volatile sig_atomic_t resume_requested;
+static void request_resume(int signal_number)
+{
+    (void)signal_number;
+    resume_requested = 1;
+}
 static void request_stop(int signal_number)
 {
     (void)signal_number;
@@ -92,6 +98,7 @@ static void response_bytes(Client *c, int status, const char *type, const char *
                          : status == 404 ? "Not Found"
                          : status == 413 ? "Payload Too Large"
                          : status == 409 ? "Conflict"
+                         : status == 429 ? "Too Many Requests"
                                          : "Service Unavailable";
     int n = snprintf(
         c->out, sizeof(c->out),
@@ -136,6 +143,18 @@ static int array(Json *j, int n, int64_t min, int64_t max, int count, int64_t *o
         at = j->t[at].next;
     }
     return at == j->t[n].next ? 0 : -1;
+}
+static int device_key(Json *j, char out[UC_DEVICE_KEY_MAX])
+{
+    int n = jget(j, "key");
+    if (n < 0 || j->t[n].kind != '"')
+        return -1;
+    int len = j->t[n].end - j->t[n].start - 2;
+    if (len <= 0 || len >= UC_DEVICE_KEY_MAX)
+        return -1;
+    memcpy(out, j->s + j->t[n].start + 1, (size_t)len);
+    out[len] = 0;
+    return 0;
 }
 static int parse_settings(const char *body, Settings *out)
 {
@@ -640,6 +659,35 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         response(c, 200, "application/json", b);
         return;
     }
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/rumble-test")) {
+        Json j;
+        const char *keys[] = {"key", "session_id"};
+        int64_t session;
+        char key[UC_DEVICE_KEY_MAX];
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 2) ||
+            jint(&j, jget(&j, "session_id"), 0, INT64_MAX, &session) || device_key(&j, key)) {
+            error_response(c, 400, "invalid_device_identity");
+            return;
+        }
+        int bluetooth = uc_bt_device_options_match(key, (uint64_t)session);
+        if (!bluetooth && !uc_usb_device_options_match(key, (uint64_t)session)) {
+            error_response(c, 409, "device_changed");
+            return;
+        }
+        if (!settings.rumble) {
+            error_response(c, 409, "rumble_disabled");
+            return;
+        }
+        int rc = bluetooth ? uc_bt_test_rumble(key, (uint64_t)session, millis())
+                           : uc_usb_test_rumble(key, (uint64_t)session, millis());
+        if (rc) {
+            error_response(c, rc == 2 ? 429 : 409,
+                           rc == 2 ? "rumble_test_busy" : "rumble_test_unavailable");
+            return;
+        }
+        response(c, 202, "application/json", "{\"queued\":true,\"duration_ms\":500}");
+        return;
+    }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/device-settings")) {
         Json j;
         const char *keys[] = {"key", "session_id", "rumble", "swap_ab"};
@@ -652,17 +700,11 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 400, "invalid_device_settings");
             return;
         }
-        int token_index = jget(&j, "key");
-        if (token_index < 0 || j.t[token_index].kind != '"' ||
-            j.t[token_index].end - j.t[token_index].start <= 2 ||
-            j.t[token_index].end - j.t[token_index].start > UC_DEVICE_KEY_MAX + 1) {
+        char key[UC_DEVICE_KEY_MAX];
+        if (device_key(&j, key)) {
             error_response(c, 400, "invalid_device_key");
             return;
         }
-        char key[UC_DEVICE_KEY_MAX];
-        size_t size = (size_t)(j.t[token_index].end - j.t[token_index].start - 2);
-        memcpy(key, body + j.t[token_index].start + 1, size);
-        key[size] = 0;
         if (!uc_bt_device_options_match(key, (uint64_t)session) &&
             !uc_usb_device_options_match(key, (uint64_t)session)) {
             error_response(c, 409, "device_changed");
@@ -679,16 +721,22 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
     }
     if (!strcmp(path, "/api/v1/settings")) {
         if (!strcmp(method, "POST")) {
-            if (active_session || enable_pending || uc_bt_running() || bt_start_queued ||
-                uc_usb_running() || usb_start_queued) {
-                error_response(c, 409, "disable_before_settings");
-                return;
-            }
             Settings next;
             if (parse_settings(body, &next)) {
                 error_response(c, 400, "invalid_settings");
                 return;
             }
+            int inputs_busy = active_session || enable_pending || uc_core_active_session() ||
+                              uc_bt_running() || bt_start_queued || uc_usb_running() ||
+                              usb_start_queued;
+            if (uc_core_settings_check((uint8_t)next.swap, next.map)) {
+                error_response(c, 400, "invalid_settings");
+                return;
+            }
+            int rumble_changed = next.rumble != settings.rumble;
+            int auto_changed = next.bt_auto != settings.bt_auto ||
+                               next.usb_auto != settings.usb_auto ||
+                               next.bt_auto_resume != settings.bt_auto_resume;
             /* Each source remembers only its successful manual start account. */
             next.bt_auto_user = settings.bt_auto_user;
             next.usb_auto_user = settings.usb_auto_user;
@@ -699,10 +747,13 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 return;
             }
             settings = next;
-            uc_backend_auto_watch((settings.bt_auto || settings.usb_auto) &&
-                                          !settings.bt_auto_resume
-                                      ? UC_AUTO_DESKTOP
-                                      : UC_AUTO_OFF);
+            /* Active connections keep running. New startup preferences are
+             * armed at the next suspend cycle instead of opening an observer now. */
+            if (auto_changed)
+                uc_backend_auto_watch(!inputs_busy && (settings.bt_auto || settings.usb_auto) &&
+                                              !settings.bt_auto_resume
+                                          ? UC_AUTO_DESKTOP
+                                          : UC_AUTO_OFF);
             if (uc_core_settings((uint8_t)settings.recording, (uint8_t)settings.swap,
                                  settings.map)) {
                 if (settings.recording >= 1)
@@ -711,9 +762,11 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
                 return;
             }
             uc_bt_set_log_level((unsigned)settings.recording);
-            uc_bt_set_rumble_enabled(settings.rumble);
             uc_usb_set_log_level((unsigned)settings.recording);
-            uc_usb_set_rumble_enabled(settings.rumble);
+            if (rumble_changed) {
+                uc_bt_set_rumble_enabled(settings.rumble);
+                uc_usb_set_rumble_enabled(settings.rumble);
+            }
             if (settings.recording >= 3)
                 uc_log_info("settings_saved");
         } else if (strcmp(method, "GET")) {
@@ -973,6 +1026,53 @@ static void parse_request(Client *c)
     }
     handle(c, method, path, host, request_origin, auth, c->in + header);
 }
+/* Called only on startup or after a diagnosed listener failure, never just
+ * because the console enters rest mode. Always retain the configured port. */
+static int open_listener(const struct sockaddr_in *address)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    const char *stage = "socket";
+    if (fd >= 0) {
+        int yes = 1;
+        stage = "reuseaddr";
+        if (!setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes)) {
+            stage = "bind";
+            if (!bind(fd, (const struct sockaddr *)address, sizeof *address)) {
+                stage = "listen";
+                if (!listen(fd, CLIENTS)) {
+                    stage = "nonblock";
+                    if (!nonblock(fd))
+                        return fd;
+                }
+            }
+        }
+    }
+    int error = errno;
+    if (fd >= 0)
+        close(fd);
+    uc_log_error("[http] listener failed stage=%s port=%u errno=%d", stage,
+                 (unsigned)ntohs(address->sin_port), error);
+    errno = error;
+    return -1;
+}
+static int listener_health(int fd)
+{
+    int error = 0;
+    socklen_t size = sizeof error;
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size))
+        return -1;
+    if (error) {
+        errno = error;
+        return -1;
+    }
+    return 0;
+}
+static void close_http_clients(void)
+{
+    for (int i = 0; i < CLIENTS; ++i)
+        if (clients[i].fd >= 0)
+            close_client(&clients[i]);
+}
 int uc_runtime_run(const char *bind_address, unsigned short port, const char *settings_path)
 {
     store_path = settings_path;
@@ -1005,39 +1105,19 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             uc_log_info("controller registry: %s",
                         loaded ? "custom overrides loaded" : "builtins active");
     }
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof(address));
+    struct sockaddr_in address = {0};
     address.sin_family = AF_INET;
+    address.sin_port = htons(port);
     if (inet_pton(AF_INET, bind_address, &address.sin_addr) != 1)
         return -1;
-    int listener = -1;
-    unsigned short first_port = port;
-    int attempts = port == 7456 ? 2 : 1;
-    for (int attempt = 0; attempt < attempts; attempt++) {
-        port = (unsigned short)(first_port + attempt);
-        listener = socket(AF_INET, SOCK_STREAM, 0);
-        if (listener < 0) {
-            uc_log_error("HTTP socket failed port=%u errno=%d", (unsigned)port, errno);
-            return -1;
-        }
-        int yes = 1;
-        setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-        address.sin_port = htons(port);
-        if (bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0)
-            break;
-        int bind_error = errno;
-        close(listener);
-        listener = -1;
-        uc_log_warn("HTTP bind failed port=%u errno=%d%s", (unsigned)port, bind_error,
-                    attempt + 1 < attempts ? "; trying 7457" : "; no ports left");
-    }
-    if (listener < 0)
-        return -1;
-    if (listen(listener, CLIENTS) || nonblock(listener)) {
-        uc_log_error("HTTP listen failed port=%u errno=%d", (unsigned)port, errno);
-        close(listener);
+    int listener = open_listener(&address);
+    if (listener < 0) {
+        uc_log_error("[http] startup failed; exiting instead of leaving an inaccessible process");
         return -1;
     }
+    uint64_t check_at = 0, retry_at = 0, previous_loop = millis();
+    unsigned recovery_attempts = 0;
+    int run_failed = 0, http_rest_seen = 0;
     uc_backend_auto_watch((settings.bt_auto || settings.usb_auto) && !settings.bt_auto_resume
                               ? UC_AUTO_DESKTOP
                               : UC_AUTO_OFF);
@@ -1059,9 +1139,61 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                 (unsigned)port);
     signal(SIGTERM, request_stop);
     signal(SIGINT, request_stop);
+    signal(SIGCONT, request_resume);
     while (!stop_requested) {
         uc_backend_poll();
+        int power = uc_backend_power_state();
+        int power_resumed = power == 0 && http_rest_seen;
+        if (power == 1)
+            http_rest_seen = 1;
+        else if (power_resumed)
+            http_rest_seen = 0;
+        uint64_t loop_now = millis();
+        int resumed = resume_requested || power_resumed || loop_now - previous_loop > 2000;
+        resume_requested = 0;
+        previous_loop = loop_now;
+        if (resumed) {
+            close_http_clients();
+            check_at = 0;
+            uc_log_info("[http] resume/gap observed; checking retained listener port=%u",
+                        (unsigned)port);
+        }
+        if (listener >= 0 && power != 1 && loop_now >= check_at) {
+            check_at = loop_now + 1000;
+            /* Reassert listen on resume without closing or rebinding a healthy socket. */
+            if (listener_health(listener) || (resumed && listen(listener, CLIENTS))) {
+                uc_log_error("[http] listener unhealthy port=%u errno=%d; scheduling recovery",
+                             (unsigned)port, errno);
+                close_http_clients();
+                close(listener);
+                listener = -1;
+                retry_at = loop_now + 1000;
+            } else if (resumed)
+                uc_log_info("[http] retained listener healthy port=%u", (unsigned)port);
+        }
+        if (listener < 0 && power == 0 && loop_now >= retry_at) {
+            if (recovery_attempts >= 10) {
+                uc_log_error("[http] recovery exhausted; exiting for explicit reload");
+                run_failed = 1;
+                break;
+            }
+            ++recovery_attempts;
+            listener = open_listener(&address);
+            if (listener >= 0) {
+                check_at = loop_now + 1000;
+                uc_log_info("[http] listener recovered port=%u attempt=%u", (unsigned)port,
+                            recovery_attempts);
+            } else if (recovery_attempts >= 10) {
+                uc_log_error("[http] recovery exhausted; exiting for explicit reload");
+                run_failed = 1;
+                break;
+            } else
+                retry_at = loop_now + 1000;
+        }
         if (uc_backend_suspend()) {
+            uc_log_info("[lifecycle] suspending inputs; HTTP retained port=%u auto=%s bt=%d usb=%d",
+                        (unsigned)port, settings.bt_auto_resume ? "resume+5s" : "login+5s",
+                        settings.bt_auto, settings.usb_auto);
             uc_launcher_cancel();
             uc_backend_auto_watch(!(settings.bt_auto || settings.usb_auto) ? UC_AUTO_OFF
                                   : settings.bt_auto_resume                ? UC_AUTO_RESUME
@@ -1146,10 +1278,21 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             active_session = 0;
         if (!active_session)
             active_user = -1;
-        for (int count = 0; count < CLIENTS; count++) {
+        for (int count = 0; listener >= 0 && count < CLIENTS; count++) {
             int fd = accept(listener, NULL, NULL);
-            if (fd < 0)
+            if (fd < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
+                    errno == ECONNABORTED)
+                    break;
+                uc_log_error("[http] accept failed port=%u errno=%d; scheduling recovery",
+                             (unsigned)port, errno);
+                close_http_clients();
+                close(listener);
+                listener = -1;
+                retry_at = millis() + 1000;
                 break;
+            }
+            recovery_attempts = 0; /* A real client proves recovery, not bind alone. */
             int slot = -1;
             for (int i = 0; i < CLIENTS; i++)
                 if (clients[i].fd < 0) {
@@ -1203,12 +1346,13 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     for (int i = 0; i < CLIENTS; i++)
         if (clients[i].fd >= 0)
             close_client(&clients[i]);
-    close(listener);
+    if (listener >= 0)
+        close(listener);
     bt_start_queued = 0;
     usb_start_queued = 0;
     (void)uc_bt_stop();
     (void)uc_usb_stop();
     uc_core_disable();
     uc_backend_cancel_pending();
-    return 0;
+    return run_failed ? -1 : 0;
 }

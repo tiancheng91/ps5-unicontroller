@@ -70,13 +70,6 @@ static struct core_session *find_session(uint64_t id)
             return &state.sessions[i];
     return NULL;
 }
-static int occupied(void)
-{
-    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
-        if (state.sessions[i].id)
-            return 1;
-    return 0;
-}
 static int neutralize(struct core_session *s)
 {
     const int16_t axes[4] = {0};
@@ -323,15 +316,22 @@ int uc_core_read_rumble(uint64_t session, uint64_t now, uint8_t *strong, uint8_t
         return fail_session("rumble_failed", session);
     return result;
 }
-int uc_core_settings(uint8_t recording, uint8_t swap, const uint8_t mapping[32])
+int uc_core_settings_check(uint8_t swap, const uint8_t mapping[32])
 {
-    if (!mapping || recording > UC_LOG_TRACE || swap > 1)
+    if (!mapping || swap > 1)
         return fail("invalid_settings");
     for (unsigned i = 0; i < 32; ++i)
         if (mapping[i] > 31)
             return fail("invalid_mapping");
-    if (occupied())
-        return 2;
+    return 0;
+}
+int uc_core_settings(uint8_t recording, uint8_t swap, const uint8_t mapping[32])
+{
+    if (recording > UC_LOG_TRACE)
+        return fail("invalid_settings");
+    int result = uc_core_settings_check(swap, mapping);
+    if (result)
+        return result;
     state.recording = recording;
     uc_log_set_level(recording);
     state.swap = swap;

@@ -27,7 +27,8 @@ typedef struct {
     unsigned char addr[6];
     char profile[64];
     pad_state latest;
-    uint64_t last_input, frames, connected_at;
+    uint64_t last_input, frames, connected_at, rumble_test_last;
+    int rumble_test_seen;
     int notice_pending, pending, closing, assigning, failed;
     int32_t user, next_user;
     uint64_t session, sequence, submitted;
@@ -663,10 +664,11 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             bt.system_assignment ? "true" : "false", own_output(s) ? "true" : "false");
         ADD(",\"output_failed\":%s", s->failed ? "true" : "false");
         ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s,\"rumble_"
-            "available\":%s",
+            "available\":%s,\"rumble_enabled\":%s",
             s->options_key, s->options.rumble ? "true" : "false",
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false",
-            host_output_ready(bt.host, i) ? "true" : "false");
+            host_output_ready(bt.host, i) ? "true" : "false",
+            rumble_enabled && s->options.rumble ? "true" : "false");
         ADD(",\"charging\":%s}", s->valid && s->latest.charging ? "true" : "false");
     }
     ADD("],\"discovered\":[");
@@ -800,4 +802,29 @@ void uc_bt_device_options_changed(void)
             s->submitted = 0;
         s->options = next;
     }
+}
+
+int uc_bt_test_rumble(const char *key, uint64_t session, uint64_t now)
+{
+    if (!key || !bt.host || bt.stopping || !rumble_enabled)
+        return -1;
+    for (int i = 0; i < HOST_MAX_PADS; ++i) {
+        Slot *s = &bt.slots[i];
+        if (!s->connected || s->session != session || strcmp(s->options_key, key))
+            continue;
+        if (!s->options.rumble || !host_output_ready(bt.host, i))
+            return -1;
+        if (s->rumble_test_seen && (now < s->rumble_test_last || now - s->rumble_test_last < 1000))
+            return 2;
+        int accepted = host_rumble_pulse(bt.host, i, 500);
+        uc_log_info("[bluetooth] rumble test key=%s duration_ms=500 accepted=%d", key,
+                    accepted != 0);
+        if (!accepted)
+            return -1;
+        s->notice_pending = 0;
+        s->rumble_test_seen = 1;
+        s->rumble_test_last = now;
+        return 0;
+    }
+    return -1;
 }

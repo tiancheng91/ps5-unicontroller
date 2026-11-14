@@ -1,6 +1,13 @@
 "use strict";
 window.UCMessages = {
   zh: {
+    rumbleTest: "测试震动（0.5 秒）",
+    rumbleTestHint: "短震动 0.5 秒，试验性支持，请确认实际效果。",
+    rumbleTestUnsupported: "当前连接没有可用的震动输出，可查看诊断日志。",
+    rumbleTestEnableHint: "请先开启震动总开关和此手柄的震动选项。",
+    rumbleTestQueued: "已请求 {name} 短震动，请确认手柄是否有反应。",
+    rumbleTestBusy: "测试过于频繁，请稍后再试。",
+
     testIsolationHint: "启用前请先停止蓝牙和 USB 服务。测试结束后停用模拟手柄，再恢复实体手柄。",
     autoBluetoothHint: "自动回连已配对的手柄。",
     autoUsbEnabled: "自动启用 USB",
@@ -81,7 +88,7 @@ window.UCMessages = {
     green: "翡翠绿",
     red: "品牌红",
     navHint: "方向键移动，确认键选择，返回键退出。",
-    settingsHint: "保存连接设置前请先关闭服务；外观设置立即生效。",
+    settingsHint: "设置可随时保存，按键布局从下一次输入生效。",
     recording: "后台记录级别",
     pageLevel: "页面日志级别",
     autoStart: "自动启动",
@@ -193,6 +200,15 @@ window.UCMessages = {
     discovery_paired: "已配对，等待回连",
   },
   en: {
+    rumbleTest: "Test rumble (0.5 s)",
+    rumbleTestHint: "A 0.5-second experimental pulse. Check the actual controller response.",
+    rumbleTestUnsupported:
+      "No rumble output is available on this connection. Check diagnostic logs.",
+    rumbleTestEnableHint:
+      "Enable the rumble master switch and this controller's rumble option first.",
+    rumbleTestQueued: "Short rumble requested for {name}. Check whether the controller responds.",
+    rumbleTestBusy: "Please wait before testing again.",
+
     testIsolationHint:
       "Stop Bluetooth and USB services before enabling. Disable the test controller before returning to physical controllers.",
     autoBluetoothHint: "Reconnect paired controllers automatically.",
@@ -279,7 +295,7 @@ window.UCMessages = {
     green: "Jade green",
     red: "Brand red",
     navHint: "Use directions to move, confirm to select, and back to exit.",
-    settingsHint: "Stop connection services before saving. Appearance changes apply immediately.",
+    settingsHint: "Save settings anytime. Button layouts apply with the next input.",
     recording: "Recorded log level",
     pageLevel: "Page log level",
     autoStart: "Automatic startup",

@@ -22,7 +22,7 @@ You need a **PS5 capable of loading homebrew ELF payloads**, Payload Manager or 
 
 1. Download versioned files from [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases). If no release is available or you need newer changes, choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
 2. Run `unicontroller.elf` using your loader. The artifact includes `build-info.txt` and a SHA256 checksum.
-3. Open `http://<PS5-IP>:7456/`. If the port is busy, try **7457**; the startup log records the actual port.
+3. Open `http://<PS5-IP>:7456/`. If the port cannot be opened, the payload exits; resolve the conflict and reload it.
 
 Web assets are included in the payload. Use the interface on a trusted LAN and do not expose its ports to the internet.
 
@@ -102,7 +102,7 @@ Stop the old process from the web interface, then deploy and run the new ELF. Ke
 
 | Symptom                                | Check first                                                                                                                                                                |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Web page unavailable                   | Payload running, correct PS5 IP, ports 7456/7457.                                                                                                                          |
+| Web page unavailable                   | Payload running, correct PS5 IP, port 7456 and startup logs.                                                                                                               |
 | Connected but no buttons               | Controller mode, input counts and errors; use Classic for Switch.                                                                                                          |
 | Menus work but games do not            | Account assignment in normal mode; record user-selection and game-input results separately in experimental mode.                                                           |
 | Held inputs release early or stick     | Report model, firmware and actions; report frequency needs per-device adaptation.                                                                                          |
