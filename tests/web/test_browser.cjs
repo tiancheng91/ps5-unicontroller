@@ -72,6 +72,7 @@ const root = path.resolve(__dirname, "../..");
           data.devices = [
             {
               slot: 0,
+              connected: true,
               node: "/dev/ugen1.2",
               vid: "3537",
               pid: generic ? "1041" : "1040",
@@ -123,12 +124,28 @@ const root = path.resolve(__dirname, "../..");
     const deviceRumble = page.locator("#device-rumble");
     await page.waitForFunction(() => !document.querySelector("#device-rumble").disabled);
     assert(await deviceRumble.isChecked());
+    const rumbleTest = page.locator("#device-rumble-test");
+    await page.waitForFunction(() => !document.querySelector("#device-rumble-test").disabled);
+    await rumbleTest.click();
+    assert(
+      await rumbleTest.evaluate((el) => el === document.activeElement),
+      "test cooldown preserves focus",
+    );
+
+    assert(
+      await page.evaluate(() =>
+        window.commands.some((c) => c[0] === "/rumble-test" && c[2].session_id === 101),
+      ),
+    );
+    await page.waitForTimeout(1100);
+
     await deviceRumble.uncheck();
     await page.waitForFunction(
       () =>
         !document.querySelector("#device-rumble").checked &&
         !document.querySelector("#device-rumble").disabled,
     );
+    assert(await rumbleTest.isDisabled());
     await page.locator("#device-swap").check();
     await page.waitForFunction(
       () =>
@@ -298,14 +315,34 @@ const root = path.resolve(__dirname, "../..");
         mapping: "standard",
         buttons: Array.from({ length: 16 }, () => ({ pressed: false })),
       };
-      navigator.getGamepads = () => [window.fakePad];
+      window.padReads = 0;
+      navigator.getGamepads = () => {
+        window.padReads++;
+        return [window.fakePad];
+      };
       document.hasFocus = () => true;
     });
+    await page.waitForFunction(() => window.padReads >= 2);
     await page.waitForTimeout(400);
     await page.evaluate(() => {
       window.fakePad.buttons[0].pressed = true;
     });
-    await page.waitForFunction(() => document.querySelector('input[data-form="rumble"]').checked);
+    try {
+      await page.waitForFunction(() => document.querySelector('input[data-form="rumble"]').checked);
+    } catch (error) {
+      console.error(
+        "gamepad confirm state",
+        await page.evaluate(() => ({
+          active: document.activeElement?.outerHTML,
+          reads: window.padReads,
+          hidden: document.hidden,
+          checked: document.querySelector('input[data-form="rumble"]').checked,
+          navigation: window.UCUI.get().navigation,
+          pressed: window.fakePad.buttons[0].pressed,
+        })),
+      );
+      throw error;
+    }
     await page.waitForTimeout(500);
     assert.equal(await rumble.isChecked(), true);
     await page.evaluate(() => {

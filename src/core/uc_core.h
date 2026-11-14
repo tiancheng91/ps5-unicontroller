@@ -43,10 +43,12 @@ int uc_core_session_active(uint64_t session);
 int uc_core_read_rumble(uint64_t session, uint64_t now_ms, uint8_t *strong, uint8_t *weak);
 int uc_core_suspend(void);
 uint64_t uc_core_active_session(void);
-/* Validated and applied atomically only when inactive; Cross/Circle and Square/Triangle layout
- * swapping applies to the test controller before the source->destination map.
- * Physical adapters apply their own per-device layout before calling submit. Recording level
- * defaults to Info. */
+/* Settings may be updated live; layout changes apply on the next input report.
+ * Cross/Circle and Square/Triangle layout swapping applies to the test controller before the
+ * source->destination map. Physical adapters apply their own per-device layout before calling
+ * submit. Recording level defaults to Info. */
+/* Preflight without applying preferences: 0=allowed, negative=invalid. */
+int uc_core_settings_check(uint8_t swap_ab, const uint8_t mapping[32]);
 int uc_core_settings(uint8_t recording_level, uint8_t swap_ab, const uint8_t mapping[32]);
 /* JSON entries+dropped. Page filter never changes recording level. Returns
  * bytes excluding NUL, or zero (empty output) for invalid level/small buffer.

@@ -6,7 +6,7 @@ GET `/api/v1/session` returns a fresh process-local 256-bit token. Mutations req
 
 GET `/api/v1/system`, `/users`, `/settings`, `/logs?level=info` and `/test-controller` are under `/api/v1`. POST `/test-controller` accepts `{user_id}`; 202 `{pending:true}` requires explicit retry while the platform identifies the new output. DELETE cancels pending creation and releases/deletes the owned output. POST `/test-controller/input` accepts session ID, monotonic sequence, button mask, four signed 16-bit axes and two unsigned 16-bit triggers. Neutral input releases buttons; lost clients are released by the independent core timeout.
 
-Settings POST requires the complete flat schema with schema_version=1, recording_level, page_level, rumble, swap_ab, and 32 mapping entries in 0..31. Unknown/duplicate keys and invalid numbers fail. Disable the controller before changing settings. A mode-0600 temporary document is fully written and fsynced before rename; only then is memory replaced and core recording/mapping applied. A corrupt stored file blocks startup. Directory fsync, concurrent process writers and symlink-hardening of a hostile settings directory are outside this single-process trusted-directory MVP. The global rumble switch gates physical feedback; per-device options are stored separately. Pairing secrets are outside this model.
+Settings POST requires the complete flat schema with schema_version=1, recording_level, page_level, rumble, swap_ab, and 32 mapping entries in 0..31. Unknown/duplicate keys and invalid numbers fail. All settings may be saved live. Button-map and test-layout changes apply to the next full input report without recreating sessions or changing account assignment. Core validation runs before persistence. Saving startup preferences while connected affects the next suspend cycle and does not restart any inputs. A mode-0600 temporary document is fully written and fsynced before rename; only then is memory replaced and core recording/mapping applied. A corrupt stored file blocks startup. Directory fsync, concurrent process writers and symlink-hardening of a hostile settings directory are outside this single-process trusted-directory MVP. The global rumble switch gates physical feedback; per-device options are stored separately. Pairing secrets are outside this model.
 
 Recording level limits retained lifecycle logs; page level/query filters existing entries only. Settings persistence errors emit fixed redacted stderr codes. Core provides bounded entries and dropped count; arbitrary input bodies, headers, user names and credentials are never copied into logs.
 
@@ -23,7 +23,7 @@ python3 tests/web/test_runtime.py /tmp/uc-c-http-host
 
 The HTTP integration check requires local socket permission. The host backend records lifecycle in memory and does not validate PS5 hardware behavior.
 
-默认监听 7456；绑定失败时仅再尝试 7457。两者均失败则启动失败，日志记录失败原因及实际监听端口。页面使用相对 URL，备用端口同样可用。
+固定监听7456；启动时 socket、绑定或监听失败立即退出，不再回退7457。休眠不主动关闭监听；SIGCONT或事件循环长间隔后检查并重新确认监听。运行期失败记录阶段和errno，每秒最多重建一次，连续10次恢复仍未成功接受请求则退出。恢复网络不会启动蓝牙或USB。
 
 ## Bluetooth HID diagnostics
 

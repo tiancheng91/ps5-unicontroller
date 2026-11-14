@@ -171,7 +171,7 @@ int host_output_ready(const host_t *h, int slot)
 }
 int host_rumble_pulse(host_t *h, int slot, int ms)
 {
-    assert(h == &fake && output_ready && ms == 200);
+    assert(h == &fake && output_ready && (ms == 200 || ms == 500));
     pulse_calls++;
     pulse_slot = slot;
     return pulse_accept;
@@ -544,6 +544,9 @@ int main(void)
            strstr(status_json, "\"output_active\":true") && strstr(status_json, "\"bound\":false"));
     uc_bt_suspend();
     assert(!uc_bt_running() && !sessions[0]);
+    assert(uc_bt_status_json(status_json, sizeof status_json));
+    assert(strstr(status_json, "\"state\":\"off\"") &&
+           !strstr(status_json, "suspended_manual_restart_required"));
     assert(uc_bt_start_system_assigned() == 0);
     event(1, 0, 27000);
     event(2, 0, 27001);
@@ -570,6 +573,19 @@ int main(void)
     assert(feedback_calls == calls_before + 1 && !feedback_strong && !feedback_weak);
     event(2, 0, 40020);
     assert(submitted_buttons == PAD_CIRCLE);
+    assert(uc_bt_test_rumble(key, active, 40030) < 0); /* Per-device rumble is disabled. */
+    assert(!uc_device_options_save(key, (uc_device_options){1, 1}));
+    uc_bt_device_options_changed();
+    output_ready = pulse_accept = 1;
+    int before_pulse = pulse_calls;
+    assert(uc_bt_test_rumble(key, active + 100, 40030) < 0);
+    assert(!uc_bt_test_rumble(key, active, 40030) && pulse_calls == before_pulse + 1);
+    assert(uc_bt_test_rumble(key, active, 40031) == 2 && pulse_calls == before_pulse + 1);
+    uc_bt_set_rumble_enabled(0);
+    assert(uc_bt_test_rumble(key, active, 41031) < 0);
+    uc_bt_set_rumble_enabled(1);
+    output_ready = 0;
+    assert(uc_bt_test_rumble(key, active, 41031) < 0);
     assert(!uc_bt_stop());
     assert(!uc_bt_device_options_match(key, 0));
     assert(!unlink(options_path));

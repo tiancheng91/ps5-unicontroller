@@ -297,6 +297,7 @@ int main(void)
     uc_usb_poll(1);
     assert(hid_configured == configurations_before + 1 && by_user(1) >= 0);
     char hid_status[8192];
+    assert(uc_usb_test_rumble("usb:/dev/ugen1.1:045E:028E", sessions[by_user(1)].id, 2) < 0);
     assert(uc_usb_status_json(hid_status, sizeof hid_status) &&
            strstr(hid_status, "generic-hid-usb") &&
            strstr(hid_status, "\"rumble_available\":false") &&
@@ -430,6 +431,8 @@ int main(void)
     scans = ports[0].scans;
     uc_usb_poll(5100);
     assert(!uc_usb_running() && !uc_core_active_session() && ports[0].scans == scans);
+    assert(uc_usb_status_json(json, sizeof json));
+    assert(strstr(json, "\"state\":\"off\"") && !strstr(json, "suspended_manual_restart_required"));
     finish();
     setup(1);
     assert(!uc_usb_start(1));
@@ -536,6 +539,25 @@ int main(void)
     uc_usb_device_options_changed();
     uc_usb_poll(20220);
     assert(rumble_calls == r + 1);
+    uint64_t test_session = sessions[by_user(1)].id;
+    desired_strong = desired_weak = 200;
+    assert(uc_usb_test_rumble(key, test_session + 100, 20230) < 0);
+    assert(!uc_usb_test_rumble(key, test_session, 20230));
+    r = rumble_calls;
+    assert(uc_usb_test_rumble(key, test_session, 20231) == 2 && rumble_calls == r);
+    uc_usb_poll(20240);
+    assert(rumble_calls == r + 1 && uc_core_session_active(test_session));
+    int before_stop = stops;
+    uc_usb_poll(20730);
+    assert(stops == before_stop + 1); /* Exact pulse deadline sends neutral motors. */
+    assert(uc_usb_test_rumble(key, test_session, 20731) == 2);
+    uc_usb_poll(21000); /* Keep the transport lease alive between test requests. */
+    assert(!uc_usb_test_rumble(key, test_session, 21230));
+    uc_usb_set_rumble_enabled(0);
+    r = rumble_calls;
+    uc_usb_poll(21240);
+    assert(rumble_calls == r && uc_usb_test_rumble(key, test_session, 22230) < 0);
+    assert(uc_core_session_active(test_session));
     finish();
     assert(!unlink(options_path));
     assert(!uc_usb_set_transport(NULL));

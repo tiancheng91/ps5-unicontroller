@@ -22,6 +22,7 @@
     rumble: true,
     swap_ab: false,
     rumble_available: true,
+    rumble_enabled: true,
   };
   const bt = {
     state: "on",
@@ -53,6 +54,7 @@
     rumble: true,
     swap_ab: false,
     rumble_available: true,
+    rumble_enabled: true,
     session_id: 102,
     model: "Sample Xbox USB",
     profile: "XInput",
@@ -94,7 +96,7 @@
     page_level: "info",
     rumble: true,
     swap_ab: false,
-    bluetooth_auto_start: false,
+    bluetooth_auto_start: true,
     bluetooth_auto_trigger: "login",
     bluetooth_auto_user: 2,
     usb_auto_start: false,
@@ -157,7 +159,21 @@
       };
     else if (path === "/system")
       data = { mode: "DEMO PREVIEW", backend: "simulated", hardware: false };
-    else if (path === "/device-settings" && method === "POST") {
+    else if (path === "/rumble-test" && method === "POST") {
+      const found = [...bt.devices, ...usb.devices].find(
+        (d) => d.settings_key === body.key && d.session_id === body.session_id,
+      );
+      if (!found) {
+        data = { error: "device_changed" };
+        status = 409;
+      } else if (!found.rumble_available || !found.rumble || !settings.rumble) {
+        data = { error: "rumble_test_unavailable" };
+        status = 409;
+      } else {
+        data = { queued: true, duration_ms: 500 };
+        status = 202;
+      }
+    } else if (path === "/device-settings" && method === "POST") {
       const found = [...bt.devices, ...usb.devices].find(
         (d) => d.settings_key === body.key && d.session_id === body.session_id,
       );
@@ -167,6 +183,7 @@
       } else {
         found.rumble = body.rumble;
         found.swap_ab = body.swap_ab;
+        found.rumble_enabled = settings.rumble && body.rumble;
         data = { saved: true };
       }
     } else if (path === "/settings") {
@@ -194,6 +211,9 @@
       if (status === 200) data = session;
     } else if (path === "/test-controller/input") data = { accepted: true };
     else if (path === "/bluetooth") {
+      bt.devices.forEach((d) => {
+        d.rumble_enabled = settings.rumble && d.rumble;
+      });
       if (bt.state === "on")
         bt.devices.forEach((d) => {
           d.input_frames++;
@@ -201,6 +221,9 @@
       bt.scan_seconds = Math.max(0, Math.ceil((scanUntil - performance.now()) / 1000));
       data = bt;
     } else if (path === "/usb") {
+      usb.devices.forEach((d) => {
+        d.rumble_enabled = settings.rumble && d.rumble;
+      });
       if (usb.state === "on") usbDevice.input_frames++;
       data = usb;
     } else if (path === "/bluetooth/scan/stop" && method === "POST") {

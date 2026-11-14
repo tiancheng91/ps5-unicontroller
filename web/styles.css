@@ -71,6 +71,7 @@ select:hover,
   border-color: var(--muted);
 }
 button:disabled,
+button[aria-disabled="true"],
 select:disabled,
 fieldset:disabled {
   opacity: 0.5;

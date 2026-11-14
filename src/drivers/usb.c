@@ -18,6 +18,8 @@ typedef struct {
     int attached, valid, pending, cleanup, health_valid, transport_live, native_lease;
     char options_key[UC_DEVICE_KEY_MAX];
     int known;
+    uint64_t rumble_test_until, rumble_test_last;
+    int rumble_test_seen;
     uc_device_options options;
     int scanned, assigning, failed;
     int32_t user, next_user;
@@ -56,6 +58,7 @@ void uc_usb_set_log_level(unsigned level)
 }
 static void stop_motors(usb_slot *s, uint64_t now)
 {
+    s->rumble_test_until = 0;
     if (s->attached && s->protocol.ready && !s->protocol.failed) {
         (void)uc_usb_protocol_rumble(&s->protocol, 0, 0, now);
         (void)uc_usb_protocol_poll(&s->protocol, &s->transport, now);
@@ -74,6 +77,7 @@ static void close_source(usb_slot *s, uint64_t now)
     if (s->transport_live && transport_valid(&s->transport))
         s->transport.ops->close(s->transport.context);
     s->transport_live = s->attached = s->valid = s->health_valid = 0;
+    s->rumble_test_seen = 0;
     s->submitted = 0;
     memset(&s->protocol, 0, sizeof(s->protocol));
 }
@@ -206,7 +210,7 @@ int uc_usb_stop(void)
 }
 void uc_usb_suspend(void)
 {
-    usb.reason = "suspended_manual_restart_required";
+    usb.reason = NULL; /* Rest is an expected pause; runtime decides when to restart. */
     (void)uc_usb_stop();
 }
 int uc_usb_assign(unsigned slot, const char *node, int32_t user)
@@ -381,7 +385,13 @@ static void poll_slot(unsigned index, uint64_t now)
         s->health_at = now;
         s->health_valid = 1;
     }
-    if (active(s) && usb.rumble && s->options.rumble && s->device.kind == UC_USB_XINPUT) {
+    if (s->rumble_test_until && now >= s->rumble_test_until) {
+        s->rumble_test_until = 0;
+        (void)uc_usb_protocol_rumble(&s->protocol, 0, 0, now);
+        uc_log_debug("[usb] rumble test ended key=%s", s->options_key);
+    } else if (s->rumble_test_until) {
+        (void)uc_usb_protocol_rumble(&s->protocol, 200, 200, now);
+    } else if (active(s) && usb.rumble && s->options.rumble && s->device.kind == UC_USB_XINPUT) {
         uint8_t strong = 0, weak = 0;
         int feedback = uc_core_read_rumble(s->session, now, &strong, &weak);
         if (feedback > 0)
@@ -670,6 +680,7 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
         ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s",
             s->options_key, s->options.rumble ? "true" : "false",
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false");
+        ADD(",\"rumble_enabled\":%s", usb.rumble && s->options.rumble ? "true" : "false");
         if (diagnostic_fields(buffer, capacity, &used, &s->device, 0)) {
             buffer[0] = 0;
             return 0;
@@ -716,4 +727,28 @@ void uc_usb_device_options_changed(void)
             s->submitted = 0;
         s->options = next;
     }
+}
+
+int uc_usb_test_rumble(const char *key, uint64_t session, uint64_t now)
+{
+    if (!key || !usb.enabled || !usb.rumble || now > UINT64_MAX - 500)
+        return -1;
+    for (unsigned i = 0; i < usb.count; ++i) {
+        usb_slot *s = &usb.slots[i];
+        if (!s->attached || s->session != session || strcmp(s->options_key, key))
+            continue;
+        if (!s->options.rumble || s->device.kind != UC_USB_XINPUT || !s->protocol.ready ||
+            s->protocol.failed || s->protocol.rumble_failed)
+            return -1;
+        if (s->rumble_test_seen && (now < s->rumble_test_last || now - s->rumble_test_last < 1000))
+            return 2;
+        if (uc_usb_protocol_rumble(&s->protocol, 200, 200, now))
+            return -1;
+        s->rumble_test_until = now + 500;
+        s->rumble_test_last = now;
+        s->rumble_test_seen = 1;
+        uc_log_info("[usb] rumble test key=%s duration_ms=500 queued=1", key);
+        return 0;
+    }
+    return -1;
 }

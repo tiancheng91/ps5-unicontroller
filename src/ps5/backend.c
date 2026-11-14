@@ -349,18 +349,32 @@ static int read_log(int identify)
             return 0;
         }
         if (raw_log) {
+            /* Desktop observation lasts up to two minutes. Its diagnostic
+             * capture limit must not close the event reader or cancel an
+             * already armed login delay. Identity discovery retains its cap. */
+            size_t capture = (size_t)n;
+            if (home_owns_log) {
+                size_t remaining = consumed < 256 * 1024 ? 256 * 1024 - consumed : 0;
+                if (capture > remaining)
+                    capture = remaining;
+            }
             size_t offset = 0;
-            while (offset < (size_t)n) {
-                ssize_t copied = write(log_copy, buffer + offset, (size_t)n - offset);
+            while (offset < capture) {
+                ssize_t copied = write(log_copy, buffer + offset, capture - offset);
                 if (copied <= 0) {
+                    uc_log_error("[vpad] log capture write failed errno=%d", errno);
                     phase = 5;
                     close_log();
                     return 0;
                 }
                 offset += (size_t)copied;
             }
-            consumed += (size_t)n;
-            if (consumed > 256 * 1024) {
+            consumed += capture;
+            if (home_owns_log && capture && consumed == 256 * 1024)
+                uc_log_info(
+                    "[input-auto] diagnostic capture limit reached; desktop observation continues");
+            if (!home_owns_log && consumed > 256 * 1024) {
+                uc_log_error("[vpad] identification log limit reached; cancelling discovery");
                 phase = 5;
                 close_log();
                 return 0;
@@ -426,7 +440,7 @@ static void poll_home(uint64_t now)
             home_waiting = 0;
             uc_bt_auto_arm(&home_gate, now);
             home_gate.fresh = home_gate.home = 1; /* Power event; no log dependency. */
-            uc_log_info("[input-auto] resume observed; waiting 5000ms; no user required");
+            uc_log_info("[input-auto] resume observed; waiting 15000ms; no user required");
         }
         return;
     }
@@ -482,7 +496,7 @@ int uc_backend_auto_due(int32_t target_user, int idle)
 {
     if (auto_mode == UC_AUTO_RESUME) {
         /* The timer begins as soon as power is working; the final transport gate
-         * independently enforces the same five-second power grace. */
+         * independently enforces its minimum five-second power grace. */
         int eligible = idle && ready && power_status == 0 && !suspend_event;
         int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
         if (due || (!home_waiting && !home_gate.armed)) {
@@ -504,7 +518,7 @@ int uc_backend_auto_due(int32_t target_user, int idle)
     int armed = home_gate.armed;
     int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
     if (!timing && home_gate.timing)
-        uc_log_info("[input-auto] desktop and users ready; waiting 5000ms foreground=%d target=%d",
+        uc_log_info("[input-auto] desktop and users ready; waiting 15000ms foreground=%d target=%d",
                     foreground, target_user);
     else if (timing && !home_gate.timing && !due && home_gate.armed)
         uc_log_warn("[input-auto] readiness lost; delay cancelled");

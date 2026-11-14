@@ -1,68 +1,110 @@
-"""Validate primary, fallback and exhausted listeners without port races."""
+"""Exercise startup failure, retained resume listener and bounded fault recovery."""
 
-import http.client, json, os, socket, subprocess, sys, tempfile, time
+import http.client
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
 
-binary = os.path.abspath(sys.argv[1])
+binary, fault_binary = map(os.path.abspath, sys.argv[1:3])
 
 
-def hold(port):
+def reserve():
     s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("127.0.0.1", port))
+    s.bind(("127.0.0.1", 0))
     s.listen()
     return s
 
 
-def launch(path):
-    return subprocess.Popen(
-        [binary, "7456", path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+def system(port):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=0.2)
+    try:
+        c.request("GET", "/api/v1/session")
+        r = c.getresponse()
+        assert r.status == 200
+        return json.loads(r.read())
+    finally:
+        c.close()
 
 
 def ready(p, port):
-    for _ in range(100):
+    for _ in range(200):
         if p.poll() is not None:
-            raise AssertionError(p.stderr.read())
+            raise AssertionError("HTTP process exited prematurely")
         try:
-            c = http.client.HTTPConnection("127.0.0.1", port, timeout=0.2)
-            c.request("GET", "/api/v1/system")
-            r = c.getresponse()
-            r.read()
-            c.close()
-            if r.status == 200:
-                return
+            return system(port)
         except OSError:
-            pass
-        time.sleep(0.02)
+            time.sleep(0.02)
     raise AssertionError("listener not ready")
 
 
-def stop(p):
-    p.terminate()
-    p.wait(timeout=3)
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    with reserve() as occupied:
+        port = occupied.getsockname()[1]
+        p = subprocess.run(
+            [binary, str(port), str(root / "settings.json")],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        assert p.returncode != 0
+        assert "stage=bind" in p.stderr and "startup failed; exiting" in p.stderr
 
-
-with tempfile.TemporaryDirectory() as d:
-    p = launch(d + "/settings.json")
-    try:
-        ready(p, 7456)
-    finally:
-        stop(p)
-    with hold(7456):
-        p = launch(d + "/settings.json")
+    broken, fail_bind, rest = root / "break", root / "bind", root / "rest"
+    env = dict(
+        os.environ,
+        UC_TEST_BREAK_LISTENER=str(broken),
+        UC_TEST_FAIL_BIND=str(fail_bind),
+        UC_TEST_REST=str(rest),
+    )
+    with reserve() as available:
+        port = available.getsockname()[1]
+    with (root / "runtime.log").open("w+") as log:
+        p = subprocess.Popen(
+            [fault_binary, str(port), str(root / "settings.json")],
+            stdout=subprocess.DEVNULL,
+            stderr=log,
+            env=env,
+        )
         try:
-            ready(p, 7457)
-        finally:
-            stop(p)
-        logs = p.stderr.read()
-        assert "bind failed port=7456" in logs and ":7457" in logs
-        with hold(7457):
-            p = launch(d + "/settings.json")
-            p.wait(timeout=3)
+            initial = ready(p, port)
+            # Resume keeps the configured port and authentication token.
+            for _ in range(3):
+                p.send_signal(signal.SIGCONT)
+                time.sleep(0.05)
+                assert ready(p, port)["token"] == initial["token"]
+            broken.touch()
+            time.sleep(0.1)
+            assert ready(p, port)["token"] == initial["token"]
+            # Rest itself retains the healthy listener and the same token.
+            rest.touch()
+            time.sleep(0.05)
+            assert ready(p, port)["token"] == initial["token"]
+            fail_bind.touch()
+            broken.touch()
+            time.sleep(1.2)
+            assert p.poll() is None
+            log.flush()
+            assert (
+                "listener failed stage=bind" not in (root / "runtime.log").read_text()
+            )
+            rest.unlink()
+            p.wait(timeout=15)
             assert p.returncode != 0
-            logs = p.stderr.read()
-            assert "bind failed port=7457" in logs
-print("Primary 7456, fallback 7457, both occupied: PASS")
+            log.seek(0)
+            logs = log.read()
+            assert "retained listener healthy" in logs
+            assert "listener recovered" in logs and "accept failed" in logs
+            assert logs.count("listener failed stage=bind") == 10
+            assert "recovery exhausted; exiting" in logs
+        finally:
+            if p.poll() is None:
+                p.terminate()
+                p.wait(timeout=3)
+print("HTTP: startup failure, resume retention, recovery and bounded failure exit PASS")

@@ -593,6 +593,16 @@
               </label>
               <p class="muted" x-label="deviceOptionsHint"></p>
             </fieldset>
+            <div class="setting">
+              <div><p x-text="rumbleTestHint"></p></div>
+              <button
+                id="device-rumble-test"
+                @click="testDeviceRumble"
+                :disabled="rumbleTestUnavailable"
+                :aria-disabled="rumbleTestDisabled"
+                x-label="rumbleTest"
+              ></button>
+            </div>
             <details class="advanced" x-show="detailDevice.assignable">
               <summary x-label="advancedAssignment"></summary>
               <p x-label="assignmentHint"></p>

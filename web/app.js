@@ -31,6 +31,8 @@ document.addEventListener("alpine:init", () => {
     paused: false,
     ready: false,
     deviceBusy: false,
+    rumbleTestCooldown: 0,
+    rumbleNoticeUntil: 0,
     btBusy: false,
     usbBusy: false,
     stopping: false,
@@ -239,7 +241,11 @@ document.addEventListener("alpine:init", () => {
       }));
     },
     get usbDevices() {
-      return this.usb.devices.map((d) => this.deviceView(d, false));
+      // Status retains disconnected slots for diagnostics; these are not devices
+      // in the connected list. Equal model names on different nodes remain distinct.
+      return this.usb.devices
+        .filter((d) => d.connected === true)
+        .map((d) => this.deviceView(d, false));
     },
     get bonds() {
       return this.bt.paired.map((d) => ({
@@ -266,6 +272,8 @@ document.addEventListener("alpine:init", () => {
         system_assignment: !!d.system_assignment,
         known_device: !!d.known_device,
         rumble: !!d.rumble,
+        rumble_available: !!d.rumble_available,
+        rumble_enabled: !!d.rumble_enabled,
         swap_ab: !!d.swap_ab,
         settings_key: d.settings_key || "",
         name: d.model || d.profile || "HID",
@@ -342,6 +350,8 @@ document.addEventListener("alpine:init", () => {
           system_assignment: false,
           known_device: false,
           rumble: false,
+          rumble_available: false,
+          rumble_enabled: false,
           swap_ab: false,
           settings_key: "",
         }
@@ -361,6 +371,50 @@ document.addEventListener("alpine:init", () => {
       return this.t(
         this.detailDevice.rumble_available ? "deviceRumbleHint" : "rumbleUnavailableHint",
       );
+    },
+    get rumbleTestUnavailable() {
+      return (
+        this.detailMissing ||
+        !this.detailDevice.settings_key ||
+        this.detailDevice.connected === false ||
+        !this.detailDevice.rumble_available ||
+        !this.detailDevice.rumble_enabled
+      );
+    },
+    get rumbleTestDisabled() {
+      return this.busy || this.rumbleTestUnavailable || this.now < this.rumbleTestCooldown;
+    },
+    get rumbleTestHint() {
+      if (this.detailMissing || this.detailDevice.connected === false) return this.t("deviceGone");
+      if (!this.detailDevice.rumble_available) return this.t("rumbleTestUnsupported");
+      if (!this.detailDevice.rumble_enabled) return this.t("rumbleTestEnableHint");
+      return this.t("rumbleTestHint");
+    },
+    async testDeviceRumble() {
+      if (this.rumbleTestDisabled) return;
+      const d = this.detailDevice;
+      this.deviceBusy = true;
+      try {
+        await UCAPI.request("/rumble-test", "POST", {
+          key: d.settings_key,
+          session_id: d.session_id || 0,
+        });
+        this.now = Date.now();
+        this.rumbleTestCooldown = this.now + 1000;
+        this.rumbleNoticeUntil = this.now + 3000;
+        this.notice("rumbleTestQueued", { name: d.name });
+      } catch (e) {
+        const reasons = {
+          rumble_disabled: "rumbleTestEnableHint",
+          rumble_test_unavailable: "rumbleTestUnsupported",
+          rumble_test_busy: "rumbleTestBusy",
+          device_changed: "deviceGone",
+        };
+        if (reasons[e.message]) this.notice(reasons[e.message], {}, true);
+        else this.notice("operationFailed", { error: e.message }, true);
+      } finally {
+        this.deviceBusy = false;
+      }
     },
     async changeDeviceOption(event) {
       const d = this.detailDevice;
@@ -546,7 +600,8 @@ document.addEventListener("alpine:init", () => {
           this.session = session;
           this.ready = true;
         }
-        if (!this.error || this.message === "waiting") this.notice("ready");
+        if ((!this.error || this.message === "waiting") && this.now >= this.rumbleNoticeUntil)
+          this.notice("ready");
         if (!this.paused) {
           try {
             this.logs = this.formatLogs(
