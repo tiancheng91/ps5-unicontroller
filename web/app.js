@@ -241,7 +241,11 @@ document.addEventListener("alpine:init", () => {
       }));
     },
     get usbDevices() {
-      return this.usb.devices.map((d) => this.deviceView(d, false));
+      // Status retains disconnected slots for diagnostics; these are not devices
+      // in the connected list. Equal model names on different nodes remain distinct.
+      return this.usb.devices
+        .filter((d) => d.connected === true)
+        .map((d) => this.deviceView(d, false));
     },
     get bonds() {
       return this.bt.paired.map((d) => ({

@@ -431,6 +431,8 @@ int main(void)
     scans = ports[0].scans;
     uc_usb_poll(5100);
     assert(!uc_usb_running() && !uc_core_active_session() && ports[0].scans == scans);
+    assert(uc_usb_status_json(json, sizeof json));
+    assert(strstr(json, "\"state\":\"off\"") && !strstr(json, "suspended_manual_restart_required"));
     finish();
     setup(1);
     assert(!uc_usb_start(1));

@@ -330,7 +330,7 @@ int uc_bt_stop(void)
 }
 void uc_bt_suspend(void)
 {
-    bt.error = "suspended_manual_restart_required";
+    bt.error = NULL; /* Rest is an expected pause; auto-start policy is owned by runtime. */
     (void)uc_bt_stop();
 }
 int uc_bt_running(void)

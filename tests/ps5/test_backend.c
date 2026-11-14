@@ -412,6 +412,23 @@ static void home_observation(void)
     assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
     poll_home(fake_ms);
     assert(home_gate.home);
+    assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
+    /* Heavy klog traffic may exhaust diagnostic capture during the login delay.
+     * The event reader and fresh focus must survive both the cap and later data. */
+    FILE *capture = tmpfile();
+    assert(capture);
+    log_copy = dup(fileno(capture));
+    fclose(capture);
+    assert(log_copy >= 0);
+    raw_log = 1;
+    consumed = 256 * 1024 - 1;
+    assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
+    poll_home(fake_ms);
+    assert(fd >= 0 && home_owns_log && home_gate.home && consumed == 256 * 1024);
+    assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
+    poll_home(fake_ms);
+    assert(fd >= 0 && home_gate.armed && home_gate.home && home_gate.timing &&
+           consumed == 256 * 1024);
     assert(!uc_backend_auto_due(0, 1) && !home_gate.timing); /* No account/inputs busy. */
     assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
     fake_ms = home_gate.since + 4997; /* can_start also samples the mock clock. */

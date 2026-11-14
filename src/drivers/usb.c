@@ -210,7 +210,7 @@ int uc_usb_stop(void)
 }
 void uc_usb_suspend(void)
 {
-    usb.reason = "suspended_manual_restart_required";
+    usb.reason = NULL; /* Rest is an expected pause; runtime decides when to restart. */
     (void)uc_usb_stop();
 }
 int uc_usb_assign(unsigned slot, const char *node, int32_t user)

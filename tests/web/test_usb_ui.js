@@ -79,6 +79,24 @@ const assert = require("assert"),
   finish();
   await refreshing;
   assert.equal(n.usb.state, "on");
+  // Reconnecting the same node in another slot leaves a diagnostic history entry.
+  // Show only live connections and never collapse two genuine pads by model name.
+  a.state.usb.devices = [
+    { slot: 0, node: "/dev/ugen1.2", model: "GameSir Nova Lite", connected: false },
+    { slot: 1, node: "/dev/ugen1.2", model: "GameSir Nova Lite", connected: true },
+    { slot: 2, node: "/dev/ugen1.3", model: "GameSir Nova Lite", connected: true },
+  ];
+  await n.refresh();
+  assert.equal(n.usbDevices.length, 2);
+  assert.deepEqual(
+    n.usbDevices.map((d) => d.identity),
+    ["/dev/ugen1.2", "/dev/ugen1.3"],
+  );
+  a.state.usb.devices.forEach((d) => {
+    d.connected = false;
+  });
+  await n.refresh();
+  assert.equal(n.usbDevices.length, 0);
   console.log(
     "USB model: coexistence, account gate, assignment identity, failures and stale polling PASS",
   );

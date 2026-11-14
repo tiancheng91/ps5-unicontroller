@@ -72,6 +72,7 @@ const root = path.resolve(__dirname, "../..");
           data.devices = [
             {
               slot: 0,
+              connected: true,
               node: "/dev/ugen1.2",
               vid: "3537",
               pid: generic ? "1041" : "1040",
@@ -326,7 +327,22 @@ const root = path.resolve(__dirname, "../..");
     await page.evaluate(() => {
       window.fakePad.buttons[0].pressed = true;
     });
-    await page.waitForFunction(() => document.querySelector('input[data-form="rumble"]').checked);
+    try {
+      await page.waitForFunction(() => document.querySelector('input[data-form="rumble"]').checked);
+    } catch (error) {
+      console.error(
+        "gamepad confirm state",
+        await page.evaluate(() => ({
+          active: document.activeElement?.outerHTML,
+          reads: window.padReads,
+          hidden: document.hidden,
+          checked: document.querySelector('input[data-form="rumble"]').checked,
+          navigation: window.UCUI.get().navigation,
+          pressed: window.fakePad.buttons[0].pressed,
+        })),
+      );
+      throw error;
+    }
     await page.waitForTimeout(500);
     assert.equal(await rumble.isChecked(), true);
     await page.evaluate(() => {

@@ -349,18 +349,32 @@ static int read_log(int identify)
             return 0;
         }
         if (raw_log) {
+            /* Desktop observation lasts up to two minutes. Its diagnostic
+             * capture limit must not close the event reader or cancel an
+             * already armed login delay. Identity discovery retains its cap. */
+            size_t capture = (size_t)n;
+            if (home_owns_log) {
+                size_t remaining = consumed < 256 * 1024 ? 256 * 1024 - consumed : 0;
+                if (capture > remaining)
+                    capture = remaining;
+            }
             size_t offset = 0;
-            while (offset < (size_t)n) {
-                ssize_t copied = write(log_copy, buffer + offset, (size_t)n - offset);
+            while (offset < capture) {
+                ssize_t copied = write(log_copy, buffer + offset, capture - offset);
                 if (copied <= 0) {
+                    uc_log_error("[vpad] log capture write failed errno=%d", errno);
                     phase = 5;
                     close_log();
                     return 0;
                 }
                 offset += (size_t)copied;
             }
-            consumed += (size_t)n;
-            if (consumed > 256 * 1024) {
+            consumed += capture;
+            if (home_owns_log && capture && consumed == 256 * 1024)
+                uc_log_info(
+                    "[input-auto] diagnostic capture limit reached; desktop observation continues");
+            if (!home_owns_log && consumed > 256 * 1024) {
+                uc_log_error("[vpad] identification log limit reached; cancelling discovery");
                 phase = 5;
                 close_log();
                 return 0;

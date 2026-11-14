@@ -544,6 +544,9 @@ int main(void)
            strstr(status_json, "\"output_active\":true") && strstr(status_json, "\"bound\":false"));
     uc_bt_suspend();
     assert(!uc_bt_running() && !sessions[0]);
+    assert(uc_bt_status_json(status_json, sizeof status_json));
+    assert(strstr(status_json, "\"state\":\"off\"") &&
+           !strstr(status_json, "suspended_manual_restart_required"));
     assert(uc_bt_start_system_assigned() == 0);
     event(1, 0, 27000);
     event(2, 0, 27001);

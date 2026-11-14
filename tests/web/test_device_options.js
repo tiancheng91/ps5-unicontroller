@@ -7,6 +7,7 @@ const { harness, settle } = require("./model_harness");
   h.state.usb.state = "on";
   h.state.usb.devices = [0, 1].map((slot) => ({
     slot,
+    connected: true,
     node: "/dev/ugen1." + (slot + 2),
     vid: "3537",
     pid: "1040",
