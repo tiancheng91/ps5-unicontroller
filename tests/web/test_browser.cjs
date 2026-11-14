@@ -194,6 +194,18 @@ const root = path.resolve(__dirname, "../..");
     assert.equal(await page.locator("#devices img").count(), 0);
     await page.locator('nav a[data-page="logs"]').click();
     await page.locator("#logs-view").waitFor({ state: "visible" });
+    await page.waitForFunction(() =>
+      document.querySelector("#logs").textContent.includes("[bluetooth]"),
+    );
+    assert.equal(await page.locator('a[href="/api/v1/diagnostics"]').count(), 0);
+    await page.locator("#level").selectOption("debug");
+    await page.waitForFunction(() => document.querySelector("#logs").textContent.includes("[usb]"));
+    await page.locator("#level").selectOption("error");
+    await page.waitForFunction(() => document.querySelector("#logs").textContent === "");
+    await page.locator("#level").selectOption("info");
+    await page.waitForFunction(() =>
+      document.querySelector("#logs").textContent.includes("[bluetooth]"),
+    );
     assert(!(await page.locator("#controllers-view").isVisible()));
     for (const route of ["controllers", "settings", "logs"]) {
       const navigation = page.locator('nav a[data-page="' + route + '"]');
@@ -284,6 +296,11 @@ const root = path.resolve(__dirname, "../..");
       document.querySelector("#settings-status").textContent.includes("已保存"),
     );
     await page.locator("#load").click();
+    // Reload disables the fieldset until its request finishes. Focusing an
+    // inherited-disabled checkbox silently fails and leaves focus on a summary.
+    await page.waitForFunction(
+      () => !document.querySelector('input[data-form="rumble"]').matches(":disabled"),
+    );
     assert.equal(await rumble.isChecked(), false);
     assert.equal(await mapping.first().inputValue(), "11");
     await page.locator("#ui-theme").focus();
@@ -309,6 +326,7 @@ const root = path.resolve(__dirname, "../..");
     );
     // Confirm is edge-triggered; holding a gamepad button cannot toggle twice.
     await rumble.focus();
+    assert(await rumble.evaluate((el) => el === document.activeElement));
     await page.evaluate(() => {
       window.fakePad = {
         index: 0,

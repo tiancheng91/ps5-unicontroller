@@ -152,14 +152,7 @@
                     :checked="paused"
                     @change="pauseChanged" /><span x-label="pause"></span></label
                 ><button id="refresh" @click="refresh" x-label="refresh"></button
-                ><button id="copy" @click="copy" x-label="copy"></button
-                ><a
-                  class="button"
-                  href="/api/v1/diagnostics"
-                  target="_blank"
-                  rel="noopener"
-                  x-label="platformLogs"
-                ></a>
+                ><button id="copy" @click="copy" x-label="copy"></button>
               </div>
               <pre id="logs" class="terminal" x-text="logs"></pre>
               <details class="advanced">

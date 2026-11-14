@@ -46,7 +46,7 @@ static void write_event(log_Event *event)
             *p = ' ';
     rotate();
     FILE *destination = output ? output : stderr;
-    fprintf(destination, "%s %-5s %s:%d %s\n", timestamp, log_level_string(event->level),
+    fprintf(destination, "%-19s %-5s %s:%d %s\n", timestamp, log_level_string(event->level),
             event->file, event->line, message);
     fflush(destination);
 }
@@ -90,4 +90,71 @@ void uc_log_close(void)
         fclose(output);
     output = NULL;
     output_path[0] = 0;
+}
+
+int uc_log_tail(char *buffer, size_t capacity, unsigned level)
+{
+    if (!buffer || capacity < 2 || level > 5)
+        return -1;
+    buffer[0] = 0;
+    if (!level)
+        return 0;
+    if (!output_path[0])
+        return -1;
+    FILE *file = fopen(output_path, "rb");
+    if (!file)
+        return -1;
+    if (fseek(file, 0, SEEK_END)) {
+        fclose(file);
+        return -1;
+    }
+    long size = ftell(file);
+    if (size < 0) {
+        fclose(file);
+        return -1;
+    }
+    size_t limit = capacity - 1 < 32768 ? capacity - 1 : 32768;
+    long start = (unsigned long)size > limit ? size - (long)limit : 0;
+    if (fseek(file, start ? start - 1 : 0, SEEK_SET)) {
+        fclose(file);
+        return -1;
+    }
+    /* Never expose a partial first record or cut through UTF-8 text. */
+    if (start && fgetc(file) != '\n') {
+        int byte;
+        do {
+            byte = fgetc(file);
+        } while (byte != '\n' && byte != EOF);
+    }
+    size_t length = fread(buffer, 1, limit, file);
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) {
+        buffer[0] = 0;
+        return -1;
+    }
+    buffer[length] = 0;
+    static const char *labels[] = {"", "ERROR", "WARN ", "INFO ", "DEBUG", "TRACE"};
+    size_t input = 0, used = 0;
+    while (input < length) {
+        const char *newline = memchr(buffer + input, '\n', length - input);
+        if (!newline)
+            break;
+        size_t line = (size_t)(newline - (buffer + input)) + 1;
+        unsigned severity = 1; /* Preserve unstructured stderr diagnostics. */
+        if (line >= 26) {
+            for (unsigned i = 1; i <= 5; ++i)
+                if (!memcmp(buffer + input + 20, labels[i], 5)) {
+                    severity = i;
+                    break;
+                }
+        }
+        if (severity <= level) {
+            memmove(buffer + used, buffer + input, line);
+            used += line;
+        }
+        input += line;
+    }
+    buffer[used] = 0;
+    return (int)used;
 }

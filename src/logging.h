@@ -12,6 +12,9 @@ void uc_log_init(void);
 void uc_log_set_level(unsigned level);
 int uc_log_open(const char *path);
 void uc_log_close(void);
+/* Read complete recent lines from the active runtime log, filtering with the
+ * existing 0=Off..5=Trace levels. Returns bytes (including zero), or -1. */
+int uc_log_tail(char *buffer, size_t capacity, unsigned level);
 
 #define uc_log_at(level, ...)                                                                      \
     do {                                                                                           \

@@ -25,7 +25,9 @@ function harness(name = "control") {
     if (route === "/usb") return state.usb;
     if (route === "/test-controller") return state.session;
     if (route === "/system") return { mode: "host" };
-    if (route.startsWith("/logs")) return { entries: [], dropped: 0 };
+    if (route.startsWith("/logs") || route === "/diagnostics")
+      return "2026-11-14 12:00:00 INFO  src/drivers/bt.c:1 [bluetooth] sample connected\n";
+    if (route.startsWith("/core/events")) return { entries: [], dropped: 0 };
     if (/\/(bluetooth|usb)\/start$/.test(route)) {
       const s = route.includes("bluetooth") ? state.bt : state.usb;
       s.state = "on";

@@ -191,10 +191,23 @@
       data = settings;
     } else if (path === "/launcher")
       data = { state: "unsupported", title_id: "UNIC00001", port: Number(location.port) };
-    else if (path === "/logs") data = { entries, dropped: 0 };
-    else if (path === "/diagnostics")
-      data = { preview: true, runtime: "No hardware. Changes reset on reload." };
-    else if (path === "/test-controller") {
+    else if (path === "/core/events") data = { entries, dropped: 0 };
+    else if (path === "/logs" || path === "/diagnostics") {
+      const limit =
+        path === "/diagnostics"
+          ? 5
+          : ["off", "error", "warn", "info", "debug", "trace"].indexOf(
+              url.searchParams.get("level") || "info",
+            );
+      data = [
+        [3, "2026-11-14 12:00:00 INFO  src/web/runtime.c:1 [http] preview server ready"],
+        [3, "2026-11-14 12:00:01 INFO  src/drivers/bt.c:1 [bluetooth] sample device connected"],
+        [4, "2026-11-14 12:00:02 DEBUG src/drivers/usb.c:1 [usb] sample input parsed"],
+      ]
+        .filter(([level]) => level <= limit)
+        .map(([, line]) => line + "\n")
+        .join("");
+    } else if (path === "/test-controller") {
       if (method === "DELETE") session = { enabled: false, session_id: null, pending: false };
       else if (method === "POST") {
         if (bt.state === "on" || usb.state === "on") {
@@ -351,9 +364,11 @@
       status = 404;
       data = { error: "unknown_preview_route" };
     }
-    return new Response(JSON.stringify(data), {
+    return new Response(typeof data === "string" ? data : JSON.stringify(data), {
       status,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": typeof data === "string" ? "text/plain; charset=utf-8" : "application/json",
+      },
     });
   };
   document.addEventListener("DOMContentLoaded", () => {
