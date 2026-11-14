@@ -48,13 +48,14 @@ with tempfile.TemporaryDirectory() as directory:
     with reserve() as occupied:
         port = occupied.getsockname()[1]
         p = subprocess.run(
-            [binary, str(port), str(root / "settings.json")],
+            [binary, str(port), str(root / "blocked-settings.json")],
             capture_output=True,
             text=True,
             timeout=3,
         )
         assert p.returncode != 0
-        assert "stage=bind" in p.stderr and "startup failed; exiting" in p.stderr
+        startup_log = (root / "blocked-settings.json.runtime.log").read_text()
+        assert "stage=bind" in startup_log and "startup failed; exiting" in startup_log
 
     broken, fail_bind, rest = root / "break", root / "bind", root / "rest"
     env = dict(
@@ -65,7 +66,7 @@ with tempfile.TemporaryDirectory() as directory:
     )
     with reserve() as available:
         port = available.getsockname()[1]
-    with (root / "runtime.log").open("w+") as log:
+    with (root / "settings.json.runtime.log").open("w+") as log:
         p = subprocess.Popen(
             [fault_binary, str(port), str(root / "settings.json")],
             stdout=subprocess.DEVNULL,
@@ -92,7 +93,8 @@ with tempfile.TemporaryDirectory() as directory:
             assert p.poll() is None
             log.flush()
             assert (
-                "listener failed stage=bind" not in (root / "runtime.log").read_text()
+                "listener failed stage=bind"
+                not in (root / "settings.json.runtime.log").read_text()
             )
             rest.unlink()
             p.wait(timeout=15)

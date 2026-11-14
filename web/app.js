@@ -20,7 +20,6 @@ document.addEventListener("alpine:init", () => {
     users: [],
     selectedUser: "",
     usersKey: "",
-    stableSince: 0,
     now: Date.now(),
     bt: { state: "off", devices: [], paired: [], discovered: [], scan_seconds: 0, scan_id: 0 },
     usb: { state: "off", devices: [], pending: false, bound: false },
@@ -75,8 +74,8 @@ document.addEventListener("alpine:init", () => {
       this.messageValues = values;
       this.error = error;
     },
-    get stableUser() {
-      return !!this.selectedUser && this.now - this.stableSince >= 5000;
+    get userReady() {
+      return this.users.some((user) => user.id === this.selectedUser);
     },
     get btRunning() {
       return ["on", "starting"].includes(this.bt.state);
@@ -91,13 +90,13 @@ document.addEventListener("alpine:init", () => {
       return this.btBusy || this.usbBusy || this.stopping || this.deviceBusy;
     },
     get btStartDisabled() {
-      return !this.ready || !this.stableUser || this.busy || this.btRunning || this.virtualRunning;
+      return !this.ready || !this.userReady || this.busy || this.btRunning || this.virtualRunning;
     },
     get usbStartDisabled() {
       return (
         !!this.bt.system_assignment ||
         !this.ready ||
-        !this.stableUser ||
+        !this.userReady ||
         this.busy ||
         this.usbRunning ||
         this.virtualRunning
@@ -178,7 +177,7 @@ document.addEventListener("alpine:init", () => {
       return this.bt.discovered.length === 0;
     },
     get assignmentDisabled() {
-      return !this.ready || !this.stableUser || this.busy;
+      return !this.ready || !this.userReady || this.busy;
     },
     get btStateText() {
       return this.t(this.bt.state);
@@ -195,7 +194,7 @@ document.addEventListener("alpine:init", () => {
       return this.usb.reason || "";
     },
     get showServiceGate() {
-      return !this.stableUser;
+      return !this.userReady;
     },
     get btStatus() {
       return (
@@ -556,8 +555,6 @@ document.addEventListener("alpine:init", () => {
     },
     userChanged(event) {
       if (event) this.selectedUser = event.currentTarget.value;
-      this.stableSince = Date.now();
-      this.now = this.stableSince;
     },
     async refresh() {
       if (this.refreshing || this.stopping) return;
@@ -592,7 +589,6 @@ document.addEventListener("alpine:init", () => {
             const preferred = String(users.preferred_user_id);
             this.selectedUser = next.find((u) => u.id === preferred)?.id || next[0]?.id || "";
           }
-          this.stableSince = this.now;
         }
         if (btEpoch === this.btEpoch && usbEpoch === this.usbEpoch && !this.busy) {
           this.acceptBluetooth(bt);
@@ -602,20 +598,22 @@ document.addEventListener("alpine:init", () => {
         }
         if ((!this.error || this.message === "waiting") && this.now >= this.rumbleNoticeUntil)
           this.notice("ready");
+      } catch (e) {
+        this.ready = false;
+        this.notice("operationFailed", { error: e.message }, true);
+      } finally {
         if (!this.paused) {
           try {
-            this.logs = this.formatLogs(
-              await UCAPI.request("/logs?level=" + encodeURIComponent(this.level)),
+            this.logs = await UCAPI.request(
+              "/logs?level=" + encodeURIComponent(this.level),
+              "GET",
+              undefined,
+              "text",
             );
           } catch (e) {
             this.logs = this.t("operationFailed", { error: e.message });
           }
         }
-      } catch (e) {
-        this.ready = false;
-        this.stableSince = Date.now();
-        this.notice("operationFailed", { error: e.message }, true);
-      } finally {
         this.refreshing = false;
       }
     },
@@ -700,17 +698,6 @@ document.addEventListener("alpine:init", () => {
         this.notice("operationFailed", { error: e.message }, true);
       }
     },
-    formatLogs(data) {
-      const entries = Array.isArray(data.entries) ? data.entries : [];
-      const lines = entries.map((entry) => {
-        const ms = Number(entry.timestamp_ms);
-        const time = Number.isFinite(ms) ? (ms / 1000).toFixed(3) : "?";
-        const clean = (value) => String(value ?? "-").replace(/[\r\n\t]/g, " ");
-        return `[mono ${time}s] [${clean(entry.level).toUpperCase()}] core ${clean(entry.code)} generation=${clean(entry.generation)} session=${clean(entry.session_id)}`;
-      });
-      if (data.dropped) lines.unshift(`# core ring buffer: overwritten=${data.dropped}`);
-      return lines.join("\n");
-    },
     async diagnosticText() {
       // Independent sections remain available even if one endpoint fails.
       const routes = [
@@ -720,6 +707,7 @@ document.addEventListener("alpine:init", () => {
         "/usb",
         "/usb/diagnostics",
         "/test-controller",
+        "/core/events?level=trace",
       ];
       const sections = await Promise.all(
         routes.map(async (route) => {
@@ -738,17 +726,11 @@ document.addEventListener("alpine:init", () => {
       } catch (error) {
         sections.push("# runtime.log unavailable: " + error.message);
       }
-      return [
-        "# UniController diagnostics " + new Date().toISOString(),
-        "# Core timestamps are monotonic uptime, not wall-clock time.",
-        "# core events (current page level / paused snapshot)",
-        this.logs,
-        ...sections,
-      ].join("\n\n");
+      return ["# UniController diagnostics " + new Date().toISOString(), ...sections].join("\n\n");
     },
     async copy() {
       try {
-        await navigator.clipboard.writeText(await this.diagnosticText());
+        await navigator.clipboard.writeText(this.logs);
         this.notice("copied");
       } catch (e) {
         this.notice("operationFailed", { error: e.message }, true);

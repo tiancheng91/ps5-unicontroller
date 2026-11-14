@@ -609,31 +609,11 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/diagnostics")) {
-        FILE *file = fopen("/data/unicontroller/runtime.log", "rb");
-        if (!file) {
-            error_response(c, 404, "runtime_log_unavailable");
-            return;
-        }
         char text[32769];
-        if (fseek(file, 0, SEEK_END) != 0) {
-            fclose(file);
-            error_response(c, 503, "log_read_failed");
+        if (uc_log_tail(text, sizeof text, UC_LOG_TRACE) < 0) {
+            error_response(c, 503, "runtime_log_unavailable");
             return;
         }
-        long size = ftell(file);
-        if (size < 0 || fseek(file, size > 32768 ? size - 32768 : 0, SEEK_SET) != 0) {
-            fclose(file);
-            error_response(c, 503, "log_read_failed");
-            return;
-        }
-        size_t count = fread(text, 1, sizeof(text) - 1, file);
-        int failed = ferror(file);
-        fclose(file);
-        if (failed) {
-            error_response(c, 503, "log_read_failed");
-            return;
-        }
-        text[count] = 0;
         response(c, 200, "text/plain; charset=utf-8", text);
         return;
     }
@@ -789,31 +769,37 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         response(c, 200, "application/json", b);
         return;
     }
-    if (!strcmp(method, "GET") && !strncmp(path, "/api/v1/logs", 12) &&
-        (path[12] == 0 || path[12] == '?')) {
+    int core_events = !strncmp(path, "/api/v1/core/events", sizeof("/api/v1/core/events") - 1);
+    const char *log_prefix = core_events ? "/api/v1/core/events" : "/api/v1/logs";
+    size_t prefix_length = strlen(log_prefix);
+    if (!strcmp(method, "GET") && !strncmp(path, log_prefix, prefix_length) &&
+        (path[prefix_length] == 0 || path[prefix_length] == '?')) {
         int filter = settings.page;
-        if (path[12]) {
-            if (strncmp(path + 12, "?level=", 7)) {
+        if (path[prefix_length]) {
+            if (strncmp(path + prefix_length, "?level=", 7)) {
                 error_response(c, 400, "invalid_query");
                 return;
             }
             filter = -1;
             for (int i = 0; i < 6; i++)
-                if (!strcmp(path + 19, levels[i]))
+                if (!strcmp(path + prefix_length + 7, levels[i]))
                     filter = i;
             if (filter < 0) {
                 error_response(c, 400, "invalid_level");
                 return;
             }
         }
-        char b[32768];
-        size_t len = uc_core_logs(b, sizeof(b), (uint8_t)filter);
-        if (!len || len >= sizeof(b)) {
-            error_response(c, 503, "logs_overflow");
-            return;
-        }
-        b[len] = 0;
-        response(c, 200, "application/json", b);
+        char b[32769];
+        if (core_events) {
+            if (!uc_core_logs(b, sizeof b, (uint8_t)filter)) {
+                error_response(c, 503, "logs_overflow");
+                return;
+            }
+            response(c, 200, "application/json", b);
+        } else if (uc_log_tail(b, sizeof b, (unsigned)filter) < 0)
+            error_response(c, 503, "runtime_log_unavailable");
+        else
+            response(c, 200, "text/plain; charset=utf-8", b);
         return;
     }
     if (!strcmp(path, "/api/v1/test-controller")) {

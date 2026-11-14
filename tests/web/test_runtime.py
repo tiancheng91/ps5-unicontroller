@@ -28,8 +28,11 @@ def request(method, path, body=None, auth=True, origin_header=origin):
     connection.request(method, path, payload, headers)
     response = connection.getresponse()
     status, data = response.status, response.read()
+    content_type = response.getheader("Content-Type", "")
     connection.close()
-    return status, json.loads(data)
+    return status, (
+        json.loads(data) if "application/json" in content_type else data.decode()
+    )
 
 
 with tempfile.TemporaryDirectory() as directory:
@@ -399,7 +402,14 @@ with tempfile.TemporaryDirectory() as directory:
             assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 409
             assert request("DELETE", "/api/v1/test-controller")[0] == 200
             previous_session = next_state["session_id"]
-        assert request("GET", "/api/v1/logs?level=trace")[0] == 200
+        status, lines = request("GET", "/api/v1/logs?level=trace")
+        assert status == 200 and isinstance(lines, str)
+        assert "UniController HTTP listening" in lines and "[core]" in lines
+        assert request("GET", "/api/v1/logs?level=off")[1] == ""
+        status, errors = request("GET", "/api/v1/logs?level=error")
+        assert status == 200 and " INFO " not in errors
+        assert request("GET", "/api/v1/core/events?level=trace")[1]["entries"]
+        assert request("GET", "/api/v1/diagnostics")[1] == lines
         assert request("GET", "/api/v1/logs?level=unknown")[0] == 400
         assert request("POST", "/api/v1/settings", {"padding": "x" * 9000})[0] == 413
         # A slow partial request must not prevent independent requests or ticking.

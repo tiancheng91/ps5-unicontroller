@@ -5,8 +5,15 @@ const assert = require("assert"),
   const h = harness(),
     m = h.model;
   await m.refresh();
-  assert(m.btStartDisabled);
+  assert(!m.btStartDisabled, "Ready user can start immediately after the initial refresh");
   assert(!h.calls.some((c) => c.method === "POST"));
+  const selected = m.selectedUser;
+  m.userChanged({ currentTarget: { value: "" } });
+  assert(m.btStartDisabled && m.usbStartDisabled && m.assignmentDisabled);
+  m.userChanged({ currentTarget: { value: "999" } });
+  assert(m.btStartDisabled, "An unknown account is never ready");
+  m.userChanged({ currentTarget: { value: selected } });
+  assert(!m.btStartDisabled, "Restoring a signed-in account enables manual start immediately");
   h.advance(5001);
   await m.refresh();
   assert(!m.btStartDisabled);
@@ -55,10 +62,10 @@ const assert = require("assert"),
   assert.strictEqual(m.users, users);
   m.selectedUser = "2";
   m.userChanged();
-  assert(!m.stableUser);
+  assert(m.userReady, "Changing to a signed-in user does not start a browser timer");
   h.advance(5001);
   await m.refresh();
-  assert(m.stableUser && m.selectedUser === "2");
+  assert(m.userReady && m.selectedUser === "2");
   const clock = harness();
   clock.model.acceptBluetooth({ ...clock.state.bt, scan_id: 1, scan_seconds: 60 });
   assert.equal(clock.model.scanRemaining, 60);

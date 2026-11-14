@@ -45,6 +45,16 @@ int main(void)
     read_all(path, buffer, sizeof buffer);
     assert(strstr(buffer, "TRACE") && strstr(buffer, "DEBUG"));
     assert(strstr(buffer, "injected record control text"));
+    assert(uc_log_tail(buffer, sizeof buffer, 2) > 0);
+    assert(strstr(buffer, "visible-error") && strstr(buffer, "visible-warn"));
+    assert(!strstr(buffer, "visible-trace") && !strstr(buffer, "visible-debug"));
+    assert(uc_log_tail(buffer, sizeof buffer, 5) > 0 && strstr(buffer, "visible-trace"));
+    assert(uc_log_tail(buffer, sizeof buffer, 0) == 0 && !buffer[0]);
+    assert(uc_log_tail(buffer, sizeof buffer, 6) < 0);
+    char tiny[128];
+    int tail = uc_log_tail(tiny, sizeof tiny, 5);
+    assert(tail > 0 && tail < (int)sizeof tiny && tiny[tail - 1] == '\n');
+    assert(uc_log_tail(buffer, sizeof buffer, 5) > 0 && strstr(buffer, tiny));
     char large[5000];
     memset(large, 'x', sizeof large - 1);
     large[sizeof large - 1] = 0;
@@ -73,6 +83,10 @@ int main(void)
     uc_log_info("after-rotation");
     uc_log_close();
     assert(access(previous, F_OK) == 0);
+    assert(uc_log_tail(buffer, sizeof buffer, 3) < 0); /* Closed logger has no active file. */
+    assert(uc_log_open(path));
+    assert(uc_log_tail(buffer, sizeof buffer, 3) > 0 && strstr(buffer, "after-rotation"));
+    uc_log_close();
     read_all(path, buffer, sizeof buffer);
     assert(strstr(buffer, "after-rotation") && !strstr(buffer, "visible-warn"));
     /* Closing a file restores stderr, rather than a closed stream. */

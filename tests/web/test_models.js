@@ -5,30 +5,30 @@ const assert = require("assert"),
   const h = harness(),
     m = h.model;
   await m.refresh();
-  const formatted = m.formatLogs({
-    entries: [
-      {
-        timestamp_ms: 1234,
-        level: "error",
-        code: "create_failed\nforged",
-        generation: 1,
-        session_id: 2,
-      },
-    ],
-    dropped: 4,
+  assert(m.logs.includes("[bluetooth] sample connected"));
+  m.paused = true;
+  const reads = h.calls.filter((c) => c.route.startsWith("/logs")).length;
+  await m.refresh();
+  assert.equal(h.calls.filter((c) => c.route.startsWith("/logs")).length, reads);
+  assert(m.logs.includes("[bluetooth] sample connected"));
+  m.paused = false;
+  h.responder((route, method, body, previous) => {
+    if (route === "/usb") throw Error("usb_status_unavailable");
+    return previous(route, method, body);
   });
+  await m.refresh();
   assert(
-    formatted.includes("[mono 1.234s] [ERROR] core create_failed forged generation=1 session=2"),
+    !m.ready && m.logs.includes("[bluetooth] sample connected"),
+    "Runtime logs remain readable when a status endpoint fails",
   );
-  assert.equal(formatted.split("\n").length, 2);
-  assert(formatted.includes("overwritten=4"));
   const bundle = await m.diagnosticText();
   assert(
     bundle.includes("# /bluetooth") &&
       bundle.includes("# /usb") &&
       bundle.includes("# /usb/diagnostics") &&
       bundle.includes("# /bluetooth/diagnostics") &&
-      bundle.includes("# runtime.log"),
+      bundle.includes("# runtime.log") &&
+      bundle.includes("# /core/events?level=trace"),
   );
   h.responder((route, method, body, previous) => {
     if (route === "/diagnostics") throw Error("runtime_log_unavailable");

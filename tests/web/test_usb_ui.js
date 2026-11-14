@@ -11,7 +11,7 @@ const assert = require("assert"),
   assert(m.usbRejected.length === 1 && m.usbRejected[0].detail.includes("claim_interface"));
   assert(m.usbRejected[0].detail.includes("errno=16"));
   assert(m.usbDevices.length === 0);
-  assert(m.usbStartDisabled);
+  assert(!m.usbStartDisabled, "USB can start immediately after loading signed-in users");
   h.advance(5001);
   await m.refresh();
   assert(!m.usbStartDisabled);
