@@ -4,6 +4,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
 #include "../core/device_options.h"
+#include "../core/bt_autostart.h"
 #include "json.h"
 #include "assets.h"
 #include "../drivers/bt.h"
@@ -53,7 +54,7 @@ static unsigned short listening_port;
 static const char *store_path;
 static uint64_t active_session;
 static int active_user = -1;
-static int usb_start_queued;
+static int usb_start_queued, usb_start_automatic;
 static int32_t usb_start_user;
 static uint64_t usb_start_at;
 static int bt_start_queued;
@@ -71,6 +72,14 @@ static void request_stop(int signal_number)
 {
     (void)signal_number;
     stop_requested = 1;
+}
+static void cancel_auto_start(void)
+{
+    uc_backend_auto_watch(UC_AUTO_OFF);
+    if (usb_start_automatic) {
+        usb_start_queued = usb_start_automatic = 0;
+        uc_log_info("[usb-auto] delayed start cancelled by manual action/settings");
+    }
 }
 static const char *levels[] = {"off", "error", "warn", "info", "debug", "trace"};
 static uint64_t millis(void)
@@ -184,7 +193,7 @@ static int parse_settings(const char *body, Settings *out)
         else if (!jeq(&j, trigger, "login"))
             return -1;
     }
-    out->bt_auto = 0;
+    out->bt_auto = 1;
     out->bt_auto_user = 0;
     int mode = jget(&j, "bluetooth_auto_start");
     if (mode >= 0 && jbool(&j, mode, &out->bt_auto))
@@ -264,7 +273,7 @@ static int load_settings(void)
     settings.page = 3;
     settings.rumble = 1;
     settings.swap = 0;
-    settings.bt_auto = 0;
+    settings.bt_auto = 1;
     settings.bt_auto_resume = 0;
     settings.bt_auto_user = 0;
     settings.usb_auto = 0;
@@ -439,7 +448,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
-        uc_backend_auto_watch(UC_AUTO_OFF);
+        cancel_auto_start();
         usb_start_user = (int32_t)user;
         usb_start_queued = 1;
         usb_start_at = millis() + 50;
@@ -447,7 +456,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/usb/stop")) {
-        uc_backend_auto_watch(UC_AUTO_OFF);
+        cancel_auto_start();
         usb_start_queued = 0;
         int rc = uc_usb_stop();
         response(c, rc ? 202 : 200, "application/json",
@@ -485,7 +494,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
-        uc_backend_auto_watch(0);
+        cancel_auto_start();
         bt_start_user = (int32_t)user;
         bt_start_queued = 1;
         bt_start_at = millis() + 50;
@@ -493,7 +502,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/stop")) {
-        uc_backend_auto_watch(0);
+        cancel_auto_start();
         bt_start_queued = 0;
         int rc = uc_bt_stop();
         response(c, rc ? 202 : 200, "application/json",
@@ -749,6 +758,8 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             settings = next;
             /* Active connections keep running. New startup preferences are
              * armed at the next suspend cycle instead of opening an observer now. */
+            if (auto_changed && usb_start_automatic)
+                cancel_auto_start();
             if (auto_changed)
                 uc_backend_auto_watch(!inputs_busy && (settings.bt_auto || settings.usb_auto) &&
                                               !settings.bt_auto_resume
@@ -1192,14 +1203,15 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         }
         if (uc_backend_suspend()) {
             uc_log_info("[lifecycle] suspending inputs; HTTP retained port=%u auto=%s bt=%d usb=%d",
-                        (unsigned)port, settings.bt_auto_resume ? "resume+5s" : "login+5s",
+                        (unsigned)port,
+                        settings.bt_auto_resume ? "resume bt=15s usb=25s" : "login bt=15s usb=25s",
                         settings.bt_auto, settings.usb_auto);
             uc_launcher_cancel();
             uc_backend_auto_watch(!(settings.bt_auto || settings.usb_auto) ? UC_AUTO_OFF
                                   : settings.bt_auto_resume                ? UC_AUTO_RESUME
                                                                            : UC_AUTO_DESKTOP);
             bt_start_queued = 0;
-            usb_start_queued = 0;
+            usb_start_queued = usb_start_automatic = 0;
             uc_bt_suspend();
             uc_usb_suspend();
             uc_core_suspend();
@@ -1236,9 +1248,14 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                                 settings.bt_auto_user);
                 }
                 if (usb_ready) {
-                    int rc = uc_usb_start(settings.usb_auto_user);
-                    uc_log_info("[usb-auto] start result=%d user=%d; no automatic retry", rc,
-                                settings.usb_auto_user);
+                    /* The shared event gate waits 15s. USB waits another 10s,
+                     * also when Bluetooth auto-start is disabled. */
+                    usb_start_user = settings.usb_auto_user;
+                    usb_start_at = millis() + UC_AUTO_USB_DELAY_MS - UC_AUTO_BT_DELAY_MS;
+                    usb_start_queued = usb_start_automatic = 1;
+                    uc_log_info("[usb-auto] queued remaining_ms=%u total_delay_ms=%u user=%d",
+                                UC_AUTO_USB_DELAY_MS - UC_AUTO_BT_DELAY_MS, UC_AUTO_USB_DELAY_MS,
+                                usb_start_user);
                 }
             }
         }
@@ -1257,8 +1274,10 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                 }
             }
         }
+        if (usb_start_automatic && !uc_backend_can_start(usb_start_user))
+            cancel_auto_start();
         if (usb_start_queued && millis() >= usb_start_at) {
-            usb_start_queued = 0;
+            usb_start_queued = usb_start_automatic = 0;
             int rc = uc_usb_start(usb_start_user);
             uc_log_info("[usb] queued start result=%d user=%d", rc, usb_start_user);
             if (rc == 0 && settings.usb_auto_user != usb_start_user) {

@@ -1,6 +1,8 @@
 #ifndef UC_BT_AUTOSTART_H
 #define UC_BT_AUTOSTART_H
 #include <stdint.h>
+#define UC_AUTO_BT_DELAY_MS 15000u
+#define UC_AUTO_USB_DELAY_MS 25000u
 typedef struct {
     int armed, fresh, home, timing;
     uint64_t until, since, last;

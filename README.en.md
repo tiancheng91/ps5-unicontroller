@@ -73,13 +73,13 @@ Switch protocol defaults follow physical positions: B (bottom)→×, A (right)�
 
 Connected Bluetooth and USB controllers share one list; “Add Bluetooth device” opens discovery and pairing, while USB is enabled in Settings. The management page supports Chinese/English, initially chosen from the browser language, a black-and-white default with red accents, optional orange/blue/green accents, and a large-text TV mode. Appearance is stored in this browser and does not affect connections. Optional arrow-key/standard Gamepad navigation is experimental and still needs PS5 WebView validation.
 
-Settings also includes rumble and log levels. Stop input sources before making changes. File editing is generally unnecessary; advanced adaptation is described in [custom controller configuration](docs/controller-config.md) (Chinese).
+Settings also includes rumble and log levels. Settings can also be saved while connected. File editing is generally unnecessary; advanced adaptation is described in [custom controller configuration](docs/controller-config.md) (Chinese).
 
 ### Rest mode and reconnection
 
-Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. Startup is manual by default; Bluetooth and USB each have an optional automatic-start switch.
+Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. By default, only Bluetooth automatic start is enabled; USB automatic start is disabled. Existing saved choices are preserved.
 
-Bluetooth and USB automatic-start switches share two triggers, both delayed by **five seconds**:
+Bluetooth and USB automatic-start switches share two triggers, Bluetooth delayed by **15 seconds** and USB by **25 seconds**:
 
 | Trigger                                  | Behavior                                                                                                                                                                   |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

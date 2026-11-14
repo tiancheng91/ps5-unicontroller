@@ -96,7 +96,7 @@
     page_level: "info",
     rumble: true,
     swap_ab: false,
-    bluetooth_auto_start: false,
+    bluetooth_auto_start: true,
     bluetooth_auto_trigger: "login",
     bluetooth_auto_user: 2,
     usb_auto_start: false,

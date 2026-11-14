@@ -1,6 +1,6 @@
 # 配置与日志
 
-配置文件 /data/unicontroller/settings.json，schema_version=1。字段 recording_level/page_level（off/error/warn/info/debug/trace）、rumble（bool）、swap_ab（bool）、button_mapping（32个0..31的整数）。另有 bluetooth_auto_start（bool，默认false）、bluetooth_auto_trigger（login/resume，默认login）、bluetooth_auto_user（上次手动成功启动蓝牙的账号，默认0，仅服务端更新）。旧配置缺少新增字段时按默认值读取。默认Info、允许震动、无翻转、identity映射。震动只是偏好值；手机后端没有物理马达。
+配置文件 /data/unicontroller/settings.json，schema_version=1。字段 recording_level/page_level（off/error/warn/info/debug/trace）、rumble（bool）、swap_ab（bool）、button_mapping（32个0..31的整数）。另有 bluetooth_auto_start（bool，默认true）、bluetooth_auto_trigger（login/resume，默认login）、bluetooth_auto_user（上次手动成功启动蓝牙的账号，默认0，仅服务端更新）。旧配置缺少新增字段时按默认值读取；已显式保存的自动启动开关不被默认值覆盖。默认Info、允许震动、无翻转、identity映射。震动只是偏好值；手机后端没有物理马达。
 
 设置分区 `/#settings`；旧 `/settings` 入口兼容。读写通过 /api/v1/settings；所有设置均可在连接期间保存；全局按键映射和模拟手柄布局从下一份输入报文生效，不重建手柄、不改变账号关系。先校验、写入成功后才应用，保存失败不修改运行偏好。日志 /api/v1/logs?level=info；页面阈值不能恢复后台未记录日志。
 
@@ -72,11 +72,11 @@ USB运行日志记录 ugen 枚举、VID/PID、描述符筛选和接口打开失�
 
 ## USB 与蓝牙自动启动
 
-自动启动区提供两个独立开关：`bluetooth_auto_start` 和 `usb_auto_start`（均默认false）。共用启动时机 `bluetooth_auto_trigger`：`login` 为登录进入桌面后，`resume` 为休眠恢复实验。保留原字段名以兼容旧配置；旧文件缺少 USB 字段时按关闭处理。两种时机仍使用平台已有的连续稳定5秒与120秒观察窗口，不另建竞争的系统日志读取器。
+自动启动区提供两个独立开关：`bluetooth_auto_start`（默认true）和 `usb_auto_start`（默认false）。共用启动时机 `bluetooth_auto_trigger`：`login` 为登录进入桌面后，`resume` 为休眠恢复实验。保留原字段名以兼容旧配置；旧文件缺少 USB 字段时按关闭处理。两种时机均使用蓝牙15秒、USB25秒延迟与120秒观察窗口，不另建竞争的系统日志读取器。
 
 USB 的 `usb_auto_user` 默认0，仅在手动 USB 启动成功后由服务器保存；HTTP 设置不能覆盖该账号。自动启动要求该账号已登录且平台允许启动，不自行换绑其他账号。未记住账号时，先手动启用一次 USB。休眠恢复期间未登录时继续等待；观察窗口内仍不满足条件则不启动，需手动启用。USB 不参与未登录的虚拟手柄实验。
 
-登录桌面模式可同时启用蓝牙与USB：同一平台事件及5秒门槛通过后，分别启动符合条件的服务。不同实体手柄仍使用独立会话；多人游戏仍需不同账号，不承诺同时打开服务就会自动分配不同玩家。自动启动只开启连接/枚举服务，不自动开始配对。
+登录桌面模式可同时启用蓝牙与USB：同一平台事件后，蓝牙15秒、USB25秒分别启动符合条件的服务。USB在共享15秒观察门槛后再排队10秒；手动操作、休眠、账号不可用或自动启动设置改变会取消排队。不同实体手柄仍使用独立会话；多人游戏仍需不同账号，不承诺同时打开服务就会自动分配不同玩家。自动启动只开启连接/枚举服务，不自动开始配对。
 
 休眠恢复模式下，现有蓝牙实验输出需要独占，因此不能同时启用两种自动启动。页面阻止保存冲突组合，服务器也拒绝；USB单独恢复时仍要求已记住且已登录的账号。手动启动/停止任一服务会取消本轮自动启动；下次休眠后按保存的策略重新观察。失败不自动重试，不能取代实机恢复及原装手柄共存验证。
 

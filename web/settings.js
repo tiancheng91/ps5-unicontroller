@@ -26,7 +26,7 @@ document.addEventListener("alpine:init", () => {
       recording_level: "info",
       page_level: "info",
       usb_auto_start: false,
-      bluetooth_auto_start: false,
+      bluetooth_auto_start: true,
       bluetooth_auto_trigger: "login",
       rumble: true,
       swap_ab: false,

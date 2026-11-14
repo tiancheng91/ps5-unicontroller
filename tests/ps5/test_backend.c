@@ -431,9 +431,9 @@ static void home_observation(void)
            consumed == 256 * 1024);
     assert(!uc_backend_auto_due(0, 1) && !home_gate.timing); /* No account/inputs busy. */
     assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
-    fake_ms = home_gate.since + 4997; /* can_start also samples the mock clock. */
+    fake_ms = home_gate.since + 14997; /* can_start also samples the mock clock. */
     assert(!uc_backend_auto_due(42, 1));
-    fake_ms = home_gate.since + 5000;
+    fake_ms = home_gate.since + 15000;
     assert(uc_backend_auto_due(42, 1));
     assert(fd == -1 && !home_gate.armed && !home_waiting && !home_owns_log);
     assert(!uc_backend_auto_due(42, 1));
@@ -464,9 +464,9 @@ static void resume_observation(void)
     fake_ms += 3000;
     assert(!uc_backend_auto_due(0, 0)); /* Cleanup/another input resets the timer. */
     assert(!uc_backend_auto_due(0, 1));
-    fake_ms = home_gate.since + 4999;
+    fake_ms = home_gate.since + 14999;
     assert(!uc_backend_auto_due(0, 1));
-    fake_ms = home_gate.since + 5000;
+    fake_ms = home_gate.since + 15000;
     assert(uc_backend_auto_due(0, 1));
     assert(!uc_backend_auto_due(0, 1));
     assert(!uc_backend_can_start(42) && uc_backend_transport_ready());

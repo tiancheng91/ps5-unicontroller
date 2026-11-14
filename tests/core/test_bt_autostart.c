@@ -25,9 +25,11 @@ int main(void)
     assert(!uc_bt_auto_due(&s, 28000, 0)); /* Rest/user loss/cleanup blocks. */
     assert(!uc_bt_auto_due(&s, 30000, 1));
     assert(!uc_bt_auto_due(&s, 34999, 1));
-    assert(uc_bt_auto_due(&s, 35000, 1));
+    assert(!uc_bt_auto_due(&s, 35000, 1));
+    assert(!uc_bt_auto_due(&s, 44999, 1));
+    assert(uc_bt_auto_due(&s, 45000, 1));
     uc_bt_auto_line(&s, home);
-    assert(!uc_bt_auto_due(&s, 45000, 1)); /* One attempt, no failure retry. */
+    assert(!uc_bt_auto_due(&s, 46000, 1)); /* One attempt, no failure retry. */
     uc_bt_auto_arm(&s, 50000);             /* Resume resets freshness and focus. */
     assert(!s.home && !s.fresh);
     assert(!uc_bt_auto_due(&s, 56000, 1));

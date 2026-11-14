@@ -40,7 +40,7 @@ int uc_bt_auto_due(uc_bt_autostart *s, uint64_t now, int ready)
         s->since = now;
         s->timing = 1;
     }
-    if (now - s->since < 5000)
+    if (now - s->since < UC_AUTO_BT_DELAY_MS)
         return 0;
     uc_bt_auto_cancel(s);
     return 1;

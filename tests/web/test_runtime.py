@@ -234,7 +234,7 @@ with tempfile.TemporaryDirectory() as directory:
         )
         status, settings = request("GET", "/api/v1/settings")
         assert status == 200 and len(settings["button_mapping"]) == 32
-        assert settings["bluetooth_auto_start"] is False
+        assert settings["bluetooth_auto_start"] is True
         assert settings["bluetooth_auto_user"] == 0
         assert settings["bluetooth_auto_trigger"] == "login"
         assert settings["usb_auto_start"] is False and settings["usb_auto_user"] == 0
@@ -249,7 +249,11 @@ with tempfile.TemporaryDirectory() as directory:
             request(
                 "POST",
                 "/api/v1/settings",
-                dict(usb_auto, bluetooth_auto_trigger="resume"),
+                dict(
+                    usb_auto,
+                    bluetooth_auto_start=False,
+                    bluetooth_auto_trigger="resume",
+                ),
             )[0]
             == 200
         )
