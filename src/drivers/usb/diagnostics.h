@@ -33,6 +33,9 @@ typedef struct {
     uint8_t report[UC_USB_DIAG_REPORT];
     int detach_attempted, detached, detach_errno, claim_attempted, claimed, claim_errno;
     unsigned first_input_length, first_input_saved;
+    uint64_t read_attempts, read_empty, read_would_block, read_errors, input_bytes;
+    uint64_t first_input_wait_ms;
+    int last_read_errno;
     uint8_t first_input[64];
     char summary[192];
 } uc_usb_diagnostics;

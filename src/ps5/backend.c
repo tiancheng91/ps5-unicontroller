@@ -184,7 +184,7 @@ int uc_backend_can_start(int32_t user)
 {
     return user_live(user) && uc_backend_transport_ready();
 }
-int uc_backend_init(void)
+static int backend_init_attempt(void)
 {
     if (ready)
         return 0;
@@ -208,7 +208,15 @@ int uc_backend_init(void)
         backend_error(2, "load_mbus", -1);
         goto fail;
     }
-    (void)sceUserServiceInitialize(NULL);
+    int32_t user_init = sceUserServiceInitialize(NULL);
+    int32_t users[4];
+    int user_query = uc_backend_users(users), count = 0;
+    if (!user_query)
+        for (unsigned i = 0; i < 4; i++)
+            count += users[i] > 0;
+    uc_log_info("[startup] user_service_rc=%#x user_query_rc=%d logged_in=%d; login gates physical "
+                "startup, not backend initialization",
+                (unsigned)user_init, user_query, count);
     int32_t rc = scePadInit();
     if (rc != 0) {
         backend_error(3, "scePadInit", rc);
@@ -233,6 +241,53 @@ int uc_backend_init(void)
 fail:
     if (credentials(old_auth, old_caps))
         raised = 0;
+    return -1;
+}
+/* Called before the runtime and physical sources exist. A failed attempt may
+ * retry only after credentials have been restored; never repeat device creation,
+ * pairing or interface ownership here. Loader process names/ports and kstuff
+ * markers are not reliable capability checks and are not prerequisites. */
+int uc_backend_init(void)
+{
+    if (ready)
+        return 0;
+    if (raised) {
+        uc_log_error("[startup] backend retry blocked: credentials restoration is unresolved");
+        return -1;
+    }
+    for (unsigned attempt = 1; attempt <= 2; attempt++) {
+        struct stat st;
+        errno = 0;
+        int present = stat("/dev/hid", &st) == 0;
+        int status_errno = present ? 0 : errno;
+        uc_log_info("[startup] backend attempt=%u/2 pid=%d euid=%u hid_present=%d hid_errno=%d; no "
+                    "OnionHEN/kstuff/loader-port prerequisite",
+                    attempt, (int)getpid(), (unsigned)geteuid(), present, status_errno);
+        int result = backend_init_attempt();
+        if (!result) {
+            uc_log_info(
+                "[startup] backend ready attempt=%u; Bluetooth/USB startup policy unchanged",
+                attempt);
+            return 0;
+        }
+        if (raised) {
+            uc_log_error("[startup] credential rollback failed; exiting without automatic retry");
+            return -1;
+        }
+        if (attempt == 2) {
+            uc_log_error("[startup] backend initialization failed twice; explicit reload required");
+            return -1;
+        }
+        uc_log_warn("[startup] backend initialization failed rc=%d; one retry after 5000ms, no "
+                    "physical devices opened",
+                    result);
+        struct timespec remaining = {.tv_sec = 5, .tv_nsec = 0};
+        while (nanosleep(&remaining, &remaining) != 0)
+            if (errno != EINTR) {
+                uc_log_error("[startup] retry delay failed errno=%d; exiting", errno);
+                return -1;
+            }
+    }
     return -1;
 }
 static int raw_log_open(void)

@@ -34,6 +34,7 @@ static ssize_t test_write(int, const void *, size_t);
 
 static uint8_t original_cfg[] = {9, 2, 32, 0, 1,    1, 0,  0x80, 50, 9, 4, 3,    0, 2,  0xff, 0x5d,
                                  1, 0, 7,  5, 0x83, 3, 32, 0,    4,  7, 5, 0x04, 3, 32, 0,    4};
+#include "../usb_protocol/switch2_fixture.h"
 static uint8_t cfg[80];
 static size_t cfg_length = sizeof(original_cfg);
 static uint8_t hid_report[] = {0x05, 0x01, 0x09, 0x05, 0xa1, 0x01, 0xc0};
@@ -61,7 +62,12 @@ static int test_open(const char *path, int flags, ...)
         assert((flags & O_ACCMODE) == O_RDONLY);
         return 11;
     }
-    assert(!strcmp(path, "/dev/usb/2.7.4") && (flags & O_ACCMODE) == O_WRONLY);
+    if (!strcmp(path, "/dev/usb/2.7.5")) {
+        assert((flags & O_ACCMODE) == O_RDONLY);
+        return 13;
+    }
+    assert((!strcmp(path, "/dev/usb/2.7.4") || !strcmp(path, "/dev/usb/2.7.6")) &&
+           (flags & O_ACCMODE) == O_WRONLY);
     if (fail_output) {
         errno = EPERM;
         return -1;
@@ -70,7 +76,7 @@ static int test_open(const char *path, int flags, ...)
 }
 static int test_close(int fd)
 {
-    assert(fd >= 10 && fd <= 12);
+    assert(fd >= 10 && fd <= 13);
     ++close_count;
     return 0;
 }
@@ -144,12 +150,12 @@ static int test_ioctl(int fd, unsigned long request, ...)
         return 0;
     }
     case USB_IFACE_DRIVER_DETACH:
-        assert(*(int *)arg == 0); /* Descriptor index, not bInterfaceNumber=3. */
+        assert(*(int *)arg == 0 || (product == 0x2069 && *(int *)arg == 1));
         ++detach_count;
         errno = ENOTTY;
         return detach_error ? -1 : 0;
     case USB_CLAIM_INTERFACE:
-        assert(detach_count && *(int *)arg == 0);
+        assert(detach_count && (*(int *)arg == 0 || (product == 0x2069 && *(int *)arg == 1)));
         ++claim_count;
         errno = claim_error;
         return claim_error ? -1 : 0;
@@ -157,7 +163,7 @@ static int test_ioctl(int fd, unsigned long request, ...)
         ++release_count;
         return 0;
     case USB_SET_RX_SHORT_XFER:
-        assert(fd == 11 && *(int *)arg == 1);
+        assert((fd == 11 || fd == 13) && *(int *)arg == 1);
         return 0;
     default:
         assert(0); /* No reset, configuration write or blind endpoint probes. */
@@ -166,10 +172,15 @@ static int test_ioctl(int fd, unsigned long request, ...)
 }
 static ssize_t test_read(int fd, void *buffer, size_t length)
 {
-    assert(fd == 11 && length == 32);
+    assert((fd == 11 && length == (product == 0x2069 ? 64 : 32)) || (fd == 13 && length == 64));
     if (read_error) {
         errno = read_error;
         return -1;
+    }
+    if (product == 0x2069) {
+        memset(buffer, 0, 20);
+        ((uint8_t *)buffer)[0] = fd == 13 ? 0x10 : 9;
+        return 20;
     }
     memset(buffer, 0, 20);
     ((uint8_t *)buffer)[1] = 20;
@@ -177,7 +188,7 @@ static ssize_t test_read(int fd, void *buffer, size_t length)
 }
 static ssize_t test_write(int fd, const void *buffer, size_t length)
 {
-    assert(fd == 12 && buffer && length <= 32);
+    assert(fd == 12 && buffer && length <= (product == 0x2069 ? 64 : 32));
     if (write_error) {
         errno = write_error;
         return -1;
@@ -328,6 +339,33 @@ int main(void)
     assert(open_candidate(n, 2, 7, &d) == 1 && d.kind == UC_USB_GENERIC_HID);
     assert(n->in_fd == 11 && n->out_fd == -1 && !d.ep_out);
     assert(detach_count == 1 && claim_count == 1);
+    uc_usb_transport_release(&t);
+    reset();
+    vendor = 0x057e;
+    product = 0x2069;
+    memcpy(cfg, switch2_config, sizeof switch2_config);
+    cfg_length = sizeof switch2_config;
+    assert(uc_usb_transport_open(&t));
+    n = t.context;
+    assert(open_candidate(n, 2, 7, &d) == 1 && d.kind == UC_USB_SWITCH2_PRO);
+    assert(detach_count == 2 && claim_count == 2 && !descriptor_reads);
+    assert(native_read(n, buffer, sizeof buffer) == 20 && buffer[0] == 9);
+    assert(native_read(n, buffer, sizeof buffer) == 20 && buffer[0] == 0x10);
+    assert(native_write(n, buffer, 16) == 16);
+    read_error = EAGAIN;
+    assert(!native_read(n, buffer, sizeof buffer));
+    uc_usb_transport_release(&t);
+    assert(release_count == 2 && close_count == 4);
+    reset();
+    vendor = 0x057e;
+    product = 0x2069;
+    memcpy(cfg, switch2_config, sizeof switch2_config);
+    cfg_length = sizeof switch2_config;
+    fail_output = 1;
+    assert(uc_usb_transport_open(&t));
+    n = t.context;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "output_endpoint_open"));
+    assert(release_count == 2 && close_count == 3);
     uc_usb_transport_release(&t);
     puts(
         "USB native transport: selection, detach, claim, endpoints, backpressure and cleanup PASS");

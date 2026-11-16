@@ -5,6 +5,11 @@ const assert = require("assert"),
   const h = harness(),
     m = h.model;
   await m.refresh();
+  assert.equal(
+    m.deviceView({ vid: "057E", pid: "2069", experimental: true }, false).experimental,
+    true,
+  );
+  assert.equal(m.deviceView({ vid: "3537", pid: "1040" }, false).experimental, false);
   assert(m.logs.includes("[bluetooth] sample connected"));
   m.paused = true;
   const reads = h.calls.filter((c) => c.route.startsWith("/logs")).length;

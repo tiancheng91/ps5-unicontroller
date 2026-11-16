@@ -270,6 +270,7 @@ document.addEventListener("alpine:init", () => {
         wireless,
         system_assignment: !!d.system_assignment,
         known_device: !!d.known_device,
+        experimental: !!d.experimental,
         rumble: !!d.rumble,
         rumble_available: !!d.rumble_available,
         rumble_enabled: !!d.rumble_enabled,

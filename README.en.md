@@ -57,6 +57,8 @@ These are **implemented paths**, not a certified hardware list. A product can us
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
+Switch 2 Pro (`057e:2069`) now has [experimental USB input](docs/usb.md), limited to buttons and sticks and pending hardware validation. BLE and rumble are not included. Switch 1 Pro USB remains unsupported.
+
 BLE uses an allowlist; the only built-in enabled identity is currently Xbox `045e:0b13`. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 
 Rumble and battery reporting depend on the device protocol and firmware. Game rumble feedback is implemented for selected protocols; adaptive triggers and full DualSense haptics are not implied. An unknown battery reading does not necessarily prevent input.

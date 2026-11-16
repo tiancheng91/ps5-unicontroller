@@ -9,6 +9,10 @@ typedef struct {
     uc_usb_kind kind;
     uc_usb_generic_hid hid;
     int ready, failed;
+    unsigned switch2_step, switch2_attempts, switch2_writes;
+    int switch2_waiting;
+    uint64_t switch2_next_at;
+    uint16_t switch2_calibration[4][3]; /* center, negative range, positive range */
     uint64_t started;
     int led_sent, led_failed;
     unsigned led_attempts;

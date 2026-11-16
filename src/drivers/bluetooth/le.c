@@ -481,6 +481,10 @@ void le_on_cmd_complete(host_t *h, unsigned op, int status)
             le_create(h, l, now_ms());
     } else if (status != 0) {
         LE_DIAG(h, "le: scan %s answered status %#04x", h->le_scan_last ? "on" : "off", status);
+        uc_log_debug(
+            "[bt-le] scan rejected opcode=%#x status=%#x wanted=%d inquiring=%d outstanding=%d; "
+            "not evidence of absent BLE support; foreign scan state preserved",
+            op, status, h->le_scan_want, h->inquiring, h->le_scan_out);
     }
 }
 

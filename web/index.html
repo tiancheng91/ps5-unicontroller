@@ -77,6 +77,11 @@
                     <div class="device-content">
                       <div class="device-title">
                         <h3 x-text="device.name"></h3>
+                        <span
+                          class="tag"
+                          x-show="device.experimental"
+                          x-label="experimental"
+                        ></span>
                         <span class="tag" x-text="device.transport"></span>
                       </div>
                       <div class="device-metadata">
