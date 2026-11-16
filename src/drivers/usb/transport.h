@@ -3,8 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "diagnostics.h"
-/* XInput, descriptor-verified Generic HID and experimental Switch 2 Pro USB. */
-typedef enum { UC_USB_NONE, UC_USB_XINPUT, UC_USB_GENERIC_HID, UC_USB_SWITCH2_PRO } uc_usb_kind;
+/* XInput, descriptor-verified Generic HID and experimental Switch Pro USB variants. */
+typedef enum {
+    UC_USB_NONE,
+    UC_USB_XINPUT,
+    UC_USB_GENERIC_HID,
+    UC_USB_SWITCH2_PRO,
+    UC_USB_SWITCH_PRO
+} uc_usb_kind;
 typedef struct {
     uc_usb_kind kind;
     uint16_t vid, pid;

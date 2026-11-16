@@ -35,6 +35,7 @@ static ssize_t test_write(int, const void *, size_t);
 static uint8_t original_cfg[] = {9, 2, 32, 0, 1,    1, 0,  0x80, 50, 9, 4, 3,    0, 2,  0xff, 0x5d,
                                  1, 0, 7,  5, 0x83, 3, 32, 0,    4,  7, 5, 0x04, 3, 32, 0,    4};
 #include "../usb_protocol/switch2_fixture.h"
+#include "../usb_protocol/switch1_fixture.h"
 static uint8_t cfg[80];
 static size_t cfg_length = sizeof(original_cfg);
 static uint8_t hid_report[] = {0x05, 0x01, 0x09, 0x05, 0xa1, 0x01, 0xc0};
@@ -172,10 +173,16 @@ static int test_ioctl(int fd, unsigned long request, ...)
 }
 static ssize_t test_read(int fd, void *buffer, size_t length)
 {
-    assert((fd == 11 && length == (product == 0x2069 ? 64 : 32)) || (fd == 13 && length == 64));
+    assert((fd == 11 && length == (product == 0x2069 || product == 0x2009 ? 64 : 32)) ||
+           (fd == 13 && length == 64));
     if (read_error) {
         errno = read_error;
         return -1;
+    }
+    if (product == 0x2009) {
+        memset(buffer, 0, 49);
+        ((uint8_t *)buffer)[0] = 0x30;
+        return 49;
     }
     if (product == 0x2069) {
         memset(buffer, 0, 20);
@@ -366,6 +373,31 @@ int main(void)
     n = t.context;
     assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "output_endpoint_open"));
     assert(release_count == 2 && close_count == 3);
+    uc_usb_transport_release(&t);
+    reset();
+    vendor = 0x057e;
+    product = 0x2009;
+    memcpy(cfg, switch1_config, sizeof switch1_config);
+    cfg_length = sizeof switch1_config;
+    assert(uc_usb_transport_open(&t));
+    n = t.context;
+    assert(open_candidate(n, 2, 7, &d) == 1 && d.kind == UC_USB_SWITCH_PRO);
+    assert(detach_count == 1 && claim_count == 1 && !descriptor_reads);
+    assert(native_read(n, buffer, sizeof buffer) == 49 && buffer[0] == 0x30);
+    const uint8_t handshake[] = {0x80, 2};
+    assert(native_write(n, handshake, sizeof handshake) == 2);
+    uc_usb_transport_release(&t);
+    assert(release_count == 1 && close_count == 3);
+    reset();
+    vendor = 0x057e;
+    product = 0x2009;
+    memcpy(cfg, switch1_config, sizeof switch1_config);
+    cfg_length = sizeof switch1_config;
+    fail_output = 1;
+    assert(uc_usb_transport_open(&t));
+    n = t.context;
+    assert(open_candidate(n, 2, 7, &d) == 2 && !strcmp(d.reason, "output_endpoint_open"));
+    assert(release_count == 1 && close_count == 2);
     uc_usb_transport_release(&t);
     puts(
         "USB native transport: selection, detach, claim, endpoints, backpressure and cleanup PASS");

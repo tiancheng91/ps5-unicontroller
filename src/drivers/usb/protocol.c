@@ -16,7 +16,8 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     memset(p, 0, sizeof(*p));
     p->kind = kind;
     p->started = now;
-    if (kind != UC_USB_XINPUT && kind != UC_USB_GENERIC_HID && kind != UC_USB_SWITCH2_PRO)
+    if (kind != UC_USB_XINPUT && kind != UC_USB_GENERIC_HID && kind != UC_USB_SWITCH2_PRO &&
+        kind != UC_USB_SWITCH_PRO)
         p->failed = 1;
 }
 int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *device)
@@ -113,6 +114,122 @@ static int led_unavailable(uc_usb_protocol *p)
              "waiting for valid input, rumble disabled",
              p->led_attempts);
     return 0;
+}
+/* Switch 1 USB transport setup follows Linux hid-nintendo's sequence:
+ * handshake, optional 3M baud, handshake, disable USB timeout, select 0x30.
+ * Linux joycon_init / joycon_send_usb / joycon_send_subcmd:
+ * https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c
+ * No SPI writes, device reset, IMU or vibration enable commands are sent. */
+static void switch1_next(uc_usb_protocol *p, uint64_t now)
+{
+    ++p->switch1_step;
+    p->switch1_writes = p->switch1_write_attempts = 0;
+    p->switch1_waiting = 0;
+    p->switch1_next_at = now + 60;
+}
+static int switch1_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t now)
+{
+    static const uint8_t commands[] = {2, 3, 2, 4};
+    if (p->ready)
+        return 0;
+    if (now < p->started || now - p->started >= INIT_DEADLINE_MS) {
+        uc_log_error("[usb-switch1] init timeout step=%u writes=%u waiting_ack=%d elapsed_ms=%llu",
+                     p->switch1_step, p->switch1_writes, p->switch1_waiting,
+                     (unsigned long long)(now >= p->started ? now - p->started : 0));
+        return fail(p);
+    }
+    if (now < p->switch1_next_at || p->switch1_step >= 5)
+        return 0;
+    if (p->switch1_writes >= 3 || p->switch1_write_attempts >= 16) {
+        if (p->switch1_step == 1) {
+            uc_log_warn("[usb-switch1] baud ACK unavailable; retaining default baud rate");
+            switch1_next(p, now);
+            return 0;
+        }
+        uc_log_error("[usb-switch1] retry exhausted step=%u writes=%u attempts=%u", p->switch1_step,
+                     p->switch1_writes, p->switch1_write_attempts);
+        return fail(p);
+    }
+    uint8_t packet[12] = {0x80, 0};
+    size_t length = 2;
+    if (p->switch1_step < 4)
+        packet[1] = commands[p->switch1_step];
+    else {
+        static const uint8_t neutral[8] = {0, 1, 0x40, 0x40, 0, 1, 0x40, 0x40};
+        packet[0] = 1;
+        packet[1] = p->switch1_counter & 15;
+        memcpy(packet + 2, neutral, sizeof neutral);
+        packet[10] = 3;
+        packet[11] = 0x30;
+        length = sizeof packet;
+    }
+    if (!t || !t->ops || !t->ops->write)
+        return fail(p);
+    ++p->switch1_write_attempts;
+    int result = t->ops->write(t->context, packet, length);
+    uc_log_debug("[usb-switch1] tx step=%u command=%02x:%02x attempt=%u result=%d length=%zu",
+                 p->switch1_step, packet[0], p->switch1_step < 4 ? packet[1] : packet[10],
+                 p->switch1_write_attempts, result, length);
+    if (result < 0 || (result > 0 && result != (int)length))
+        return fail(p);
+    p->switch1_next_at = now + (result ? 600 : 20);
+    if (!result)
+        return 0;
+    ++p->switch1_writes;
+    p->switch1_waiting = 1;
+    if (p->switch1_step == 3) { /* 0x80:04 intentionally has no ACK. */
+        p->switch1_timeout_disabled = 1;
+        switch1_next(p, now);
+    } else if (p->switch1_step == 4)
+        ++p->switch1_counter;
+    return 0;
+}
+static int switch1_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_state *s, uint64_t now)
+{
+    if (!p->ready && (now < p->started || now - p->started >= INIT_DEADLINE_MS))
+        return fail(p);
+    if (n >= 2 && r[0] == 0x81) {
+        static const uint8_t commands[] = {2, 3, 2};
+        uc_log_debug("[usb-switch1] USB ACK command=%02x length=%zu step=%u waiting=%d", r[1], n,
+                     p->switch1_step, p->switch1_waiting);
+        if (p->switch1_step < 3 && p->switch1_waiting && r[1] == commands[p->switch1_step])
+            switch1_next(p, now);
+        return 0;
+    }
+    if (n >= 15 && r[0] == 0x21) {
+        uc_log_debug("[usb-switch1] subcommand ACK flags=%02x id=%02x length=%zu", r[13], r[14], n);
+        if (p->switch1_step == 4 && p->switch1_waiting && r[14] == 3) {
+            if (!(r[13] & 0x80)) {
+                uc_log_error("[usb-switch1] report-mode command rejected flags=%02x", r[13]);
+                return fail(p);
+            }
+            switch1_next(p, now);
+        }
+        return 0;
+    }
+    if (!n || r[0] != 0x30 || n < 49 || n > 64) {
+        if (p->rejected_reports < 3) {
+            ++p->rejected_reports;
+            uc_log_debug("[usb-switch1] ignored report id=%02x length=%zu step=%u", n ? r[0] : 0, n,
+                         p->switch1_step);
+        }
+        return 0;
+    }
+    if (p->switch1_step < 4 || (p->switch1_step == 4 && !p->switch1_writes))
+        return 0; /* Never register an output before the handshake/report-mode command. */
+    const pad_profile *profile = profile_builtin_named("switch");
+    if (!profile || !profile->parse)
+        return fail(p);
+    pad_state_reset(s);
+    if (profile->parse(NULL, r, (int)n, s) != PARSE_FULL)
+        return 0;
+    if (!p->ready)
+        uc_log_info("[usb-switch1] first full input bytes=%zu; experimental input ready", n);
+    s->has_motion = 0; /* IMU was not enabled by this USB initialization. */
+    p->ready = 1;
+    p->switch1_step = 6;
+    p->rejected_reports = 0;
+    return 1;
 }
 /* Switch 2 Pro USB protocol facts: Linux hid-nintendo.c switch2_init_controller,
  * switch2_receive_command and switch2_event; command framing is defined by
@@ -285,6 +402,8 @@ int uc_usb_protocol_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t
 {
     if (!p || p->failed)
         return -1;
+    if (p->kind == UC_USB_SWITCH_PRO)
+        return switch1_poll(p, t, now);
     if (p->kind == UC_USB_SWITCH2_PRO)
         return switch2_poll(p, t, now);
     if (p->kind == UC_USB_XINPUT && !p->ready &&
@@ -357,6 +476,8 @@ int uc_usb_protocol_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_sta
     if (p->kind == UC_USB_XINPUT && !p->ready &&
         (now < p->started || now - p->started >= INIT_DEADLINE_MS))
         return fail(p);
+    if (p->kind == UC_USB_SWITCH_PRO)
+        return switch1_feed(p, r, n, state, now);
     if (p->kind == UC_USB_SWITCH2_PRO)
         return switch2_feed(p, r, n, state, now);
     if (p->kind == UC_USB_GENERIC_HID) {

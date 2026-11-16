@@ -76,6 +76,14 @@ void uc_usb_set_rumble_enabled(int enabled)
 static void close_source(usb_slot *s, uint64_t now)
 {
     stop_motors(s, now);
+    if (s->attached && s->transport_live && s->device.kind == UC_USB_SWITCH_PRO &&
+        s->protocol.switch1_timeout_disabled) {
+        static const uint8_t timeout_on[] = {0x80, 5};
+        int result = s->transport.ops->write(s->transport.context, timeout_on, sizeof timeout_on);
+        uc_log_debug("[usb-switch1] restore USB timeout node=%s result=%d; no retry on close",
+                     s->device.node, result);
+        s->protocol.switch1_timeout_disabled = 0;
+    }
     if (s->transport_live && transport_valid(&s->transport))
         s->transport.ops->close(s->transport.context);
     s->transport_live = s->attached = s->valid = s->health_valid = 0;
@@ -200,7 +208,7 @@ int uc_usb_start(int32_t user)
     usb.reason = NULL;
     usb.clock_valid = usb.presence_valid = 0;
     uc_log_info("[usb] started slots=%u user=%d; XInput, verified Generic HID and experimental "
-                "Switch 2 Pro USB inputs",
+                "Switch 1/2 Pro USB inputs",
                 usb.count, user);
     return 0;
 }
@@ -394,7 +402,7 @@ static void poll_slot(unsigned index, uint64_t now)
         s->opened_at = now;
         s->first_input_warned = 0;
         if (device.kind != UC_USB_XINPUT && device.kind != UC_USB_GENERIC_HID &&
-            device.kind != UC_USB_SWITCH2_PRO) {
+            device.kind != UC_USB_SWITCH2_PRO && device.kind != UC_USB_SWITCH_PRO) {
             fail_slot(index, "unsupported_device", 0, now);
             return;
         }
@@ -545,6 +553,7 @@ static void poll_slot(unsigned index, uint64_t now)
     }
     if (s->submitted && s->submitted == s->frames && active(s) && s->health_valid &&
         now >= s->health_at && now - s->health_at <= 100 && s->device.kind != UC_USB_SWITCH2_PRO &&
+        s->device.kind != UC_USB_SWITCH_PRO &&
         !profile_usb_input_watchdog(s->device.vid, s->device.pid)) {
         if (uc_core_refresh_source(s->session, now))
             fail_slot(index, "source_lease_expired", 0, now);
@@ -734,6 +743,7 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             continue;
         const char *profile = s->device.kind == UC_USB_GENERIC_HID   ? "generic-hid-usb"
                               : s->device.kind == UC_USB_SWITCH2_PRO ? "switch2-pro-usb"
+                              : s->device.kind == UC_USB_SWITCH_PRO  ? "switch-pro-usb"
                                                                      : "xinput-usb";
         const char *model = s->device.kind == UC_USB_SWITCH2_PRO
                                 ? "Nintendo Switch 2 Pro Controller"
@@ -762,7 +772,10 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             s->options_key, s->options.rumble ? "true" : "false",
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false");
         ADD(",\"rumble_enabled\":%s", usb.rumble && s->options.rumble ? "true" : "false");
-        ADD(",\"experimental\":%s", s->device.kind == UC_USB_SWITCH2_PRO ? "true" : "false");
+        ADD(",\"experimental\":%s",
+            (s->device.kind == UC_USB_SWITCH2_PRO || s->device.kind == UC_USB_SWITCH_PRO)
+                ? "true"
+                : "false");
         if (diagnostic_fields(buffer, capacity, &used, &s->device, 0)) {
             buffer[0] = 0;
             return 0;

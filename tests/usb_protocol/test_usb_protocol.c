@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "switch2_fixture.h"
+#include "switch1_fixture.h"
 static uint8_t configuration[] = {9, 2, 32, 0, 1,    1, 0,  0x80, 50, 9, 4, 3,    0, 2,  0xff, 0x5d,
                                   1, 0, 7,  5, 0x81, 3, 32, 0,    4,  7, 5, 0x02, 3, 32, 0,    4};
 static void selection(void)
@@ -48,7 +49,8 @@ static void selection(void)
     assert(!uc_usb_select(0x3537, 0x1041, cfg, sizeof cfg, &device)); /* USB DInput deferred. */
     assert(!uc_usb_select(0x3537, 0x1040, cfg, sizeof cfg,
                           &device)); /* ID never overrides protocol. */
-    assert(!uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &device));
+    assert(uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &device) &&
+           device.kind == UC_USB_SWITCH_PRO);
     assert(!uc_usb_select(0x057e, 0x2006, cfg, sizeof cfg, &device));
     cfg[12] = 1;
     assert(!uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &device));
@@ -110,6 +112,129 @@ static int write_mock(void *context, const uint8_t *bytes, size_t length)
     return m->short_write ? (int)length - 1 : (int)length;
 }
 static const uc_usb_ops mock_ops = {.write = write_mock};
+static void switch1_selection(void)
+{
+    uc_usb_device d;
+    uint8_t cfg[sizeof switch1_config];
+    memcpy(cfg, switch1_config, sizeof cfg);
+    assert(uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &d));
+    assert(d.kind == UC_USB_SWITCH_PRO && d.iface == 3 && !d.iface_index && d.ep_in == 0x83 &&
+           d.ep_out == 4);
+    for (size_t n = 0; n < sizeof cfg; n++)
+        assert(!uc_usb_select(0x057e, 0x2009, cfg, n, &d));
+    assert(!uc_usb_select(0x057e, 0x2069, cfg, sizeof cfg, &d));
+    assert(!uc_usb_select(0x057e, 0x2006, cfg, sizeof cfg, &d));
+    assert(!uc_usb_select(0x20d6, 2, cfg, sizeof cfg,
+                          &d)); /* Similar layout is not protocol evidence. */
+    cfg[31] = 32;
+    assert(!uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &d));
+    memcpy(cfg, switch1_config, sizeof cfg);
+    cfg[12] = 1;
+    assert(!uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &d));
+    uint8_t ambiguous[sizeof switch1_config + 32];
+    memcpy(ambiguous, switch1_config, sizeof switch1_config);
+    memcpy(ambiguous + sizeof switch1_config, switch1_config + 9, 32);
+    ambiguous[2] = sizeof ambiguous;
+    ambiguous[4] = 2;
+    ambiguous[sizeof switch1_config + 2] = 4;
+    assert(!uc_usb_select(0x057e, 0x2009, ambiguous, sizeof ambiguous, &d));
+}
+static void switch1_handshake(uc_usb_protocol *p, uc_usb_transport *t, mock *m)
+{
+    pad_state state;
+    static const uint8_t commands[] = {2, 3, 2, 4};
+    for (unsigned step = 0; step < 4; step++) {
+        assert(!uc_usb_protocol_poll(p, t, step * 100));
+        assert(m->length == 2 && m->bytes[0] == 0x80 && m->bytes[1] == commands[step]);
+        if (step < 3) {
+            uint8_t ack[] = {0x81, commands[step]};
+            assert(!uc_usb_protocol_feed(p, ack, sizeof ack, &state, step * 100 + 1));
+        }
+        assert(p->switch1_step == step + 1 && !p->ready);
+    }
+    assert(p->switch1_timeout_disabled);
+}
+static void switch1_usb(void)
+{
+    uc_usb_protocol p;
+    pad_state state;
+    mock m = {0};
+    uc_usb_transport t = {&mock_ops, &m};
+    uint8_t report[65] = {0x30, 0, 0x80, 4, 0x10, 2, 0, 8, 0x80, 0, 8, 0x80};
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    assert(!p.failed && !p.ready && !uc_usb_protocol_feed(&p, report, 49, &state, 0));
+    const uint8_t stale[] = {0x81, 3};
+    assert(!uc_usb_protocol_feed(&p, stale, sizeof stale, &state, 0) && !p.switch1_step);
+    switch1_handshake(&p, &t, &m);
+    assert(!uc_usb_protocol_feed(&p, report, 49, &state, 301) && !p.ready);
+    assert(!uc_usb_protocol_poll(&p, &t, 400));
+    const uint8_t mode[] = {1, 0, 0, 1, 0x40, 0x40, 0, 1, 0x40, 0x40, 3, 0x30};
+    assert(m.length == sizeof mode && !memcmp(m.bytes, mode, sizeof mode));
+    uint8_t ack[15] = {0x21};
+    ack[13] = 0x80;
+    ack[14] = 0x48;
+    assert(!uc_usb_protocol_feed(&p, ack, sizeof ack, &state, 401) && p.switch1_step == 4);
+    ack[14] = 3;
+    assert(!uc_usb_protocol_feed(&p, ack, sizeof ack - 1, &state, 401) && p.switch1_step == 4);
+    assert(!uc_usb_protocol_feed(&p, ack, sizeof ack, &state, 401) && p.switch1_step == 5 &&
+           !p.ready);
+    for (size_t n = 0; n < 49; n++)
+        assert(!uc_usb_protocol_feed(&p, report, n, &state, 402));
+    assert(!uc_usb_protocol_feed(&p, report, sizeof report, &state, 402));
+    assert(uc_usb_protocol_feed(&p, report, 49, &state, 402) == 1 && p.ready);
+    assert(state.buttons == (PAD_CROSS | PAD_PS | PAD_UP) && state.lx == 128 && state.ly == 128 &&
+           state.rx == 128 && state.ry == 128);
+    assert(state.has_battery && state.battery_pct == 100 && !state.has_motion);
+    report[3] = report[4] = report[5] = 0;
+    assert(uc_usb_protocol_feed(&p, report, 64, &state, 403) == 1 && !state.buttons);
+    assert(uc_usb_protocol_rumble(&p, 100, 100, 404) < 0);
+    int writes = m.writes;
+    assert(!uc_usb_protocol_poll(&p, &t, 20000) && m.writes == writes);
+    report[0] = 9;
+    assert(!uc_usb_protocol_feed(&p, report, 64, &state, 20001));
+    report[0] = 0x30;
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    switch1_handshake(&p, &t, &m);
+    assert(!uc_usb_protocol_poll(&p, &t, 400));
+    assert(uc_usb_protocol_feed(&p, report, 49, &state, 401) ==
+           1); /* Full input proves report mode even if ACK is lost. */
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    switch1_handshake(&p, &t, &m);
+    assert(!uc_usb_protocol_poll(&p, &t, 400));
+    ack[13] = 0;
+    assert(uc_usb_protocol_feed(&p, ack, sizeof ack, &state, 401) < 0);
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    assert(!uc_usb_protocol_poll(&p, &t, 0));
+    uint8_t usb_ack[] = {0x81, 2};
+    assert(!uc_usb_protocol_feed(&p, usb_ack, sizeof usb_ack, &state, 1));
+    for (unsigned now = 61; now <= 1261; now += 600)
+        assert(!uc_usb_protocol_poll(&p, &t, now));
+    assert(!uc_usb_protocol_poll(&p, &t, 1861) &&
+           p.switch1_step == 2); /* Optional baud ACK missing. */
+    assert(!uc_usb_protocol_poll(&p, &t, 1921));
+    assert(!uc_usb_protocol_feed(&p, usb_ack, sizeof usb_ack, &state, 1922));
+    assert(!uc_usb_protocol_poll(&p, &t, 1982));
+    assert(!uc_usb_protocol_poll(&p, &t, 2042));
+    assert(uc_usb_protocol_feed(&p, report, 49, &state, 2043) == 1);
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    m.block = 1;
+    writes = m.writes;
+    for (unsigned now = 0; now < 320; now++)
+        assert(!uc_usb_protocol_poll(&p, &t, now));
+    assert(uc_usb_protocol_poll(&p, &t, 320) < 0 && m.writes == writes + 16);
+    m.block = 0;
+    m.short_write = 1;
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    assert(uc_usb_protocol_poll(&p, &t, 0) < 0);
+    m.short_write = 0;
+    m.error = 1;
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    assert(uc_usb_protocol_poll(&p, &t, 0) < 0);
+    m.error = 0;
+    uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+    switch1_handshake(&p, &t, &m);
+    assert(uc_usb_protocol_poll(&p, &t, 4800) < 0 && p.switch1_timeout_disabled);
+}
 static void switch2_selection(void)
 {
     uc_usb_device real;
@@ -457,6 +582,8 @@ static void generic_hid(void)
 
 int main(void)
 {
+    switch1_selection();
+    switch1_usb();
     powera_hid();
     switch2_selection();
     switch2_usb();

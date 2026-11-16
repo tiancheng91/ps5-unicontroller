@@ -16,8 +16,8 @@ static struct {
     int user, active, pending, submits, refreshes, disable_error;
 } sessions[4];
 static uint64_t next_session = 1;
-static int create_error, hid_kind, switch2_kind, hid_configured, known_device = 1;
-static int unavailable_user;
+static int create_error, hid_kind, switch1_kind, switch2_kind, hid_configured, known_device = 1;
+static int unavailable_user, switch1_restore_calls, switch1_restore_error;
 static int gate = 1, wait_creation, init_error, invalid_report, lease_error, feedback, rumble_calls,
            stops;
 static uint8_t desired_strong, desired_weak;
@@ -153,9 +153,10 @@ static int scan(void *ctx, uc_usb_device *out)
     m->scans++;
     if (!m->available)
         return 0;
-    *out = (uc_usb_device){.kind = switch2_kind ? UC_USB_SWITCH2_PRO
-                                   : hid_kind   ? UC_USB_GENERIC_HID
-                                                : UC_USB_XINPUT,
+    *out = (uc_usb_device){.kind = switch1_kind   ? UC_USB_SWITCH_PRO
+                                   : switch2_kind ? UC_USB_SWITCH2_PRO
+                                   : hid_kind     ? UC_USB_GENERIC_HID
+                                                  : UC_USB_XINPUT,
                            .vid = 0x045e,
                            .pid = 0x028e};
     snprintf(out->node, sizeof(out->node), "/dev/ugen1.%u", m->id + 1);
@@ -183,7 +184,11 @@ static int read_packet(void *ctx, uint8_t *out, size_t cap)
 static int write_packet(void *ctx, const uint8_t *p, size_t n)
 {
     (void)ctx;
-    (void)p;
+    if (n == 2 && p[0] == 0x80 && p[1] == 5) {
+        ++switch1_restore_calls;
+        if (switch1_restore_error)
+            return -1;
+    }
     return (int)n;
 }
 static int alive(void *ctx)
@@ -221,6 +226,7 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     p->kind = kind;
     p->started = now;
     p->ready = 1;
+    p->switch1_timeout_disabled = kind == UC_USB_SWITCH_PRO; /* Simulate completed init. */
 }
 int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *d)
 {
@@ -274,7 +280,8 @@ static void setup(unsigned count)
     assert(uc_usb_set_transports(ts, count) == 0);
     gate = 1;
     unavailable_user = 0;
-    hid_kind = switch2_kind = 0;
+    hid_kind = switch1_kind = switch2_kind = 0;
+    switch1_restore_error = 0;
     wait_creation = init_error = invalid_report = lease_error = feedback = 0;
     uc_usb_set_rumble_enabled(1);
 }
@@ -295,6 +302,25 @@ static int by_user(int user)
 int main(void)
 {
     uc_usb_set_log_level(0);
+    setup(1);
+    switch1_kind = 1;
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    assert(by_user(1) >= 0);
+    int before_refresh = sessions[by_user(1)].refreshes;
+    uc_usb_poll(100);
+    assert(sessions[by_user(1)].refreshes == before_refresh);
+    char switch1_status[8192];
+    assert(uc_usb_status_json(switch1_status, sizeof switch1_status) &&
+           strstr(switch1_status, "switch-pro-usb") &&
+           strstr(switch1_status, "\"experimental\":true") &&
+           strstr(switch1_status, "\"rumble_available\":false"));
+    int restore_before = switch1_restore_calls;
+    switch1_restore_error = 1; /* Cleanup continues even if timeout restore cannot be sent. */
+    finish();
+    assert(switch1_restore_calls == restore_before + 1 && ports[0].closes == 1 && by_user(1) < 0);
+    assert(!uc_usb_stop() && switch1_restore_calls == restore_before + 1);
     setup(1);
     assert(!uc_usb_start(1));
     ports[0].reports = 1;

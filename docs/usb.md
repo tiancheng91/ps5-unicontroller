@@ -1,6 +1,6 @@
 # USB 手柄接入
 
-当前 USB 支持 **Xbox 360 风格 XInput**，以及由完整报告描述符确认的 **Generic HID Gamepad/Joystick 输入**（实机待验证）。新增 **Switch 2 Pro USB 试验性输入**，尚待实机验证。一代 Switch Pro USB、Xbox One/Series GIP 和专用 Xbox 无线接收器暂不接入。第三方 2.4GHz 接收器如果实际暴露相同 XInput 接口和报告，可以测试；商品名称或 VID/PID 本身不能证明兼容。蓝牙 Switch 支持不受此收敛影响。
+当前 USB 支持 **Xbox 360 风格 XInput**，以及由完整报告描述符确认的 **Generic HID Gamepad/Joystick 输入**（实机待验证）。新增 **Switch Pro / Switch 2 Pro USB 试验性输入**，尚待实机验证。Xbox One/Series GIP 和专用 Xbox 无线接收器暂不接入。第三方 2.4GHz 接收器如果实际暴露相同 XInput 接口和报告，可以测试；商品名称或 VID/PID 本身不能证明兼容。蓝牙 Switch 支持不受此收敛影响。
 
 主机回归包括协议、管理器及原生收发逻辑的 syscall 模拟。PS5 ABI 由 GitHub Actions SDK 构建检查，真实设备的接口接管、输入和震动仍需实机验证。
 
@@ -51,6 +51,16 @@ USB 服务开启期间，每 100ms 最多检查一个已缓存 HID 节点，16 �
 设备描述符和设备信息查询分别记录 attempted/ok/errno；设备描述符一旦成功，后续信息查询失败也保留真实 VID/PID。`USB_GET_DEVICEINFO` 返回 ENOTTY/ENOSYS/EOPNOTSUPP 时，改用 `USB_GET_FULL_DESC` 的 0xFF 当前配置选择器，并用设备描述符核对 VID/PID 做存活检查；保留原查询 errno 作为诊断。其它设备信息错误仍失败，不猜测配置索引、不发送复位或配置切换命令。
 
 XInput OUT 端点打不开时记录 errno，仍保留已打开的 IN 端点尝试输入。LED、震动失败不会把输入直接判为失败；仍以真实输入包验证可用性，XInput 4.8 秒无有效输入的期限保持不变。此路径不允许猜测端点、忽略接口 busy 或重置设备。
+
+## Switch Pro USB（试验性）
+
+仅接入 Switch Pro 协议身份 `057e:2009`，要求唯一 alt0 `03/00/00` HID 接口及一对 64 字节 interrupt IN/OUT。设备名称或相似的 HID 布局不作为协议依据，不尝试初始化其它 Nintendo 身份、PowerA 或未知设备。
+
+参考 Linux `joycon_init`，非阻塞执行 `80:02` 握手、`80:03` 波特率请求、再次握手、`80:04` 关闭 USB 超时，再用子命令 `03` 选择 `0x30` 输入报告。波特率应答缺失可以继续；其余必要步骤失败退出。每步最多 3 次成功发送、16 次写尝试，ACK 等待 600 ms，临时不可写后 20 ms 重试，初始化整体期限 4.8 秒。
+
+握手完成且已发送报告模式请求后，收到有效 `0x30` 完整输入才允许注册虚拟手柄；有效输入也可确认报告模式已生效，不强制依赖最后的子命令 ACK。复用已有 Switch 按键和摇杆解析，使用默认摇杆行程；Home→PS，Capture→Touchpad 点击。USB 震动、IMU 和 SPI 校准暂未启用。
+
+输入需持续续租，节点存活不能维持按住状态。停止或初始化失败后，对曾成功发送关闭超时命令的设备，尽力发送一次 `80:05` 恢复超时，然后释放端点和接口；恢复命令失败不重试、不阻止清理。`[usb-switch1]` 日志记录各步骤、ACK、首份完整输入和恢复结果。
 
 ## Switch 2 Pro USB（试验性）
 

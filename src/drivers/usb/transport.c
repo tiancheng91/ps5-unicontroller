@@ -85,7 +85,7 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
     if (cfg && out && vid == 0x057e && pid == 0x2069)
         return select_switch2(cfg, length, out);
     if (!cfg || !out || length < 9 || cfg[0] < 9 || cfg[1] != 2 || le16(cfg + 2) != length ||
-        vid == 0x054c || vid == 0x0e8d || cfg[4] == 0)
+        vid == 0x054c || vid == 0x0e8d || (vid == 0x057e && pid != 0x2009) || cfg[4] == 0)
         return 0;
     uc_usb_device candidate = {0}, current = {0};
     unsigned count = 0, declared = 0, endpoints = 0, seen_interfaces = 0,
@@ -126,8 +126,11 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
                 current.iface_index = (uint8_t)seen_interfaces++;
             }
             current.iface = d[2];
-            if (active && d[5] == 0xff && d[6] == 0x5d && d[7] == 1) {
+            if (vid != 0x057e && active && d[5] == 0xff && d[6] == 0x5d && d[7] == 1) {
                 current.kind = UC_USB_XINPUT;
+                wanted = 1;
+            } else if (vid == 0x057e && pid == 0x2009 && active && d[5] == 3 && !d[6] && !d[7]) {
+                current.kind = UC_USB_SWITCH_PRO;
                 wanted = 1;
             }
         } else if (d[1] == 5) {
@@ -136,7 +139,7 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
             ++endpoints;
             if (wanted) {
                 unsigned packet = le16(d + 4);
-                unsigned minimum = (d[2] & 0x80) ? 20 : 8;
+                unsigned minimum = current.kind == UC_USB_SWITCH_PRO ? 64 : (d[2] & 0x80) ? 20 : 8;
                 if ((d[3] & 3) != 3 || packet < minimum || packet > 64 || !d[6])
                     return 0;
                 if (d[2] & 0x80) {
@@ -487,7 +490,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     selected.diagnostic.info_errno = info_errno;
     selected.diagnostic.device_class = descriptor.bDeviceClass;
     selected.diagnostic.config_index = (uint8_t)config_index;
-    if (selected.vid != 0x057e || selected.pid != 0x2069)
+    if (selected.vid != 0x057e || (selected.pid != 0x2069 && selected.pid != 0x2009))
         diagnose_hid(n, &selected);
     uc_usb_device matched = {0};
     stage = "not_supported_xinput";
@@ -501,7 +504,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
             selected.kind = UC_USB_GENERIC_HID;
             stage = "generic_hid_interface_unsupported";
         } else if (!strcmp(hint, "switch-pro")) {
-            stage = "special_protocol_disabled";
+            stage = "switch_pro_interface_unsupported";
         } else if (!selected.diagnostic.config_valid) {
             stage = "malformed_configuration";
         } else if (selected.diagnostic.report_attempted && selected.diagnostic.report_errno) {
@@ -520,6 +523,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     log_line("usb %s: %s candidate %04x:%04x interface=%u index=%u IN=%#x OUT=%#x", selected.node,
              selected.kind == UC_USB_XINPUT        ? "XInput"
              : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
                                                    : "Generic HID",
              selected.vid, selected.pid, selected.iface, selected.iface_index, selected.ep_in,
              selected.ep_out);
@@ -574,7 +578,8 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     n->in_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (n->in_fd < 0)
         goto reject;
-    if (selected.kind == UC_USB_XINPUT || selected.kind == UC_USB_SWITCH2_PRO) {
+    if (selected.kind == UC_USB_XINPUT || selected.kind == UC_USB_SWITCH2_PRO ||
+        selected.kind == UC_USB_SWITCH_PRO) {
         stage = "output_endpoint_open";
         snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address,
                  (selected.kind == UC_USB_SWITCH2_PRO ? selected.config_out : selected.ep_out) &
@@ -582,7 +587,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         n->out_fd = open(path, O_WRONLY | O_NONBLOCK);
         if (n->out_fd < 0) {
             selected.diagnostic.output_errno = errno;
-            if (selected.kind == UC_USB_SWITCH2_PRO)
+            if (selected.kind == UC_USB_SWITCH2_PRO || selected.kind == UC_USB_SWITCH_PRO)
                 goto reject;
             log_line("usb %s: output endpoint unavailable path=%s errno=%d; trying input only",
                      selected.node, path, errno);
@@ -597,6 +602,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     log_line("usb %s: input endpoint ready protocol=%s; output=%s", selected.node,
              selected.kind == UC_USB_XINPUT        ? "XInput"
              : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
                                                    : "Generic HID",
              n->out_fd >= 0 ? "available" : "disabled");
     *out = selected;
