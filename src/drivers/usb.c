@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #define USB_SLOTS 4u
+#define HID_FIRST_INPUT_TIMEOUT_MS 30000u
 typedef struct {
     uc_usb_transport transport;
     uc_usb_device device;
@@ -22,7 +23,7 @@ typedef struct {
     uint64_t rumble_test_until, rumble_test_last;
     int rumble_test_seen;
     uc_device_options options;
-    int scanned, assigning, failed, first_input_warned;
+    int scanned, assigning, failed, recycle, first_input_warned;
     uint64_t opened_at;
     int32_t user, next_user;
     uint64_t session, sequence, frames, submitted, latest_at, health_at, last_scan;
@@ -39,6 +40,15 @@ static struct {
     int presence_valid;
     const char *reason;
 } usb = {.level = 3, .rumble = 1};
+static int waiting_for_hid_input(const usb_slot *s)
+{
+    return s->attached && s->device.kind == UC_USB_GENERIC_HID && !s->frames;
+}
+static uint64_t first_input_remaining(const usb_slot *s, uint64_t now)
+{
+    uint64_t elapsed = now >= s->opened_at ? now - s->opened_at : 0;
+    return elapsed < HID_FIRST_INPUT_TIMEOUT_MS ? HID_FIRST_INPUT_TIMEOUT_MS - elapsed : 0;
+}
 static int transport_valid(const uc_usb_transport *t)
 {
     return t && t->ops && t->ops->scan && t->ops->read && t->ops->write && t->ops->alive &&
@@ -111,6 +121,20 @@ static void release_slot(usb_slot *s)
         s->native_lease = 0;
     }
 }
+static void record_rejection(const uc_usb_device *device);
+/* Called only after output cleanup; retain the scanner lease and account policy. */
+static void recycle_slot(usb_slot *s, uint64_t now)
+{
+    uc_usb_transport transport = s->transport;
+    int native_lease = s->native_lease;
+    int32_t user = s->user;
+    memset(s, 0, sizeof *s);
+    s->transport = transport;
+    s->native_lease = native_lease;
+    s->user = user;
+    s->scanned = 1;
+    s->last_scan = now;
+}
 static void fail_slot(unsigned index, const char *reason, int rescan, uint64_t now)
 {
     usb_slot *s = &usb.slots[index];
@@ -126,16 +150,31 @@ static void fail_slot(unsigned index, const char *reason, int rescan, uint64_t n
                  (unsigned long long)s->device.diagnostic.read_would_block,
                  (unsigned long long)s->device.diagnostic.read_errors,
                  s->device.diagnostic.last_read_errno, rescan);
+    int recycle = s->attached && strcmp(reason, "power_or_user_unavailable");
+    if (recycle && !rescan) {
+        uc_usb_device diagnostic = s->device;
+        snprintf(diagnostic.reason, sizeof diagnostic.reason, "%s", reason);
+        record_rejection(&diagnostic);
+        if (!uc_usb_transport_quarantine(&s->transport)) {
+            recycle = 0; /* Unknown transport cannot promise per-connection isolation. */
+            uc_log_warn("[usb] slot=%u quarantine unavailable; manual USB restart required", index);
+        }
+    }
     close_source(s, now);
     s->last_scan = now;
     s->scanned = 1;
-    if (!rescan) {
+    s->recycle = recycle;
+    if (!rescan && !recycle) {
         s->user = -1;
         s->assigning = 0;
         s->failed = 1;
         usb.reason = reason;
     }
     (void)cleanup_output(s);
+    if (recycle && !s->cleanup) {
+        recycle_slot(s, now);
+        uc_log_info("[usb] slot=%u released; scanner available for other connections", index);
+    }
 }
 int uc_usb_running(void)
 {
@@ -336,6 +375,10 @@ static void poll_slot(unsigned index, uint64_t now)
     if (s->cleanup) {
         if (cleanup_output(s))
             return;
+        if (s->recycle) {
+            recycle_slot(s, now);
+            uc_log_info("[usb] slot=%u output cleanup complete; scanner reusable", index);
+        }
         if (s->assigning) {
             s->user = s->next_user;
             s->assigning = 0;
@@ -418,6 +461,10 @@ static void poll_slot(unsigned index, uint64_t now)
         uc_log_info("[usb] device options key=%s known=%d rumble=%d swap_ab=%d", s->options_key,
                     s->known, s->options.rumble, s->options.swap_ab);
         log_code(3, index, "device_opened");
+        if (device.kind == UC_USB_GENERIC_HID)
+            uc_log_info("[usb] node=%s waiting for valid HID input; press a button or move a stick "
+                        "within %u ms",
+                        device.node, HID_FIRST_INPUT_TIMEOUT_MS);
     }
     if (!s->health_valid || now - s->health_at >= 100) {
         int alive = s->transport.ops->alive(s->transport.context);
@@ -500,12 +547,16 @@ static void poll_slot(unsigned index, uint64_t now)
             ++s->frames;
         }
     }
+    if (waiting_for_hid_input(s) && !first_input_remaining(s, now)) {
+        fail_slot(index, "hid_first_input_timeout", 0, now);
+        return;
+    }
     if (!s->device.diagnostic.first_input_length && !s->first_input_warned && now >= s->opened_at &&
         now - s->opened_at >= 5000) {
         s->first_input_warned = 1;
         uc_log_warn("[usb] no first input after 5000ms node=%s vid=%04x pid=%04x "
                     "IN=%#x OUT=%#x reads=%llu empty=%llu would_block=%llu last_errno=%d; "
-                    "transport retained for diagnosis",
+                    "waiting for valid input",
                     s->device.node, s->device.vid, s->device.pid, s->device.ep_in, s->device.ep_out,
                     (unsigned long long)s->device.diagnostic.read_attempts,
                     (unsigned long long)s->device.diagnostic.read_empty,
@@ -575,7 +626,7 @@ void uc_usb_poll(uint64_t now)
         char node[24];
         if (uc_usb_transport_take_removed(node, sizeof(node))) {
             forget_rejection(node);
-            uc_log_info("[usb] node=%s removed diagnostic snapshot after HID unplug/replacement",
+            uc_log_info("[usb] node=%s removed diagnostic snapshot after USB unplug/replacement",
                         node);
         }
     }
@@ -768,6 +819,10 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
                 ? "true"
                 : "false",
             (unsigned long long)s->session, s->reason ? s->reason : "");
+        int waiting = waiting_for_hid_input(s);
+        ADD(",\"waiting_for_input\":%s,\"first_input_remaining_ms\":%llu",
+            waiting ? "true" : "false",
+            (unsigned long long)(waiting ? first_input_remaining(s, usb.clock) : 0));
         ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s",
             s->options_key, s->options.rumble ? "true" : "false",
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false");

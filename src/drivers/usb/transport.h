@@ -53,7 +53,10 @@ typedef struct {
 int uc_usb_transport_open(uc_usb_transport *out);
 /* End a native transport lease; close() alone keeps its scan context reusable. */
 void uc_usb_transport_release(uc_usb_transport *transport);
-/* Check at most one cached HID node. 1 means removed/replaced: caller drops its
+/* Block this opened connection across all native scanners until unplug or
+ * replacement. Call before close. 1=recorded; 0=unavailable (do not hot-retry). */
+int uc_usb_transport_quarantine(const uc_usb_transport *transport);
+/* Check at most one cached/quarantined node. 1 means removed/replaced: caller drops its
  * diagnostic snapshot. Uncertain access failures retain evidence. No detach. */
 int uc_usb_transport_take_removed(char *node, size_t capacity);
 #endif

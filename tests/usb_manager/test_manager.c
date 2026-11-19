@@ -8,9 +8,10 @@
 #include <string.h>
 typedef struct {
     unsigned id;
-    int scans, reads, closes, health, available, alive, reports, read_error, reject;
+    int scans, opens, reads, closes, health, available, alive, reports, read_error, reject;
 } transport_mock;
 static transport_mock ports[4];
+static int blocked[32], quarantine_calls;
 static struct {
     uint64_t id, sequence;
     int user, active, pending, submits, refreshes, disable_error;
@@ -151,7 +152,7 @@ static int scan(void *ctx, uc_usb_device *out)
 {
     transport_mock *m = ctx;
     m->scans++;
-    if (!m->available)
+    if (!m->available || blocked[m->id])
         return 0;
     *out = (uc_usb_device){.kind = switch1_kind   ? UC_USB_SWITCH_PRO
                                    : switch2_kind ? UC_USB_SWITCH2_PRO
@@ -166,6 +167,7 @@ static int scan(void *ctx, uc_usb_device *out)
         out->error_number = 16;
         return 2;
     }
+    ++m->opens;
     return 1;
 }
 static int read_packet(void *ctx, uint8_t *out, size_t cap)
@@ -203,12 +205,20 @@ static void close_device(void *ctx)
 }
 static const uc_usb_ops ops = {scan, read_packet, write_packet, alive, close_device};
 static int hid_removed;
+int uc_usb_transport_quarantine(const uc_usb_transport *t)
+{
+    transport_mock *m = t->context;
+    blocked[m->id] = 1;
+    ++quarantine_calls;
+    return 1;
+}
 int uc_usb_transport_take_removed(char *node, size_t capacity)
 {
     if (!hid_removed)
         return 0;
     snprintf(node, capacity, "/dev/ugen1.1");
     hid_removed = 0;
+    blocked[0] = 0;
     return 1;
 }
 int uc_usb_transport_open(uc_usb_transport *out)
@@ -271,6 +281,8 @@ static void setup(unsigned count)
 {
     assert(!uc_usb_running());
     memset(ports, 0, sizeof(ports));
+    memset(blocked, 0, sizeof blocked);
+    quarantine_calls = 0;
     uc_usb_transport ts[4];
     for (unsigned i = 0; i < count; i++) {
         ports[i].id = i;
@@ -299,8 +311,120 @@ static int by_user(int user)
             return i;
     return -1;
 }
+static void test_failed_connection_recycles_slots(void)
+{
+    char json[32768];
+    setup(4);
+    /* Four scanners see the same physical node; one init failure is sufficient. */
+    for (unsigned i = 0; i < 4; i++)
+        ports[i].id = 0;
+    assert(!uc_usb_start(1));
+    init_error = 1;
+    uc_usb_poll(10000);
+    assert(quarantine_calls == 1 && ports[0].opens == 1);
+    int scans = ports[0].scans;
+    for (uint64_t now = 10100; now <= 11000; now += 100)
+        uc_usb_poll(now);
+    assert(quarantine_calls == 1 && ports[0].opens == 1 && ports[0].scans > scans);
+    for (unsigned i = 1; i < 4; i++)
+        assert(!ports[i].opens);
+    assert(uc_usb_status_json(json, sizeof json));
+    assert(strstr(json, "initialization_or_output_failed") && strstr(json, "\"devices\":[]"));
+    /* Another device with the same VID/PID still works in the recycled slot. */
+    init_error = 0;
+    ports[0].id = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(11100);
+    assert(uc_core_active_session() && ports[0].opens == 2);
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    init_error = 1;
+    for (unsigned attempt = 0; attempt < 8; attempt++) {
+        hid_removed = attempt != 0;
+        uc_usb_poll(20000 + attempt * 100);
+        assert(blocked[0] && ports[0].opens == (int)attempt + 1);
+    }
+    assert(quarantine_calls == 8); /* More failures than workers cannot exhaust slots. */
+    init_error = 0;
+    /* Observed removal clears isolation without Stop/Start. */
+    hid_removed = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(20800);
+    assert(!blocked[0] && ports[0].opens == 9 && uc_core_active_session());
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    create_error = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(30000);
+    assert(quarantine_calls == 1 && sessions[0].id && sessions[0].disable_error);
+    scans = ports[0].scans;
+    ports[0].id = 1;
+    for (uint64_t now = 30100; now <= 30400; now += 100)
+        uc_usb_poll(now);
+    assert(ports[0].scans == scans && sessions[0].id); /* Still owns failed output. */
+    create_error = sessions[0].disable_error = 0;
+    uc_usb_poll(30500);
+    assert(!sessions[0].id);
+    ports[0].reports = 1;
+    uc_usb_poll(30600);
+    assert(uc_core_active_session() && ports[0].opens == 2);
+    finish();
+}
+
+static void test_hid_first_input_deadline(void)
+{
+    for (unsigned scenario = 0; scenario < 3; scenario++) {
+        char json[32768];
+        setup(1);
+        hid_kind = 1;
+        invalid_report = scenario == 1;
+        assert(!uc_usb_start(1));
+        uc_usb_poll(1000);
+        assert(uc_usb_status_json(json, sizeof json));
+        assert(strstr(json, "\"waiting_for_input\":true") &&
+               strstr(json, "\"first_input_remaining_ms\":30000"));
+        for (uint64_t now = 1100; now <= 30900; now += 100) {
+            ports[0].reports = scenario == 1; /* Noise does not reset the valid-input deadline. */
+            uc_usb_poll(now);
+        }
+        ports[0].reports = scenario == 2;
+        uc_usb_poll(30999);
+        assert(!quarantine_calls);
+        assert(uc_usb_status_json(json, sizeof json));
+        if (scenario == 2) {
+            assert(uc_core_active_session() && strstr(json, "\"waiting_for_input\":false"));
+        } else {
+            assert(!uc_core_active_session() && strstr(json, "\"first_input_remaining_ms\":1"));
+        }
+        uc_usb_poll(31000);
+        if (scenario == 2) {
+            for (uint64_t now = 31100; now <= 32000; now += 100)
+                uc_usb_poll(now);
+            assert(!quarantine_calls && uc_core_active_session());
+        } else {
+            assert(quarantine_calls == 1 && blocked[0] && !uc_core_active_session());
+            assert(uc_usb_status_json(json, sizeof json) &&
+                   strstr(json, "hid_first_input_timeout"));
+            uc_usb_poll(31100);
+            assert(quarantine_calls == 1 && ports[0].opens == 1);
+            hid_removed = 1;
+            invalid_report = 0;
+            ports[0].reports = 1;
+            uc_usb_poll(31200);
+            assert(ports[0].opens == 2 && uc_core_active_session());
+        }
+        finish();
+    }
+}
+
 int main(void)
 {
+    test_hid_first_input_deadline();
+    test_failed_connection_recycles_slots();
     uc_usb_set_log_level(0);
     setup(1);
     switch1_kind = 1;

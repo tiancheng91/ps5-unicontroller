@@ -226,6 +226,12 @@ int uc_usb_select_generic(const uc_usb_device *candidate, uc_usb_device *out)
 #include "../common/log.h"
 
 typedef struct {
+    dev_t device;
+    ino_t inode;
+    uint32_t plugtime;
+    int have_inode, have_plugtime;
+} hid_incarnation;
+typedef struct {
     int fd, in_fd, out_fd, claimed, detached, leased, dead, output_dead;
     int iface_index, info_unsupported;
     int config_fd, config_claimed, config_index;
@@ -233,16 +239,17 @@ typedef struct {
     unsigned reads, diagnostic_mask;
     DIR *directory;
     uc_usb_device device;
+    hid_incarnation incarnation;
 } native_transport;
 static native_transport natives[4];
-/* Shared across four scan slots: one read-only descriptor request per observed
- * connection/configuration identity, including failed probes. */
-typedef struct {
-    dev_t device;
-    ino_t inode;
-    uint32_t plugtime;
-    int have_inode, have_plugtime;
-} hid_incarnation;
+/* Shared across scanners; never evict a failed, still-present connection. */
+static struct {
+    char node[24];
+    hid_incarnation incarnation;
+} quarantine[32];
+static unsigned quarantine_count;
+static int quarantine_full;
+/* One descriptor request per observed connection/configuration identity. */
 static struct {
     char node[24];
     uint16_t vid, pid;
@@ -281,13 +288,34 @@ static void hid_forget(const char *node)
         --hid_cache_count;
     }
 }
+static void quarantine_forget(const char *node)
+{
+    for (unsigned i = 0; i < quarantine_count; i++) {
+        if (strcmp(quarantine[i].node, node))
+            continue;
+        memmove(quarantine + i, quarantine + i + 1,
+                (quarantine_count - i - 1) * sizeof quarantine[0]);
+        --quarantine_count;
+        quarantine_full = 0;
+        break;
+    }
+}
 int uc_usb_transport_take_removed(char *node, size_t capacity)
 {
-    if (!node || capacity < sizeof(hid_cache[0].node) || !hid_cache_count)
+    unsigned total = hid_cache_count + quarantine_count;
+    if (!node || capacity < sizeof(hid_cache[0].node) || !total)
         return 0;
-    unsigned i = hid_presence_next++ % hid_cache_count;
+    unsigned i = hid_presence_next++ % total;
     char current[24], control[64];
-    snprintf(current, sizeof(current), "%s", hid_cache[i].node);
+    hid_incarnation previous;
+    if (i < hid_cache_count) {
+        snprintf(current, sizeof current, "%s", hid_cache[i].node);
+        previous = hid_cache[i].incarnation;
+    } else {
+        i -= hid_cache_count;
+        snprintf(current, sizeof current, "%s", quarantine[i].node);
+        previous = quarantine[i].incarnation;
+    }
     unsigned bus, address;
     if (sscanf(current, "/dev/ugen%u.%u", &bus, &address) != 2)
         return 0;
@@ -298,14 +326,15 @@ int uc_usb_transport_take_removed(char *node, size_t capacity)
         gone = errno == ENOENT || errno == ENXIO || errno == ENODEV;
     } else {
         hid_incarnation identity = hid_identity(fd);
-        gone = hid_replaced(&hid_cache[i].incarnation, &identity);
+        gone = hid_replaced(&previous, &identity);
         close(fd);
     }
     if (!gone)
         return 0;
     hid_forget(current);
+    quarantine_forget(current);
     snprintf(node, capacity, "%s", current);
-    log_line("usb %s: HID removed or replaced; descriptor cache cleared", current);
+    log_line("usb %s: removed/replaced; descriptor cache and failure quarantine cleared", current);
     return 1;
 }
 
@@ -419,6 +448,19 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     n->fd = open(path, O_RDWR | O_NONBLOCK);
     if (n->fd < 0)
         goto reject;
+    n->incarnation = hid_identity(n->fd);
+    for (unsigned i = 0; i < quarantine_count; i++) {
+        if (strcmp(quarantine[i].node, selected.node))
+            continue;
+        if (hid_replaced(&quarantine[i].incarnation, &n->incarnation)) {
+            quarantine_forget(selected.node);
+            hid_forget(selected.node);
+            log_line("usb %s: new connection; retrying previously failed device", selected.node);
+            break;
+        }
+        report = 0;
+        goto reject; /* Close only: no descriptor requests, detach or initialization. */
+    }
     struct usb_device_descriptor descriptor;
     struct usb_device_info info;
     memset(&descriptor, 0, sizeof(descriptor));
@@ -638,6 +680,8 @@ static int native_scan(void *context, uc_usb_device *out)
     native_transport *n = context;
     if (n->fd >= 0 || !out)
         return -1;
+    if (quarantine_full)
+        return 0; /* Fail closed until removal/restart if the bounded cache fills. */
     if (!n->directory)
         n->directory = opendir("/dev");
     if (!n->directory) {
@@ -715,6 +759,9 @@ static int native_alive(void *context)
     native_transport *n = context;
     if (n->fd < 0 || n->dead)
         return 0;
+    hid_incarnation identity = hid_identity(n->fd);
+    if (hid_replaced(&n->incarnation, &identity))
+        return 0;
     if (!n->info_unsupported) {
         struct usb_device_info info;
         memset(&info, 0, sizeof info);
@@ -732,6 +779,31 @@ static int native_alive(void *context)
            UGETW(descriptor.idProduct) == n->device.pid;
 }
 static const uc_usb_ops ops = {native_scan, native_read, native_write, native_alive, native_close};
+int uc_usb_transport_quarantine(const uc_usb_transport *transport)
+{
+    if (!transport || transport->ops != &ops)
+        return 0;
+    for (unsigned slot = 0; slot < 4; slot++) {
+        native_transport *n = &natives[slot];
+        if (transport->context != n || !n->leased || n->fd < 0 || !n->device.node[0])
+            continue;
+        for (unsigned i = 0; i < quarantine_count; i++)
+            if (!strcmp(quarantine[i].node, n->device.node))
+                return 1;
+        if (quarantine_count == sizeof quarantine / sizeof quarantine[0]) {
+            quarantine_full = 1;
+            log_line(
+                "usb: failure quarantine full; scanning paused until unplug or service restart");
+            return 0;
+        }
+        unsigned i = quarantine_count++;
+        snprintf(quarantine[i].node, sizeof quarantine[i].node, "%s", n->device.node);
+        quarantine[i].incarnation = n->incarnation;
+        log_line("usb %s: failed connection quarantined until unplug/replacement", n->device.node);
+        return 1;
+    }
+    return 0;
+}
 int uc_usb_transport_open(uc_usb_transport *out)
 {
     if (!out)
@@ -741,6 +813,8 @@ int uc_usb_transport_open(uc_usb_transport *out)
         already_running |= natives[i].leased;
     if (!already_running) {
         hid_cache_count = hid_cache_next = hid_presence_next = 0;
+        quarantine_count = 0;
+        quarantine_full = 0;
         memset(hid_cache, 0, sizeof(hid_cache));
     }
     for (unsigned i = 0; i < 4; i++) {
@@ -774,6 +848,11 @@ int uc_usb_transport_open(uc_usb_transport *out)
 {
     if (out)
         memset(out, 0, sizeof(*out));
+    return 0;
+}
+int uc_usb_transport_quarantine(const uc_usb_transport *transport)
+{
+    (void)transport;
     return 0;
 }
 void uc_usb_transport_release(uc_usb_transport *transport)

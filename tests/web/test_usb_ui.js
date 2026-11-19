@@ -97,6 +97,29 @@ const assert = require("assert"),
   });
   await n.refresh();
   assert.equal(n.usbDevices.length, 0);
+  const input = harness(),
+    waiting = input.model.deviceView(
+      {
+        node: "/dev/ugen1.2",
+        slot: 0,
+        input_frames: 0,
+        waiting_for_input: true,
+        first_input_remaining_ms: 29999,
+      },
+      false,
+    );
+  assert.equal(waiting.inputStatus, input.model.t("usbHidWaiting", { seconds: 30 }));
+  const parsed = input.model.deviceView(
+    { node: "/dev/ugen1.2", slot: 0, input_frames: 1, waiting_for_input: false },
+    false,
+  );
+  assert.equal(parsed.inputStatus, input.model.t("inputParsed"));
+  input.model.usb.rejected = [
+    { node: "/dev/ugen1.2", vid: "3537", pid: "1041", reason: "hid_first_input_timeout", errno: 0 },
+  ];
+  assert(input.model.usbInputTimedOut);
+  assert(input.model.usbRejected[0].detail.includes(input.model.t("usbHidInputTimeout")));
+
   console.log(
     "USB model: coexistence, account gate, assignment identity, failures and stale polling PASS",
   );
