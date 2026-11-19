@@ -66,6 +66,9 @@ document.addEventListener("alpine:init", () => {
     get errorClass() {
       return this.error ? "error" : "";
     },
+    get buildId() {
+      return this.system.build_id || this.system.version || "—";
+    },
     get statusText() {
       return this.t(this.message, this.messageValues);
     },
@@ -157,19 +160,28 @@ document.addEventListener("alpine:init", () => {
         name: d.name || this.t("unnamedController"),
         transport: d.transport === "ble" ? "Bluetooth LE" : "Bluetooth Classic",
         stateText: this.t("discovery_" + d.state),
-        reasonText: d.reason || "",
+        reasonText:
+          d.reason === "switch2_ble_not_supported"
+            ? this.t("switch2BleUnsupported")
+            : d.reason === "classic_protocol_not_supported"
+              ? this.t("classicProtocolUnsupported")
+              : d.reason === "ble_identity_not_allowed"
+                ? this.t("bleIdentityUnsupported")
+                : d.reason || "",
         signal: Number.isFinite(d.rssi) ? d.rssi + " dBm" : "—",
         disabled: this.pairDisabled || !["discovered", "failed"].includes(d.state),
         buttonText: this.t(
-          d.state === "failed"
-            ? "retryPair"
-            : d.state === "pairing"
-              ? "discovery_pairing"
-              : d.state === "paired"
-                ? "discovery_paired"
-                : d.state === "connected"
-                  ? "connected"
-                  : "pairSelected",
+          d.state === "unsupported"
+            ? "discovery_unsupported"
+            : d.state === "failed"
+              ? "retryPair"
+              : d.state === "pairing"
+                ? "discovery_pairing"
+                : d.state === "paired"
+                  ? "discovery_paired"
+                  : d.state === "connected"
+                    ? "connected"
+                    : "pairSelected",
         ),
       }));
     },

@@ -10,7 +10,8 @@ include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 UC_BUILD_VERSION ?= dev
 CFLAGS := -std=c11 -Wall -Wextra -Werror -O2
 CPPFLAGS += -Isrc/core -Isrc/web -Isrc/ps5 -Isrc/drivers/common -Ibuild -DUC_PS5
-CPPFLAGS += -DUC_VERSION='"$(UC_BUILD_VERSION)"'
+CPPFLAGS += -DUC_BUILD_METADATA_HEADER
+export UC_BUILD_VERSION UC_BUILD_BRANCH
 
 LDLIBS += -lScePad -lSceUserService -lSceAppInstUtil -ldl
 
@@ -18,7 +19,8 @@ PAYLOAD := dist/unicontroller.elf
 BT_DIR := src/drivers/bluetooth
 BT_NAMES := host le hci_usb smp_crypto usb_desc evstream
 BT_SOURCES := $(addprefix $(BT_DIR)/,$(addsuffix .c,$(BT_NAMES)))
-DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/generic.c \
+DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/nintendo.c \
+	src/drivers/protocols/generic.c \
 	src/drivers/common/util.c src/drivers/common/crc32.c
 
 
@@ -54,13 +56,21 @@ $(PAYLOAD): $(OBJECTS)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $(OBJECTS) $(LDLIBS)
 
-build/ps5/%.o: %.c $(HEADERS) $(CONTROLLER_DATA) build/launcher_icon.inc
+build/ps5/%.o: %.c $(HEADERS) $(CONTROLLER_DATA) build/launcher_icon.inc build/build_info.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-build/controller_registry.inc: src/drivers/protocols/controllers.json tools/embed_controllers.py
+build/controller_registry.inc: src/drivers/protocols/controllers.json tools/embed_controllers.py \
+	vendor/sdl/controller_type.h vendor/sdl/controller_list.h
 	python3 tools/embed_controllers.py
 
 
 build/launcher_icon.inc: assets/branding/icon0.png tools/embed_icon.py
 	python3 tools/embed_icon.py
+
+# Refresh identity when the checkout/ref changes; unchanged bytes keep their mtime.
+.PHONY: FORCE_BUILD_INFO
+FORCE_BUILD_INFO:
+
+build/build_info.h: tools/build_info.py FORCE_BUILD_INFO
+	python3 tools/build_info.py

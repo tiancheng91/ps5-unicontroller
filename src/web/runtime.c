@@ -620,11 +620,10 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
     if (!strcmp(method, "GET") && !strcmp(path, "/api/v1/system")) {
 #ifdef UC_PS5
         response(c, 200, "application/json",
-                 "{\"version\":\"" UC_VERSION "\",\"platform\":\"ps5\",\"adapter_ready\":true}");
+                 "{" UC_BUILD_METADATA_JSON ",\"platform\":\"ps5\",\"adapter_ready\":true}");
 #else
         response(c, 200, "application/json",
-                 "{\"version\":\"" UC_VERSION
-                 "\",\"platform\":\"host-mock\",\"adapter_ready\":true}");
+                 "{" UC_BUILD_METADATA_JSON ",\"platform\":\"host-mock\",\"adapter_ready\":true}");
 #endif
         return;
     }

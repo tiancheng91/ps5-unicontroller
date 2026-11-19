@@ -44,10 +44,17 @@ static int validate(const uc_controller_overrides *rules, char *error, size_t ca
                 profile = profile_builtin_named(r->profile);
                 if (!profile)
                     return invalid(error, cap, "unknown Bluetooth profile");
-            } else if (!r->has_profile)
-                profile = profile_find(r->vid, r->pid);
+            } else if (!r->has_profile) {
+                profile = r->transport == PAD_TRANSPORT_CLASSIC
+                              ? profile_classic_default(r->vid, r->pid, NULL, NULL)
+                              : profile_find(r->vid, r->pid);
+                if (r->has_mapping && r->transport == PAD_TRANSPORT_CLASSIC &&
+                    profile_classic_unsupported(r->vid, r->pid))
+                    return invalid(error, cap,
+                                   "raw HID mapping requires explicit profile=generic-hid");
+            }
             if (r->has_mapping && profile)
-                return invalid(error, cap, "raw HID mapping requires generic-hid profile");
+                return invalid(error, cap, "raw HID mapping requires explicit profile=generic-hid");
         }
     }
     return 0;
@@ -112,10 +119,43 @@ const uc_controller_override *uc_controller_override_find(pad_transport transpor
                                                           uint16_t pid)
 {
     for (size_t i = 0; i < active_count; i++)
-        if (active[i].rule.transport == transport && active[i].rule.vid == vid &&
-            active[i].rule.pid == pid)
+        if (active[i].rule.transport == transport && active[i].rule.has_ids &&
+            !active[i].rule.has_address && !active[i].rule.has_match_name &&
+            active[i].rule.vid == vid && active[i].rule.pid == pid)
             return &active[i].rule;
     return NULL;
+}
+const uc_controller_override *uc_controller_override_identity(pad_transport transport, uint16_t vid,
+                                                              uint16_t pid,
+                                                              const uint8_t address[6],
+                                                              const char *name)
+{
+    const uc_controller_override *best = NULL;
+    unsigned score = 0;
+    for (size_t i = 0; i < active_count; i++) {
+        const uc_controller_override *r = &active[i].rule;
+        if (r->transport != transport || (r->has_ids && (r->vid != vid || r->pid != pid)) ||
+            (r->has_address && (!address || memcmp(r->address, address, 6))) ||
+            (r->has_match_name && (!name || strcmp(r->match_name, name))))
+            continue;
+        unsigned rank = r->has_address * 4 + r->has_match_name * 2 + r->has_ids;
+        if (rank > score) {
+            best = r;
+            score = rank;
+        }
+    }
+    return best;
+}
+int uc_controller_override_needs_name(uint16_t vid, uint16_t pid, const uint8_t address[6])
+{
+    for (size_t i = 0; i < active_count; i++) {
+        const uc_controller_override *r = &active[i].rule;
+        if (r->transport == PAD_TRANSPORT_CLASSIC && r->has_match_name &&
+            (!r->has_ids || (r->vid == vid && r->pid == pid)) &&
+            (!r->has_address || (address && !memcmp(r->address, address, 6))))
+            return 1;
+    }
+    return 0;
 }
 int uc_controller_override_profile(pad_transport transport, uint16_t vid, uint16_t pid,
                                    const void **profile)
@@ -124,7 +164,8 @@ int uc_controller_override_profile(pad_transport transport, uint16_t vid, uint16
         return 0;
     for (size_t i = 0; i < active_count; i++) {
         const uc_controller_override *r = &active[i].rule;
-        if (r->transport == transport && r->vid == vid && r->pid == pid && r->has_profile) {
+        if (r->transport == transport && r->has_ids && !r->has_address && !r->has_match_name &&
+            r->vid == vid && r->pid == pid && r->has_profile) {
             *profile = active[i].profile;
             return 1;
         }

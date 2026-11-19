@@ -53,14 +53,14 @@ These are **implemented paths**, not a certified hardware list. A product can us
 | Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
 | --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Switch Pro-compatible | Classic                                     | Experimental input for 057e:2009                         | Switch BLE identities are rejected to avoid unusable device entries      |
-| Switch 2 Pro          | Not supported (BLE)                         | Experimental input for 057e:2069                         | Uses a different protocol from the original Switch Pro Controller        |
+| Switch 2 Pro          | Unsupported (BLE model identification only) | Experimental input for 057e:2069                         | Uses a different protocol from the original Switch Pro Controller        |
 | Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
 Switch Pro (`057e:2009`) and Switch 2 Pro (`057e:2069`) have [experimental USB input](docs/usb.md) for buttons and sticks, pending hardware validation. USB rumble is not implemented. Third-party controllers must match the required interface layout and protocol; an emulated VID/PID alone does not establish compatibility.
 
-BLE uses an allowlist; the only built-in enabled identity is currently Xbox `045e:0b13`. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
+BLE uses an allowlist; only Xbox `045e:0b13` is enabled by default. Switch 2 BLE models are identified but shown as unsupported, with pairing disabled. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 
 Rumble and battery reporting depend on the device protocol and firmware. Game rumble feedback is implemented for selected protocols; adaptive triggers and full DualSense haptics are not implied. An unknown battery reading does not necessarily prevent input.
 

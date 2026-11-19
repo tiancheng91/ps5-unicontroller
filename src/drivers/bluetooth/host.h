@@ -53,8 +53,9 @@ typedef struct {
     uint32_t id;
     unsigned char addr[6];
     int le, addr_type, rssi, has_rssi;
+    int unsupported; /* Identified, but must never initiate a connection. */
     char name[HOST_DISCOVERY_NAME], reason[80];
-    const char *state; /* discovered, pairing, paired, connected, failed, expired */
+    const char *state; /* discovered, pairing, paired, connected, failed, expired, unsupported */
 } host_discovered_info;
 /* seconds=0 stops discovery only; existing/selected links and bonds stay intact. */
 int host_scan(host_t *h, int seconds);

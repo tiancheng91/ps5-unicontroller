@@ -100,6 +100,11 @@ with tempfile.TemporaryDirectory() as directory:
             assert response.read() == asset.read_bytes(), url
             connection.close()
         assert len(token) == 64
+        status, system = request("GET", "/api/v1/system")
+        assert status == 200 and system["build_id"]
+        assert " + " in system["build_id"]
+        assert len(system["commit"]) in (40, 64) or system["commit"] == "unknown"
+
         # The host mock exposes four distinct signed-in users, matching backend
         # capacity without pretending that native physical adapters exist.
         status, users = request("GET", "/api/v1/users")

@@ -25,7 +25,7 @@ typedef struct {
     pad_transport transport;
     uint16_t vid, pid;
     unsigned char addr[6];
-    char profile[64];
+    char profile[64], display_name[64];
     pad_state latest;
     uint64_t last_input, frames, connected_at, rumble_test_last;
     int rumble_test_seen;
@@ -150,6 +150,8 @@ static void on_connect(void *unused, int slot, const pad_info *info)
     s->pid = info->pid;
     memcpy(s->addr, info->addr, 6);
     snprintf(s->profile, sizeof(s->profile), "%s", info->profile ? info->profile : "unknown");
+    snprintf(s->display_name, sizeof s->display_name, "%s",
+             info->display_name ? info->display_name : "");
     snprintf(s->options_key, sizeof s->options_key, "%s:%02X:%02X:%02X:%02X:%02X:%02X:%04X:%04X",
              s->transport == PAD_TRANSPORT_BLE ? "ble" : "classic", s->addr[5], s->addr[4],
              s->addr[3], s->addr[2], s->addr[1], s->addr[0], s->vid, s->pid);
@@ -646,7 +648,10 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
         char addr[18], profile[64], model[64];
         address_text(s->addr, addr);
         safe_profile(s->profile, profile);
-        safe_profile(pad_display_name_for_transport(s->transport, s->vid, s->pid, profile), model);
+        safe_profile(s->display_name[0]
+                         ? s->display_name
+                         : pad_display_name_for_transport(s->transport, s->vid, s->pid, profile),
+                     model);
         ADD("%s{\"slot\":%d,\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"profile\":\"%"
             "s\",\"model\":\"%s\",\"connected\":true,\"bound\":%s,\"user_id\":%d,\"session_id\":%"
             "llu,\"pending\":%s,\"input_frames\":%llu,\"last_"

@@ -5,6 +5,7 @@ const assert = require("assert"),
   const h = harness(),
     m = h.model;
   await m.refresh();
+  assert.equal(m.buildId, "test-branch + abcdef123456");
   assert.equal(
     m.deviceView({ vid: "057E", pid: "2069", experimental: true }, false).experimental,
     true,
@@ -57,6 +58,33 @@ const assert = require("assert"),
   search.model.acceptBluetooth(search.state.bt); // Even a stale response cannot reset the clock.
   assert.equal(search.model.scanRemaining, 59);
   assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+  search.state.bt.discovered.push({
+    id: 8,
+    name: "Nintendo Switch 2 Pro",
+    transport: "ble",
+    state: "unsupported",
+    reason: "switch2_ble_not_supported",
+  });
+  search.model.acceptBluetooth(search.state.bt);
+  const unsupported = search.model.discovered.find((d) => d.id === 8);
+  assert(unsupported.disabled);
+  assert.equal(unsupported.buttonText, search.model.t("discovery_unsupported"));
+  await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "8" } } });
+  assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+
+  search.state.bt.discovered.push({
+    id: 9,
+    transport: "ble",
+    state: "unsupported",
+    reason: "ble_identity_not_allowed",
+  });
+  search.model.acceptBluetooth(search.state.bt);
+  const deniedBLE = search.model.discovered.find((d) => d.id === 9);
+  assert(deniedBLE.disabled);
+  assert.equal(deniedBLE.reasonText, search.model.t("bleIdentityUnsupported"));
+  await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "9" } } });
+  assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+
   await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "7" } } });
   assert.deepEqual(search.calls.find((c) => c.route === "/bluetooth/pair").body, {
     discovery_id: 7,

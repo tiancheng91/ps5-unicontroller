@@ -228,6 +228,9 @@ const root = path.resolve(__dirname, "../..");
     }
     await page.locator('nav a[data-page="settings"]').click();
     await page.locator("#settings-view").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () => document.querySelector("#build-id")?.textContent === "preview + local",
+    );
     const usbAuto = page.locator("#usb-auto-start");
     await usbAuto.check();
     await page.locator('[data-form="bluetooth_auto_start"]').check();
@@ -371,6 +374,12 @@ const root = path.resolve(__dirname, "../..");
     await page.locator("#add-controller").click();
     await page.locator("#bt-scan").click();
     await page.locator(".discovered-device").first().waitFor({ state: "visible" });
+    const unsupportedSwitch2 = page
+      .locator(".discovered-device")
+      .filter({ hasText: "Nintendo Switch 2 Pro" });
+    await unsupportedSwitch2.waitFor({ state: "visible" });
+    assert(await unsupportedSwitch2.locator("button").isDisabled());
+    assert(/暂不支持|Unsupported/.test(await unsupportedSwitch2.innerText()));
     const firstScanTitle = await page.locator(".search-panel h3").innerText();
     const firstSeconds = await page.evaluate(
       () => Alpine.$data(document.querySelector("#management")).scanRemaining,

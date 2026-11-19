@@ -229,6 +229,10 @@ input[type="checkbox"] {
   color: var(--muted);
   font-size: 11px;
 }
+.build-id {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+}
 main {
   min-width: 0;
   padding: 30px 36px 48px;

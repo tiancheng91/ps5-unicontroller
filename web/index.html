@@ -39,7 +39,8 @@
               ><span class="nav-index">04</span><span x-label="settings"></span
             ></a>
             <div class="nav-footer">
-              <span>UniController for PS5</span><span x-label="footer"></span>
+              <span>UniController for PS5</span><span class="build-id" x-text="buildId"></span
+              ><span x-label="footer"></span>
             </div>
           </nav>
           <main>
@@ -179,6 +180,7 @@
               <div class="page-heading">
                 <div>
                   <h1 x-label="settings"></h1>
+                  <p class="build-id" id="build-id" x-text="buildId"></p>
                   <p x-label="settingsIntro"></p>
                 </div>
               </div>
@@ -539,6 +541,7 @@
                   ></button>
                 </article>
               </template>
+              <p class="muted" x-label="discoverySelectionHint"></p>
             </section>
           </div>
           <div class="drawer-body" x-show="viewingDevice">

@@ -19,6 +19,7 @@ jobs:
       prerelease: ${{ steps.metadata.outputs.prerelease }}
     env:
       LLVM_CONFIG: /usr/bin/llvm-config-18
+      UC_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:

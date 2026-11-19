@@ -1,3 +1,4 @@
+#include "../../src/drivers/protocols/nintendo.h"
 /* Report parsing and output building, profile by profile. The report bytes
  * follow the layouts documented in profiles.c; they check this code against
  * those layouts, not against real hardware. */
@@ -44,6 +45,154 @@ static void test_lookup(void)
     CHECK(!profile_class_is_gamepad(0x002540)); /* keyboard */
 }
 
+static void packed_pair(uint8_t *p, unsigned x, unsigned y)
+{
+    p[0] = (uint8_t)x;
+    p[1] = (uint8_t)((x >> 8) | ((y & 15) << 4));
+    p[2] = (uint8_t)(y >> 4);
+}
+static void nintendo_info(const pad_profile *p, void *ctx, unsigned type)
+{
+    uint8_t reply[26] = {0x21};
+    reply[13] = 0x82;
+    reply[14] = 2;
+    reply[17] = (uint8_t)type;
+    pad_state ignored = {0};
+    CHECK(p->parse(ctx, reply, sizeof reply, &ignored) == PARSE_NONE);
+}
+static void test_nintendo_devices(void)
+{
+    printf("Nintendo device types, licensed XY quirk and missing-stick neutralization\n");
+    uint8_t ctx[PROFILE_CTX_MAX] = {0}, r[65] = {0x30}, out[32];
+    pad_state state;
+    pad_output output = {.player = 255};
+    const pad_profile *p = profile_find(0x0f0d, 0x00f6);
+    CHECK(p && p->setup && !profile_ble_allowed(0x0f0d, 0x00f6));
+    p->setup(ctx, 0x0f0d, 0x00f6);
+    r[3] = 1;
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL && state.buttons == PAD_TRIANGLE);
+    p = profile_find(0x0e6f, 0x018c);
+    CHECK(p && !profile_ble_allowed(0x0e6f, 0x018c));
+    p->setup(ctx, 0x0e6f, 0x018c);
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL && state.buttons == PAD_SQUARE);
+    p = profile_find(0x057e, 0x2006);
+    p->setup(ctx, 0x057e, 0x2006);
+    nintendo_info(p, ctx, NINTENDO_TYPE_NES_LEFT);
+    r[3] = 8;
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL && state.buttons == PAD_CROSS);
+    CHECK(state.lx == 128 && state.ly == 128 && state.rx == 128 && state.ry == 128 &&
+          !state.has_motion);
+    CHECK(!p->build_output || !p->build_output(ctx, &output, out, sizeof out));
+    p = profile_find(0x057e, 0x2017);
+    p->setup(ctx, 0x057e, 0x2017);
+    r[3] = 15;
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL &&
+          state.buttons == (PAD_CROSS | PAD_CIRCLE | PAD_SQUARE | PAD_TRIANGLE));
+    CHECK(state.lx == 128 && state.rx == 128 && !state.has_motion);
+    int step;
+    for (step = 0; p->init_report(ctx, step, &output, out, sizeof out); step++)
+        CHECK(out[10] == 2 || out[10] == 3 || out[10] == 0x30);
+    CHECK(step == 3);
+    CHECK(p->init_report(ctx, 2, &output, out, sizeof out) == 12 && out[11] == 1);
+    /* The queried family overrides misleading SNES identity, like Linux does. */
+    nintendo_info(p, ctx, NINTENDO_TYPE_GENESIS);
+    r[3] = 0xcf;
+    r[5] = 0x40;
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL &&
+          state.buttons ==
+              (PAD_CROSS | PAD_CIRCLE | PAD_SQUARE | PAD_TRIANGLE | PAD_L1 | PAD_R1 | PAD_CREATE));
+    CHECK(state.lx == 128 && state.rx == 128 && state.l2 == 0 && state.r2 == 0);
+    p = profile_find(0x057e, 0x2019);
+    p->setup(ctx, 0x057e, 0x2019);
+    memset(r, 0, sizeof r);
+    r[0] = 0x30;
+    r[3] = 11;
+    r[4] = 0x18;
+    r[5] = 0x80;
+    packed_pair(r + 6, 2048, 2048);
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL);
+    CHECK(state.buttons == (PAD_CROSS | PAD_PS | PAD_L2 | PAD_R2));
+    CHECK(state.rx == 0 && state.ry == 0 && state.lx == 128 && !state.has_motion);
+    r[3] = 0x80;
+    r[4] = 1;
+    r[5] = 0;
+    CHECK(p->parse(ctx, r, 49, &state) == PARSE_FULL && state.rx == 255 && state.ry == 255);
+    CHECK(!p->parse(ctx, r, 48, &state) && !p->parse(ctx, r, 65, &state));
+    CHECK(!p->parse(ctx, NULL, 0, &state));
+}
+static void test_nintendo_factory_calibration(void)
+{
+    printf("Nintendo read-only factory calibration, boundaries and licensed fallback\n");
+    const pad_profile *p = profile_builtin_named("switch");
+    uint8_t ctx[PROFILE_CTX_MAX] = {0}, reply[49] = {0x21}, out[32], r[49] = {0x30};
+    pad_state state;
+    pad_output output = {0};
+    p->setup(ctx, 0x057e, 0x2009);
+    nintendo_info(p, ctx, NINTENDO_TYPE_PRO);
+    CHECK(p->init_report(ctx, 5, &output, out, sizeof out) == 16 && out[10] == 0x10 &&
+          out[11] == 0x3d && out[12] == 0x60 && out[15] == 9);
+    reply[13] = 0x90;
+    reply[14] = 0x10;
+    reply[15] = 0x3d;
+    reply[16] = 0x60;
+    reply[19] = 9;
+    packed_pair(reply + 20, 1000, 900);
+    packed_pair(reply + 23, 2100, 2200);
+    packed_pair(reply + 26, 700, 800);
+    CHECK(!p->parse(ctx, reply, 28, &state)); /* truncated, retain default */
+    CHECK(!p->parse(ctx, reply, sizeof reply, &state));
+    CHECK(p->init_report(ctx, 6, &output, out, sizeof out) == 16 && out[11] == 0x46);
+    reply[15] = 0x46;
+    packed_pair(reply + 20, 2000, 1900);
+    packed_pair(reply + 23, 600, 500);
+    packed_pair(reply + 26, 900, 1000);
+    CHECK(!p->parse(ctx, reply, sizeof reply, &state));
+    packed_pair(r + 6, 2100, 2200);
+    packed_pair(r + 9, 2000, 1900);
+    CHECK(p->parse(ctx, r, sizeof r, &state) == PARSE_FULL && state.lx == 128 && state.ly == 128 &&
+          state.rx == 128 && state.ry == 128);
+    packed_pair(r + 6, 3100, 1400);
+    packed_pair(r + 9, 1400, 2900);
+    CHECK(p->parse(ctx, r, sizeof r, &state) == PARSE_FULL && state.lx == 255 && state.ly == 255 &&
+          state.rx == 1 && state.ry == 1);
+    CHECK(p->init_report(ctx, 6, &output, out, sizeof out) == 16);
+    memset(reply + 20, 0xff, 9);
+    CHECK(!p->parse(ctx, reply, sizeof reply, &state));
+    packed_pair(r + 6, 2100, 2200);
+    packed_pair(r + 9, 2000, 1900);
+    CHECK(p->parse(ctx, r, sizeof r, &state) == PARSE_FULL && state.rx == 128);
+    nintendo_info(p, ctx, NINTENDO_TYPE_LICENSED_PRO);
+    CHECK(!p->init_report(ctx, 5, &output, out, sizeof out)); /* no speculative SPI reads */
+    packed_pair(r + 6, 2048, 2048);
+    packed_pair(r + 9, 2048, 2048);
+    r[2] = 0xe0; /* invalid battery level must not exceed 100 percent */
+    CHECK(p->parse(ctx, r, sizeof r, &state) == PARSE_FULL && state.rx == 128 &&
+          !state.has_battery);
+}
+
+static void test_switch_device_info(void)
+{
+    unsigned char ctx[PROFILE_CTX_MAX] = {0}, request[16], reply[65] = {0x21};
+    uint8_t type = 0;
+    CHECK(profile_switch_info_request(ctx, request, sizeof request) == 11 && request[10] == 2);
+    CHECK(!profile_switch_info_request(NULL, request, sizeof request));
+    CHECK(!profile_switch_info_request(ctx, request, 10));
+    reply[13] = 0x82;
+    reply[14] = 2;
+    reply[17] = 6;
+    for (int n = 0; n < 26; n++)
+        CHECK(!profile_switch_info_reply(ctx, reply, n, &type));
+    CHECK(profile_switch_info_reply(ctx, reply, 26, &type) == 1 && type == 6);
+    reply[17] = 3;
+    CHECK(profile_switch_info_reply(ctx, reply, 49, &type) == 1 && type == 3);
+    CHECK(!profile_switch_info_reply(ctx, reply, 65, &type));
+    reply[17] = 1;
+    CHECK(profile_switch_info_reply(ctx, reply, 49, &type) == -1);
+    reply[13] = 0;
+    CHECK(profile_switch_info_reply(ctx, reply, 49, &type) == -1);
+    reply[14] = 3;
+    CHECK(!profile_switch_info_reply(ctx, reply, 49, &type));
+}
 static void test_ds4_short(void)
 {
     const pad_profile *p = profile_find(0x054C, 0x05C4);
@@ -122,15 +271,15 @@ static void test_ds5(void)
 static void test_model_names(void)
 {
     printf("Model names for the console's notifications\n");
-    CHECK(strcmp(pad_display_name(0x045E, 0x0B13, "Xbox"), "Xbox Series X|S") == 0);
-    CHECK(strcmp(pad_display_name(0x045E, 0x0B20, "Xbox"), "Xbox One S") == 0);
-    CHECK(strcmp(pad_display_name(0x045E, 0x0B22, "Xbox"), "Xbox Elite Series 2") == 0);
+    CHECK(strcmp(pad_display_name(0x045E, 0x0B13, "Xbox"), "Xbox Series X Controller") == 0);
+    CHECK(strcmp(pad_display_name(0x045E, 0x0B20, "Xbox"), "Xbox One S Controller") == 0);
+    CHECK(strcmp(pad_display_name(0x045E, 0x0B22, "Xbox"), "Xbox One Elite 2 Controller") == 0);
     CHECK(strcmp(pad_display_name(0x054C, 0x09CC, "DualShock 4"), "DualShock 4 v2") == 0);
     CHECK(strcmp(pad_display_name(0x054C, 0x05C4, "DualShock 4"), "DualShock 4 v1") == 0);
     CHECK(strcmp(pad_display_name(0x057E, 0x2009, "Switch Pro"), "Switch Pro Controller") == 0);
-    CHECK(strcmp(pad_display_name(0x2DC8, 0x3012, "Generic HID"), "8BitDo Ultimate 2.4G") == 0);
-    CHECK(strcmp(pad_display_name(0x2DC8, 0x6006, "Generic HID"), "8BitDo Pro 2") == 0);
-    CHECK(strcmp(pad_display_name(0x045E, 0x0B12, "Xbox"), "Xbox Series X|S") == 0);
+    CHECK(strcmp(pad_display_name(0x2DC8, 0x3012, "Generic HID"), "Controller") == 0);
+    CHECK(strcmp(pad_display_name(0x2DC8, 0x6006, "Generic HID"), "8Bitdo Pro 2 Controller") == 0);
+    CHECK(strcmp(pad_display_name(0x045E, 0x0B12, "Xbox"), "Xbox Series X Controller") == 0);
     CHECK(profile_find(0x045E, 0x0B12) == profile_find(0x045E, 0x0B13));
     CHECK(profile_find(0x057E, 0x201E)->parse == profile_find(0x057E, 0x2009)->parse);
     CHECK(!profile_find(0x057E, 0x201E)->build_output);
@@ -142,19 +291,11 @@ static void test_model_names(void)
     CHECK(strcmp(profile_model_name(0x3537, 0x1041), "GameSir Nova Lite") == 0);
     CHECK(strcmp(profile_model_name(0x3537, 0x100f), "GameSir Nova 2 Lite") == 0);
     CHECK(strcmp(profile_model_name(0x3537, 0x1098), "GameSir Nova 2 Lite Receiver") == 0);
-    CHECK(profile_usb_xinput_activation(0x3537, 0x1040));
-    CHECK(profile_usb_xinput_activation(0x3537, 0x100f));
-    CHECK(profile_usb_xinput_activation(0x3537, 0x1098));
     CHECK(profile_usb_input_watchdog(0x3537, 0x1040));
     CHECK(profile_usb_input_watchdog(0x3537, 0x100f));
     CHECK(profile_usb_input_watchdog(0x3537, 0x1098));
     CHECK(!profile_usb_input_watchdog(0x045e, 0x028e));
     CHECK(!profile_usb_input_watchdog(0x1234, 0x5678));
-    CHECK(profile_usb_xinput_activation(0x045e, 0x028e));
-    CHECK(!profile_usb_xinput_activation(0x3537, 0x1041));
-    CHECK(!profile_usb_xinput_activation(0x057e, 0x2009));
-    CHECK(!profile_usb_xinput_activation(0x054c, 0x05c4));
-    CHECK(!profile_usb_xinput_activation(0x3537, 0xffff));
     CHECK(!profile_find(0x3537, 0x1040)); /* Never parse USB XInput as Bluetooth Xbox. */
     CHECK(!profile_find(0x3537, 0x100f));
     CHECK(!profile_find(0x3537, 0x1098));
@@ -259,7 +400,7 @@ static void test_switch(void)
 {
     const pad_profile *p = profile_find(0x057E, 0x2009);
     unsigned char r[49], out[64];
-    unsigned char ctx[PROFILE_CTX_MAX];
+    unsigned char ctx[PROFILE_CTX_MAX] = {0};
     pad_output o = {0, 0, 0, 0, 0, 2, 0};
     pad_state st;
     int n, step;
@@ -310,13 +451,15 @@ static void test_switch(void)
 
     memset(ctx, 0, sizeof ctx);
     for (step = 0; (n = p->init_report(ctx, step, &o, out, sizeof out)) > 0; step++) {
-        CHECK(out[0] == 0x01 && out[1] == step && n == 12);
+        CHECK(out[0] == 0x01 && out[1] == step && n == (step == 0 ? 11 : 12));
         if (step == 0)
+            CHECK(out[10] == 2); /* read-only device info */
+        if (step == 1)
             CHECK(out[10] == 0x03 && out[11] == 0x30); /* full report mode */
-        if (step == 3)
+        if (step == 4)
             CHECK(out[10] == 0x30 && out[11] == 0x02); /* player 2 LED */
     }
-    CHECK(step == 4);
+    CHECK(step == 5);
 
     printf("Switch Pro rumble: neutral, separate motors, amplitude and shared counter\n");
     CHECK(p->build_output != NULL && p->rumble_refresh_ms == 60);
@@ -339,7 +482,7 @@ static void test_switch(void)
         o.strong = o.weak = 0;
         CHECK(p->build_output(ctx, &o, out, 9) == 0);
         CHECK(p->build_output(ctx, &o, out, sizeof out) == 10);
-        CHECK(out[0] == 0x10 && out[1] == 4);
+        CHECK(out[0] == 0x10 && out[1] == 5);
         CHECK(memcmp(out + 2, neutral, sizeof neutral) == 0);
         o.strong = 255;
         CHECK(p->build_output(ctx, &o, out, sizeof out) == 10);
@@ -358,8 +501,8 @@ static void test_switch(void)
             CHECK(out[5] >= 0x40 && out[5] <= 0x72);
             prev = out[3];
         }
-        CHECK(p->init_report(ctx, 0, &o, out, sizeof out) == 12);
-        CHECK(out[1] == 7); /* short buffer did not consume a counter */
+        CHECK(p->init_report(ctx, 0, &o, out, sizeof out) == 11);
+        CHECK(out[1] == 8); /* short buffer did not consume a counter */
     }
 }
 
@@ -496,6 +639,9 @@ int main(void)
     test_output_inventory();
     test_crc();
     test_lookup();
+    test_switch_device_info();
+    test_nintendo_devices();
+    test_nintendo_factory_calibration();
     test_classification_and_joycons();
     test_ds4_short();
     test_ds5();

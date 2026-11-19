@@ -184,6 +184,8 @@ window.UCMessages = {
     enableAndSearch: "启用蓝牙并搜索",
     manualPairHint: "扫描只发现设备，不会自动连接。请在下方选择设备并点击“配对”。",
     discoveredDevices: "已发现设备",
+    discoverySelectionHint:
+      "优先选择名称与手柄一致的设备。未知设备可能无法使用，部分手柄会同时广播多个蓝牙信号。",
     noDiscovered: "尚未发现新设备。请让手柄进入配对模式后开始搜索。",
     scanCountdown: "正在搜索 · 剩余 {seconds} 秒",
     scanFinished: "搜索已结束",
@@ -192,6 +194,10 @@ window.UCMessages = {
     retryPair: "重试配对",
     unnamedController: "未知设备",
     discovery_discovered: "可配对",
+    discovery_unsupported: "暂不支持",
+    bleIdentityUnsupported: "此设备不在 BLE 支持名单中。",
+    classicProtocolUnsupported: "已识别设备类型，暂不支持此蓝牙协议。",
+    switch2BleUnsupported: "已识别型号，暂不支持 Switch 2 蓝牙连接。",
     discovery_pairing: "正在配对…",
     discovery_connected: "已连接",
     discovery_failed: "配对失败",
@@ -397,6 +403,8 @@ window.UCMessages = {
     manualPairHint:
       "Scanning only discovers devices. Select a device below and click Pair to connect.",
     discoveredDevices: "Discovered devices",
+    discoverySelectionHint:
+      "Choose a device whose name matches your controller. Unknown devices may not work, and some controllers broadcast multiple Bluetooth signals.",
     noDiscovered: "No new devices found. Put the controller into pairing mode and start a search.",
     scanCountdown: "Searching · {seconds}s remaining",
     scanFinished: "Search finished",
@@ -405,6 +413,12 @@ window.UCMessages = {
     retryPair: "Retry pairing",
     unnamedController: "Unknown device",
     discovery_discovered: "Available",
+    discovery_unsupported: "Unsupported",
+    bleIdentityUnsupported: "This device is not on the BLE support list.",
+    classicProtocolUnsupported:
+      "Device type identified. This Bluetooth protocol is not supported yet.",
+    switch2BleUnsupported:
+      "Model identified. Switch 2 Bluetooth connections are not supported yet.",
     discovery_pairing: "Pairing…",
     discovery_connected: "Connected",
     discovery_failed: "Pairing failed",

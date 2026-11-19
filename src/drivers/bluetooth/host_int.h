@@ -20,6 +20,7 @@
 #define OP_LINK_KEY_REPLY 0x040B
 #define OP_LINK_KEY_NEG_REPLY 0x040C
 #define OP_PIN_CODE_REPLY 0x040D
+#define OP_REMOTE_NAME_REQUEST 0x0419
 #define OP_AUTH_REQUESTED 0x0411
 #define OP_SET_ENCRYPTION 0x0413
 #define OP_IO_CAP_REPLY 0x042B
@@ -118,6 +119,7 @@ typedef struct {
     unsigned char addr[6], key[16], type;
     uint16_t vid, pid;
     uint8_t le, addr_type;
+    uint8_t switch_type; /* Confirmed Classic 0x02 reply; not a fabricated VID/PID. */
     uint16_t ediv;
     uint8_t rand[8], irk[16], has_irk;
 } db_rec;
@@ -185,10 +187,21 @@ typedef struct {
 
     int auth_sent, auth_ok, enc_sent, enc_on;
     long t_auth_ok, t_secure;
+    /* Diagnostic metadata only: no PIN, keys or confirmation values. */
+    unsigned diag_security_events;
+    unsigned char diag_security_replies, diag_security_waits;
 
     int ids_known;
     uint16_t vid, pid;
     const pad_profile *prof;
+    char name[HOST_DISCOVERY_NAME];
+    int name_requested, name_done;
+    long t_name;
+    int switch_probe, switch_probe_done;
+    int input_probe; /* SDL fallback: 1 enhanced report, 2 Xbox primary report. */
+    unsigned switch_probe_attempts, switch_probe_writes;
+    long t_switch_probe, t_switch_probe_next;
+    uint8_t switch_type;
 
     int sdp_query; /* SDP_Q_* being asked, 0: none */
     int sdp_sent, sdp_tries;

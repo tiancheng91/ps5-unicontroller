@@ -130,6 +130,15 @@
       address_type: 1,
       rssi: -55,
     },
+    {
+      address: "02:00:00:00:00:05",
+      name: "Nintendo Switch 2 Pro",
+      transport: "ble",
+      address_type: 0,
+      rssi: -58,
+      state: "unsupported",
+      reason: "switch2_ble_not_supported",
+    },
   ];
   window.fetch = async (resource, options = {}) => {
     const url = new URL(typeof resource === "string" ? resource : resource.url, location.href);
@@ -158,7 +167,12 @@
         ],
       };
     else if (path === "/system")
-      data = { mode: "DEMO PREVIEW", backend: "simulated", hardware: false };
+      data = {
+        mode: "DEMO PREVIEW",
+        backend: "simulated",
+        hardware: false,
+        build_id: "preview + local",
+      };
     else if (path === "/rumble-test" && method === "POST") {
       const found = [...bt.devices, ...usb.devices].find(
         (d) => d.settings_key === body.key && d.session_id === body.session_id,
@@ -294,8 +308,8 @@
             .map((d) => ({
               ...d,
               id: nextDiscovery++,
-              state: "discovered",
-              reason: "",
+              state: d.state || "discovered",
+              reason: d.reason || "",
             }));
         }
       } else if (action === "pair") {
