@@ -61,6 +61,12 @@
                 <div>USB <span id="usb-status" x-text="usbStatus"></span></div>
                 <a href="/#settings" x-label="serviceSettings"></a>
               </div>
+              <p
+                class="error"
+                role="status"
+                x-show="usbInputTimedOut"
+                x-label="usbHidInputTimeout"
+              ></p>
               <div class="section-heading" x-show="hasDevices">
                 <h2 x-label="connectedControllers"></h2>
                 <span class="muted" x-text="deviceCount"></span>
@@ -77,6 +83,11 @@
                     <div class="device-content">
                       <div class="device-title">
                         <h3 x-text="device.name"></h3>
+                        <span
+                          class="tag"
+                          x-show="device.experimental"
+                          x-label="experimental"
+                        ></span>
                         <span class="tag" x-text="device.transport"></span>
                       </div>
                       <div class="device-metadata">

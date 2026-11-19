@@ -228,7 +228,14 @@ document.addEventListener("alpine:init", () => {
     get usbRejected() {
       return (this.usb.rejected || []).map((d) => ({
         ...d,
-        detail: d.vid + ":" + d.pid + " · " + d.reason + " · errno=" + d.errno,
+        detail:
+          d.vid +
+          ":" +
+          d.pid +
+          " · " +
+          (d.reason === "hid_first_input_timeout"
+            ? this.t("usbHidInputTimeout")
+            : d.reason + " · errno=" + d.errno),
         diagnostic:
           (d.protocol_hint || "unknown") +
           " · " +
@@ -238,6 +245,9 @@ document.addEventListener("alpine:init", () => {
           "/" +
           (d.hid_report_declared || 0),
       }));
+    },
+    get usbInputTimedOut() {
+      return (this.usb.rejected || []).some((d) => d.reason === "hid_first_input_timeout");
     },
     get usbDevices() {
       // Status retains disconnected slots for diagnostics; these are not devices
@@ -270,6 +280,7 @@ document.addEventListener("alpine:init", () => {
         wireless,
         system_assignment: !!d.system_assignment,
         known_device: !!d.known_device,
+        experimental: !!d.experimental,
         rumble: !!d.rumble,
         rumble_available: !!d.rumble_available,
         rumble_enabled: !!d.rumble_enabled,
@@ -279,7 +290,14 @@ document.addEventListener("alpine:init", () => {
         identity: wireless ? d.address : d.node,
         detail: d.vid + ":" + d.pid + " · " + (d.profile || "HID"),
         input: this.t("frames", { count: d.input_frames }),
-        inputStatus: this.t(Number(d.input_frames) > 0 ? "inputParsed" : "inputWaiting"),
+        inputStatus:
+          !wireless && d.waiting_for_input === true
+            ? this.t("usbHidWaiting", {
+                seconds: Number.isFinite(d.first_input_remaining_ms)
+                  ? Math.max(0, Math.ceil(d.first_input_remaining_ms / 1000))
+                  : 30,
+              })
+            : this.t(Number(d.input_frames) > 0 ? "inputParsed" : "inputWaiting"),
         accountText: d.user_id > 0 ? this.t("account", { id: d.user_id }) : this.t("unbound"),
         stateText: d.system_assignment
           ? this.t(d.output_active ? "outputActive" : "outputWaiting")

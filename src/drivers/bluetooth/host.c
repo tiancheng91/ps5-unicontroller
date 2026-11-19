@@ -91,6 +91,13 @@ link_t *link_new(host_t *h, const unsigned char *addr)
 
 void link_free(host_t *h, link_t *l)
 {
+    if (l->used)
+        uc_log_debug("[bt-link] release address=%s handle=%#x transport=%s connected=%d "
+                     "pairing=%d auth_sent=%d auth_ok=%d encrypted=%d ids_known=%d "
+                     "sdp=%d ctrl=%d intr=%d ready=%d elapsed_ms=%ld",
+                     addr_str(l->addr), l->handle, l->le ? "ble" : "classic", l->connected,
+                     l->pairing, l->auth_sent, l->auth_ok, l->enc_on, l->ids_known, l->sdp.st,
+                     l->ctrl.st, l->intr.st, l->ready, l->connected ? now_ms() - l->t_conn : 0);
     if (l->ready && h->ev.on_disconnect)
         h->ev.on_disconnect(h->ev.ud, slot_of(h, l));
     memset(l, 0, sizeof *l);
@@ -1426,10 +1433,20 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         h->cc_op = le16(ev + 3);
         h->cc_len = len < (int)sizeof h->cc ? len : (int)sizeof h->cc;
         memcpy(h->cc, ev, (size_t)h->cc_len);
+        if (h->cc_op == OP_LINK_KEY_REPLY || h->cc_op == OP_LINK_KEY_NEG_REPLY ||
+            h->cc_op == OP_PIN_CODE_REPLY || h->cc_op == OP_IO_CAP_REPLY ||
+            h->cc_op == OP_USER_CONFIRM_REPLY)
+            uc_log_debug(
+                "[bt-security] reply complete opcode=%#x status=%#x credits=%u; payload redacted",
+                h->cc_op, ev[5], ev[2]);
         le_on_cmd_complete(h, h->cc_op, ev[5]);
         break;
 
     case 0x0F: /* Command Status: status, credits, opcode */
+        if (len >= 6 && (le16(ev + 4) == OP_AUTH_REQUESTED ||
+                         le16(ev + 4) == OP_CREATE_CONNECTION || le16(ev + 4) == OP_SET_ENCRYPTION))
+            uc_log_debug("[bt-security] command status opcode=%#x status=%#x credits=%u",
+                         le16(ev + 4), ev[2], ev[3]);
         if (len >= 6 && le16(ev + 4) == OP_INQUIRY) {
             log_line("inquiry: controller answered status %#04x", ev[2]);
             if (ev[2] != 0)
@@ -1480,6 +1497,9 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         memcpy(p, ev + 2, 6);
         p[6] = 4;
         memcpy(p + 7, "0000", 4);
+        uc_log_debug(
+            "[bt-security] PIN request address=%s; replying with legacy policy (PIN redacted)",
+            addr_str(ev + 2));
         send_cmd(h, OP_PIN_CODE_REPLY, p, 23);
         break;
 
@@ -1488,6 +1508,8 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             break;
         {
             db_rec *r = db_find(h, ev + 2);
+            uc_log_debug("[bt-security] link-key request address=%s stored=%d; key redacted",
+                         addr_str(ev + 2), r != NULL);
             if (r) {
                 memcpy(p, ev + 2, 6);
                 memcpy(p + 6, r->key, 16);
@@ -1519,12 +1541,27 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         p[6] = 0x03; /* NoInputNoOutput */
         p[7] = 0x00; /* no OOB data */
         p[8] = 0x04; /* general bonding, no MITM */
+        uc_log_debug("[bt-security] IO capability request address=%s capability=3 auth=4",
+                     addr_str(ev + 2));
         send_cmd(h, OP_IO_CAP_REPLY, p, 9);
+        break;
+
+    case 0x32: /* IO Capability Response: metadata only; never log authentication secrets. */
+        if (len >= 11 && link_by_addr(h, ev + 2))
+            uc_log_debug("[bt-security] remote capability address=%s capability=%u oob=%u auth=%u",
+                         addr_str(ev + 2), ev[8], ev[9], ev[10]);
+        break;
+    case 0x36: /* Simple Pairing Complete */
+        if (len >= 9 && link_by_addr(h, ev + 3))
+            uc_log_debug("[bt-security] simple pairing complete address=%s status=%#x",
+                         addr_str(ev + 3), ev[2]);
         break;
 
     case 0x33: /* User Confirmation Request */
         if (len < 8 || !link_by_addr(h, ev + 2))
             break;
+        uc_log_debug("[bt-security] user confirmation request address=%s; numeric value redacted",
+                     addr_str(ev + 2));
         send_cmd(h, OP_USER_CONFIRM_REPLY, ev + 2, 6);
         break;
 
@@ -2081,8 +2118,14 @@ int hci_sync(host_t *h, unsigned op, const void *p, int plen)
             return 0;
         while (h->cc_op != op && now_ms() < deadline)
             pump(h, 20);
-        if (h->cc_op == op)
+        if (h->cc_op == op) {
+            uc_log_debug("[bt-hci] command complete opcode=%#x attempt=%d status=%#x length=%d", op,
+                         attempt, h->cc_len > 5 ? h->cc[5] : 0xff, h->cc_len);
             return h->cc_len > 5 && h->cc[5] == 0;
+        }
+        uc_log_debug("[bt-hci] command reply timeout opcode=%#x attempt=%d; shared receiver may "
+                     "consume completion",
+                     op, attempt);
     }
     log_line("command %#06x: no reply", op);
     if (!h->diag_done && h->hci.ops->diag) {

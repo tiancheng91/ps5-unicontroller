@@ -5,6 +5,8 @@
  * 0=ready/success, 2=pending, negative=failure. create is idempotent for same user.
  * Up to four independently owned outputs, one per signed-in user.
  * Identification is serialized. Delete(0) cancels pending creation only. */
+/* Initial load only: two attempts at most, 5s delay after a fully rolled-back failure.
+ * This can block before HTTP starts; never call from the runtime loop. */
 int uc_backend_init(void);
 /* Boolean gate; remains true for a healthy owned output. No hardware is opened. */
 int uc_backend_can_start(int32_t user);
