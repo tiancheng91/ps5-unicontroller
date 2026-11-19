@@ -3,6 +3,7 @@
 #include "sim_le.h"
 #include "../../src/drivers/config/overrides.h"
 #include "../../src/drivers/bluetooth/host.h"
+#include "../../src/drivers/bluetooth/host_int.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -584,13 +585,114 @@ static void test_ble_rejected_without_saved_pairing(uint16_t vid, uint16_t pid)
     run(host, 8000);
     CHECK(observed.connects == 0 && observed.states == 0);
     CHECK(host_paired_count(host) == 0);
+    host_discovered_info found;
+    CHECK(host_discovered_get(host, 0, &found));
+    CHECK(found.unsupported && !strcmp(found.state, "unsupported"));
+    CHECK(!strcmp(found.reason, "ble_identity_not_allowed"));
+    int attempts = sim_le_creates(sim);
+    CHECK(!host_pair_device(host, found.id));
+    run(host, 1000);
+    CHECK(sim_le_creates(sim) == attempts);
     host_close(host);
     sim_le_free(sim);
     unlink(DB);
 }
 
+static void test_ble_missing_identity_is_failure(void)
+{
+    unlink(DB);
+    sim_le_pad pad;
+    xbox_pad(&pad, 1, 0);
+    pad.no_pnp = 1;
+    sim_le_t *sim = sim_le_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h != NULL);
+    if (h) {
+        CHECK(select_first(h, 10));
+        run(h, 8000);
+        host_discovered_info found;
+        CHECK(host_discovered_get(h, 0, &found));
+        CHECK(!found.unsupported && !strcmp(found.state, "failed"));
+        CHECK(!host_paired_count(h) && !observed.connects);
+        host_close(h);
+    }
+    sim_le_free(sim);
+    unlink(DB);
+}
+
+static void test_cached_ble_unsupported(int rpa)
+{
+    unlink(DB);
+    sim_le_pad pad;
+    xbox_pad(&pad, 1, rpa);
+    sim_le_t *sim = sim_le_new(&pad);
+    seen observed = {0};
+    host_t *h = open_host(sim, &observed);
+    CHECK(h != NULL);
+    if (h) {
+        h->ndb = 1;
+        memcpy(h->db[0].addr, pad.addr, 6);
+        h->db[0].le = 1;
+        h->db[0].vid = 0x1234;
+        h->db[0].pid = 0x5678;
+        h->db[0].has_irk = rpa;
+        memcpy(h->db[0].irk, pad.irk, 16);
+        CHECK(host_scan(h, 10));
+        run(h, 500);
+        host_discovered_info found;
+        CHECK(host_discovered_get(h, 0, &found));
+        CHECK(found.unsupported && !strcmp(found.state, "unsupported"));
+        CHECK(!host_pair_device(h, found.id));
+        CHECK(!sim_le_creates(sim) && !observed.connects);
+        CHECK(host_paired_count(h) == 1); /* Existing bond remains removable. */
+        host_close(h);
+    }
+    sim_le_free(sim);
+    unlink(DB);
+}
+
+static void test_switch2_discovery_only(void)
+{
+    printf("Switch2 BLE: identify without connecting, even when Pair is requested\n");
+    static const uint16_t pids[] = {0x2069, 0x2067, 0x2066};
+    static const char *const names[] = {"Pro", "Joy-Con (L)", "Joy-Con (R)"};
+    for (unsigned model = 0; model < sizeof pids / sizeof pids[0]; model++) {
+        unlink(DB);
+        sim_le_pad pad = {.addr = {1, 2, 3, 4, 5, 6}, .advert_len = 31};
+        const uint8_t ad[31] = {2, 1, 6, 27, 0xff, 0x53, 5, 1,    0, 3, 0x7e, 5, 0x69, 0x20, 0, 1,
+                                0, 0, 0, 0,  0,    0,    0, 0x0f, 0, 0, 0,    0, 0,    0,    0};
+        memcpy(pad.advert, ad, sizeof ad);
+        pad.advert[12] = (uint8_t)pids[model];
+        sim_le_t *sim = sim_le_new(&pad);
+        seen observed = {0};
+        host_t *h = open_host(sim, &observed);
+        CHECK(h != NULL);
+        if (h) {
+            CHECK(host_scan(h, 10));
+            run(h, 500);
+            host_discovered_info found;
+            CHECK(host_discovered_count(h) == 1 && host_discovered_get(h, 0, &found));
+            CHECK(strstr(found.name, names[model]) != NULL);
+            CHECK(found.unsupported && !strcmp(found.state, "unsupported"));
+            CHECK(!strcmp(found.reason, "switch2_ble_not_supported"));
+            CHECK(!host_pair_device(h, found.id));
+            run(h, 500);
+            CHECK(sim_le_creates(sim) == 0 && sim_le_pairings(sim) == 0 && observed.connects == 0);
+            CHECK(host_paired_count(h) == 0);
+            host_close(h);
+        }
+        sim_le_free(sim);
+    }
+    unlink(DB);
+}
+
 int main(void)
 {
+    test_ble_missing_identity_is_failure();
+    test_cached_ble_unsupported(0);
+    test_cached_ble_unsupported(1);
+    test_switch2_discovery_only();
     test_scan_response_and_inquiry();
     test_manual_le_discovery();
     test_ble_rejected_without_saved_pairing(0x057e, 0x2009);

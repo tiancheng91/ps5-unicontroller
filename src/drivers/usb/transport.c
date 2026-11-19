@@ -4,12 +4,88 @@ static unsigned le16(const uint8_t *p)
 {
     return p[0] | (unsigned)p[1] << 8;
 }
+/* Switch 2 Pro: HID interrupt input plus a separate FF/00/00 bulk
+ * configuration channel. Reference: Linux hid-nintendo-switch2-usb.c,
+ * switch2_usb_probe / SWITCH2_CONTROLLER:
+ * https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo-switch2-usb.c
+ * Other Nintendo identities never enter this selector. */
+static int select_switch2(const uint8_t *cfg, size_t length, uc_usb_device *out)
+{
+    uc_usb_diagnostics d;
+    uc_usb_diagnose_config(&d, cfg, length);
+    if (!d.config_valid || d.interfaces_truncated || d.endpoints_truncated || !cfg[4])
+        return 0;
+    uc_usb_device result = {.kind = UC_USB_SWITCH2_PRO, .vid = 0x057e, .pid = 0x2069};
+    unsigned hid = 0, config = 0, interfaces = 0;
+    uint8_t seen[256] = {0}, addresses[256] = {0};
+    for (unsigned i = 0; i < d.interface_count; i++) {
+        const uc_usb_interface_info *f = &d.interfaces[i];
+        if (f->alternate)
+            continue;
+        if (seen[f->number]++)
+            return 0;
+        ++interfaces;
+        int input = f->class_code == 3 && !f->subclass && !f->protocol;
+        int command = f->class_code == 0xff && !f->subclass && !f->protocol;
+        unsigned count = 0, in = 0, output = 0;
+        for (unsigned j = 0; j < d.endpoint_count; j++) {
+            const uc_usb_endpoint_info *e = &d.endpoints[j];
+            if (e->interface_number != f->number || e->alternate)
+                continue;
+            ++count;
+            if (!input && !command)
+                continue;
+            if (!(e->address & 15) || (e->address & 0x70) || addresses[e->address]++ ||
+                (e->attributes & 3) != (input ? 3 : 2) || e->packet_size < 64 ||
+                e->packet_size > (input ? 64 : 512) || (input && !e->interval))
+                return 0;
+            if (e->address & 0x80) {
+                if (in++)
+                    return 0;
+                if (input) {
+                    result.ep_in = e->address;
+                    result.packet_in = e->packet_size;
+                } else {
+                    result.config_in = e->address;
+                    result.config_packet_in = e->packet_size;
+                }
+            } else {
+                if (output++)
+                    return 0;
+                if (command) {
+                    result.config_out = e->address;
+                    result.packet_out = e->packet_size;
+                }
+            }
+        }
+        if (count != f->endpoints)
+            return 0;
+        if (input) {
+            if (++hid != 1 || in != 1 || output > 1)
+                return 0;
+            result.iface = f->number;
+            result.iface_index = f->index;
+        }
+        if (command) {
+            if (++config != 1 || in != 1 || output != 1)
+                return 0;
+            result.config_iface = f->number;
+            result.config_index = f->index;
+        }
+    }
+    if (interfaces != cfg[4] || hid != 1 || config != 1)
+        return 0;
+    *out = result;
+    return 1;
+}
 /* Selection never changes configuration/alternate setting. Only active alt 0
  * interfaces with exactly one interrupt IN/OUT pair are accepted. */
 int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length, uc_usb_device *out)
 {
+    if (cfg && out && vid == 0x057e && pid == 0x2069)
+        return select_switch2(cfg, length, out);
     if (!cfg || !out || length < 9 || cfg[0] < 9 || cfg[1] != 2 || le16(cfg + 2) != length ||
-        vid == 0x054c || vid == 0x0e8d || cfg[4] == 0)
+        vid == 0x054c || vid == 0x0e8d || (vid == 0x057e && pid != 0x2009) || cfg[4] == 0)
         return 0;
     uc_usb_device candidate = {0}, current = {0};
     unsigned count = 0, declared = 0, endpoints = 0, seen_interfaces = 0,
@@ -50,8 +126,11 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
                 current.iface_index = (uint8_t)seen_interfaces++;
             }
             current.iface = d[2];
-            if (active && d[5] == 0xff && d[6] == 0x5d && d[7] == 1) {
+            if (vid != 0x057e && active && d[5] == 0xff && d[6] == 0x5d && d[7] == 1) {
                 current.kind = UC_USB_XINPUT;
+                wanted = 1;
+            } else if (vid == 0x057e && pid == 0x2009 && active && d[5] == 3 && !d[6] && !d[7]) {
+                current.kind = UC_USB_SWITCH_PRO;
                 wanted = 1;
             }
         } else if (d[1] == 5) {
@@ -60,7 +139,7 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
             ++endpoints;
             if (wanted) {
                 unsigned packet = le16(d + 4);
-                unsigned minimum = (d[2] & 0x80) ? 20 : 8;
+                unsigned minimum = current.kind == UC_USB_SWITCH_PRO ? 64 : (d[2] & 0x80) ? 20 : 8;
                 if ((d[3] & 3) != 3 || packet < minimum || packet > 64 || !d[6])
                     return 0;
                 if (d[2] & 0x80) {
@@ -149,6 +228,8 @@ int uc_usb_select_generic(const uc_usb_device *candidate, uc_usb_device *out)
 typedef struct {
     int fd, in_fd, out_fd, claimed, detached, leased, dead, output_dead;
     int iface_index, info_unsupported;
+    int config_fd, config_claimed, config_index;
+    unsigned read_channel;
     unsigned reads, diagnostic_mask;
     DIR *directory;
     uc_usb_device device;
@@ -298,9 +379,14 @@ static void native_close(void *context)
     native_transport *n = context;
     if (n->in_fd >= 0)
         close(n->in_fd);
+    if (n->config_fd >= 0)
+        close(n->config_fd);
     if (n->out_fd >= 0)
         close(n->out_fd);
     if (n->fd >= 0) {
+        if (n->config_claimed && ioctl(n->fd, USB_RELEASE_INTERFACE, &n->config_index) < 0)
+            log_line("usb %s: configuration interface release failed errno=%d", n->device.node,
+                     errno);
         if (n->claimed && ioctl(n->fd, USB_RELEASE_INTERFACE, &n->iface_index) < 0)
             log_line("usb %s: interface release failed errno=%d", n->device.node, errno);
         if (n->detached)
@@ -311,9 +397,10 @@ static void native_close(void *context)
     if (n->directory)
         closedir(n->directory);
     n->directory = NULL;
-    n->fd = n->in_fd = n->out_fd = -1;
+    n->fd = n->in_fd = n->out_fd = n->config_fd = -1;
     n->claimed = n->detached = n->dead = n->output_dead = n->info_unsupported = 0;
-    n->reads = 0;
+    n->reads = n->read_channel = 0;
+    n->config_claimed = 0;
 }
 
 static int open_candidate(native_transport *n, unsigned bus, unsigned address, uc_usb_device *out)
@@ -403,18 +490,21 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     selected.diagnostic.info_errno = info_errno;
     selected.diagnostic.device_class = descriptor.bDeviceClass;
     selected.diagnostic.config_index = (uint8_t)config_index;
-    diagnose_hid(n, &selected);
+    if (selected.vid != 0x057e || (selected.pid != 0x2069 && selected.pid != 0x2009))
+        diagnose_hid(n, &selected);
     uc_usb_device matched = {0};
     stage = "not_supported_xinput";
     errno = 0;
     if (!uc_usb_select(selected.vid, selected.pid, config, full.ugd_actlen, &matched) &&
         !uc_usb_select_generic(&selected, &matched)) {
         const char *hint = uc_usb_diagnostic_hint(selected.vid, selected.pid, &selected.diagnostic);
-        if (!strcmp(hint, "generic-hid-gamepad")) {
+        if (selected.vid == 0x057e && selected.pid == 0x2069) {
+            stage = "switch2_interfaces_unsupported";
+        } else if (!strcmp(hint, "generic-hid-gamepad")) {
             selected.kind = UC_USB_GENERIC_HID;
             stage = "generic_hid_interface_unsupported";
         } else if (!strcmp(hint, "switch-pro")) {
-            stage = "special_protocol_disabled";
+            stage = "switch_pro_interface_unsupported";
         } else if (!selected.diagnostic.config_valid) {
             stage = "malformed_configuration";
         } else if (selected.diagnostic.report_attempted && selected.diagnostic.report_errno) {
@@ -431,8 +521,12 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     n->device = selected;
     n->iface_index = selected.iface_index;
     log_line("usb %s: %s candidate %04x:%04x interface=%u index=%u IN=%#x OUT=%#x", selected.node,
-             selected.kind == UC_USB_XINPUT ? "XInput" : "Generic HID", selected.vid, selected.pid,
-             selected.iface, selected.iface_index, selected.ep_in, selected.ep_out);
+             selected.kind == UC_USB_XINPUT        ? "XInput"
+             : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
+                                                   : "Generic HID",
+             selected.vid, selected.pid, selected.iface, selected.iface_index, selected.ep_in,
+             selected.ep_out);
     stage = "driver_detach";
     /* Detach only this verified XInput or gamepad HID interface, never
      * the whole device. No-driver/unsupported detach may still permit a claim. */
@@ -455,17 +549,46 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
         log_line("usb %s: claim ioctl unsupported errno=%d; trying selected endpoints",
                  selected.node, errno);
     }
+    if (selected.kind == UC_USB_SWITCH2_PRO) {
+        n->config_index = selected.config_index;
+        uc_log_debug("[usb-switch2] interfaces HID=%u/%u IN=%02x config=%u/%u bulk=%02x/%02x",
+                     selected.iface, selected.iface_index, selected.ep_in, selected.config_iface,
+                     selected.config_index, selected.config_in, selected.config_out);
+        stage = "configuration_driver_detach";
+        if (ioctl(n->fd, USB_IFACE_DRIVER_DETACH, &n->config_index) == 0)
+            n->detached = 1;
+        else
+            uc_log_debug("[usb-switch2] configuration detach errno=%d; trying claim", errno);
+        stage = "configuration_claim";
+        if (ioctl(n->fd, USB_CLAIM_INTERFACE, &n->config_index) == 0)
+            n->config_claimed = 1;
+        else if (errno != ENOTTY && errno != ENOSYS && errno != EOPNOTSUPP)
+            goto reject;
+        stage = "configuration_endpoint_open";
+        snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.config_in & 15);
+        n->config_fd = open(path, O_RDONLY | O_NONBLOCK);
+        if (n->config_fd < 0)
+            goto reject;
+        int short_transfer = 1;
+        if (ioctl(n->config_fd, USB_SET_RX_SHORT_XFER, &short_transfer) < 0)
+            goto reject;
+    }
     stage = "input_endpoint_open";
     snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.ep_in & 15);
     n->in_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (n->in_fd < 0)
         goto reject;
-    if (selected.kind == UC_USB_XINPUT) {
+    if (selected.kind == UC_USB_XINPUT || selected.kind == UC_USB_SWITCH2_PRO ||
+        selected.kind == UC_USB_SWITCH_PRO) {
         stage = "output_endpoint_open";
-        snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address, selected.ep_out & 15);
+        snprintf(path, sizeof(path), "/dev/usb/%u.%u.%u", bus, address,
+                 (selected.kind == UC_USB_SWITCH2_PRO ? selected.config_out : selected.ep_out) &
+                     15);
         n->out_fd = open(path, O_WRONLY | O_NONBLOCK);
         if (n->out_fd < 0) {
             selected.diagnostic.output_errno = errno;
+            if (selected.kind == UC_USB_SWITCH2_PRO || selected.kind == UC_USB_SWITCH_PRO)
+                goto reject;
             log_line("usb %s: output endpoint unavailable path=%s errno=%d; trying input only",
                      selected.node, path, errno);
         } else {
@@ -477,7 +600,10 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     if (ioctl(n->in_fd, USB_SET_RX_SHORT_XFER, &one) < 0)
         goto reject;
     log_line("usb %s: input endpoint ready protocol=%s; output=%s", selected.node,
-             selected.kind == UC_USB_XINPUT ? "XInput" : "Generic HID",
+             selected.kind == UC_USB_XINPUT        ? "XInput"
+             : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
+                                                   : "Generic HID",
              n->out_fd >= 0 ? "available" : "disabled");
     *out = selected;
     return 1;
@@ -540,17 +666,26 @@ static int native_read(void *context, uint8_t *buffer, size_t capacity)
     native_transport *n = context;
     if (n->in_fd < 0 || n->dead || !buffer || capacity < n->device.packet_in)
         return -1;
-    ssize_t count = read(n->in_fd, buffer, n->device.packet_in);
-    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
-        return 0;
-    if (!count)
-        return 0; /* Empty interrupt packet; health checks detect detach. */
-    if (count < 0) {
-        n->dead = 1;
-        log_line("usb %s: input stopped bytes=%zd errno=%d", n->device.node, count,
-                 count < 0 ? errno : 0);
-        return -1;
+    ssize_t count = 0;
+    unsigned channels = n->device.kind == UC_USB_SWITCH2_PRO ? 2 : 1;
+    for (unsigned i = 0; i < channels; i++) {
+        unsigned channel = channels == 2 ? n->read_channel++ & 1 : 0;
+        int fd = channel ? n->config_fd : n->in_fd;
+        size_t length = channel ? n->device.config_packet_in : n->device.packet_in;
+        if (fd < 0 || capacity < length)
+            return -1;
+        count = read(fd, buffer, length);
+        if (count > 0)
+            break;
+        if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            n->dead = 1;
+            log_line("usb %s: input stopped channel=%u bytes=%zd errno=%d", n->device.node, channel,
+                     count, errno);
+            return -1;
+        }
     }
+    if (count <= 0)
+        return 0;
     if (n->reads++ == 0)
         log_line("usb %s: first packet bytes=%zd header=%02x %02x", n->device.node, count,
                  buffer[0], count > 1 ? buffer[1] : 0);
@@ -613,7 +748,7 @@ int uc_usb_transport_open(uc_usb_transport *out)
         if (n->leased)
             continue;
         memset(n, 0, sizeof(*n));
-        n->fd = n->in_fd = n->out_fd = -1;
+        n->fd = n->in_fd = n->out_fd = n->config_fd = -1;
         n->leased = 1;
         out->ops = &ops;
         out->context = n;

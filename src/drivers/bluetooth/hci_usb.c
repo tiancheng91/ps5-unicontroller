@@ -440,9 +440,9 @@ static void op_diag(void *ctx)
     }
 }
 
-/* The HCI function and endpoints to use, from the chip's own descriptor: the
- * first function in descriptor order. (The second one is where the system
- * runs the DualSense; the first was silent in every trial.) */
+/* Retain the tested first descriptor function. This is not proof of exclusive
+ * ownership on another chip/firmware; log the hardware and selected layout.
+ * Never probe, reset or commandeer another function automatically. */
 static void choose_endpoints(usb_ctx *c)
 {
     struct usb_gen_descriptor gd;
@@ -464,6 +464,10 @@ static void choose_endpoints(usb_ctx *c)
                      "out %#x",
                      i, f[i].iface, f[i].ep_events, f[i].mps_events, f[i].ep_acl_in,
                      f[i].ep_acl_out);
+        uc_log_debug("[bt-hci] policy=first-descriptor-function selected=0 functions=%d "
+                     "vid=%04x pid=%04x; sharing/role assignment is hardware-dependent",
+                     n, c->dd_ok ? UGETW(c->dd.idVendor) : 0,
+                     c->dd_ok ? UGETW(c->dd.idProduct) : 0);
         c->iface = f[0].iface;
         c->ep_events = f[0].ep_events;
         c->ep_acl_in = f[0].ep_acl_in;

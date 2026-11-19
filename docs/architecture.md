@@ -11,7 +11,8 @@ src/drivers/
   bt.c / usb.c               各输入源的薄适配：启停、连接状态到core会话的转换
   bluetooth/                 配对、密钥、Classic/LE链路、HCI、重组
   usb/                       ugen传输、枚举、接口/端点、USB初始化与有线报文适配
-  protocols/                 共享Nintendo/Sony/Xbox协议、通用HID解析与内置controllers.json
+  protocols/                 协议注册、共享报告解析与内置controllers.json
+    nintendo.c/.h            Nintendo Classic 命令、类型差异与校准；USB 复用基础报告解析
   common/                    驱动共享字节序、时钟、校验与日志工具
 src/ps5/                     虚拟设备创建/输入/删除、账号绑定、电源观察
 src/web/                     HTTP、鉴权、静态资源、设置与控制API
@@ -57,7 +58,7 @@ PS5输出仍通过libScePad创建、注入和删除，通过日志严格识别�
 
 协议绑定、型号名称、命名 HID 字段布局和 USB 特殊标记由源码 `src/drivers/protocols/controllers.json` 维护，构建时严格校验生成 C 表。内置 layout 只有 bindings，描述协议字段与标准轴角色，不提供用户方向反转选项。
 
-用户可另行通过 FTP 上传 `/data/unicontroller/controllers.json`。使用固定版本 LibJSON 0.2.5 的事件解析器，最多 32 KiB、32 条精确 transport/VID/PID 规则；只在启动加载一次，无热重载。缺文件正常使用内置规则，任一非法字段、未知 profile 或无效匹配使整份覆盖回退内置并记录日志。没有网页写入 JSON 的 API。
+用户可另行通过 FTP 上传 `/data/unicontroller/controllers.json`。使用固定版本 LibJSON 0.2.5 的事件解析器，最多 32 KiB、32 条精确匹配规则（transport/VID/PID，Classic 可加名称或地址）；只在启动加载一次，无热重载。缺文件正常使用内置规则，任一非法字段、未知 profile 或无效匹配使整份覆盖回退内置并记录日志。没有网页写入 JSON 的 API。
 
 覆盖可提供 ASCII 显示别名、既有 profile hint 和原始通用 HID mapping；不能定义新协议、脚本、原始命令或组合键。USB hint 仍需满足受支持接口描述符，不绕过 Sony/内核驱动保护。型号别名不认证制造商。
 
@@ -76,3 +77,7 @@ settings.json版本1，完整校验后私有临时文件+sync+rename。蓝牙bon
 ## 管理界面
 
 控制面和设置共用管理文档，以 `#controllers` / `#logs` / `#settings` 切换；旧 `/settings` 为兼容入口。Alpine CSP固定离线打包，列表按稳定身份复用节点，HTTP传输、页面状态、文案及导航分层。手机 `/controller` 保持独立文档和原生输入生命周期。H5按已确认骨架重写为根目录 `web/index.html`、`controller.html` 与各自逻辑文件，旧页面目录已移除。外观偏好只在浏览器存储，后端手柄配置与配对存储不变；详见根目录 design.md。
+
+## 后端启动检查
+
+初始化记录进程身份、`/dev/hid` 节点状态、用户服务返回值及已登录人数，并校验内核凭据、MBus 入口和 scePadInit。首次失败且凭据已恢复时，延迟 5 秒重试一次；第二次失败退出，凭据恢复失败则不重试。等待仅发生在 HTTP 启动前，不用于运行循环或休眠恢复，物理输入源的登录门控保持不变。

@@ -129,16 +129,11 @@ class ControllerRegistryTests(unittest.TestCase):
         self.invalid(lambda c: c["devices"].append({"vid": "1234", "pid": "ABCD"}))
         self.invalid(lambda c: c["devices"][0].update(bluetooth_profile="missing"))
         self.invalid(lambda c: c["devices"][0].update(hid_layout="missing"))
-        self.invalid(lambda c: c["devices"][0].update(usb={"xinput_activation": 1}))
+        self.invalid(lambda c: c["devices"][0].update(usb={"input_watchdog": 1}))
         self.invalid(lambda c: c["devices"][0].update(usb={"reset_device": True}))
-        self.invalid(lambda c: c["devices"][0].update(identity_kind="authenticated"))
         config = example()
-        config["devices"][0]["usb"] = {
-            "xinput_activation": True,
-            "input_watchdog": True,
-        }
-        config["devices"][0]["identity_kind"] = "protocol"
-        self.assertIn("3u, 0}", registry.generate(config)[1])
+        config["devices"][0]["usb"] = {"input_watchdog": True}
+        self.assertIn("1, 0}", registry.generate(config)[1])
 
     def test_layout_grammar_and_bounds(self):
         for bindings in (
@@ -217,7 +212,7 @@ class ControllerRegistryTests(unittest.TestCase):
             '"Custom model using Xbox", uc_profile_ids_1, 1, xbox_parse, xbox_output, NULL, 0, 0, xbox_setup',
             profiles,
         )
-        self.assertIn("{0xbeef, 0x0001, NULL, uc_hid_map_0, 2u, 0}", models)
+        self.assertIn("{0xbeef, 0x0001, NULL, uc_hid_map_0, 1, 0}", models)
         config["profiles"]["unused"] = custom
         self.assertIn(
             '"Custom model using Xbox", NULL, 0, xbox_parse',

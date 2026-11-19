@@ -3,14 +3,23 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "diagnostics.h"
-/* Wired Xbox 360-style XInput and descriptor-verified Generic HID input. */
-typedef enum { UC_USB_NONE, UC_USB_XINPUT, UC_USB_GENERIC_HID } uc_usb_kind;
+/* XInput, descriptor-verified Generic HID and experimental Switch Pro USB variants. */
+typedef enum {
+    UC_USB_NONE,
+    UC_USB_XINPUT,
+    UC_USB_GENERIC_HID,
+    UC_USB_SWITCH2_PRO,
+    UC_USB_SWITCH_PRO
+} uc_usb_kind;
 typedef struct {
     uc_usb_kind kind;
     uint16_t vid, pid;
     uint8_t iface, ep_in, ep_out;
     uint8_t iface_index; /* Descriptor-order index used by FreeBSD interface ioctls. */
     uint16_t packet_in, packet_out;
+    /* Switch 2 has separate HID input and vendor bulk configuration interfaces. */
+    uint8_t config_iface, config_index, config_in, config_out;
+    uint16_t config_packet_in;
     char node[24];
     char reason[40]; /* Static diagnostic code for a rejected candidate. */
     int error_number;

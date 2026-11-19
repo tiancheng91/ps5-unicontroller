@@ -832,10 +832,11 @@ static int op_pump(void *ctx, int timeout_ms)
         r[2] = 0x00; /* ADV_IND */
         r[3] = s->cur_type;
         memcpy(r + 4, s->cur_addr, 6);
-        r[10] = sizeof ad;
-        memcpy(r + 11, ad, sizeof ad);
-        r[11 + sizeof ad] = 0xC0; /* RSSI */
-        meta(s, r, 12 + (int)sizeof ad);
+        int ad_len = s->pad.advert_len > 0 ? s->pad.advert_len : (int)sizeof ad;
+        r[10] = (uint8_t)ad_len;
+        memcpy(r + 11, s->pad.advert_len > 0 ? s->pad.advert : ad, (size_t)ad_len);
+        r[11 + ad_len] = 0xC0; /* RSSI */
+        meta(s, r, 12 + ad_len);
         s->t_adv = g_clock;
     }
     if (s->connected && s->encrypted && (s->cccd & 1) && g_clock - s->t_report >= 8) {

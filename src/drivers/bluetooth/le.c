@@ -165,6 +165,33 @@ static db_rec *link_db(host_t *h, const link_t *l)
     return db_find(h, link_id_addr(l));
 }
 
+static void le_hold(host_t *h, const uint8_t *addr, long until);
+
+/* A known identity denied by policy is unsupported, not a transient pairing
+ * failure. Keep it visible for this discovery session and reject retries. */
+static void mark_ble_unsupported(host_t *h, const uint8_t *addr, uint8_t addr_type, uint16_t vid,
+                                 uint16_t pid)
+{
+    for (int i = 0; i < h->discovered_count; i++) {
+        host_discovered_info *found = &h->discovered[i].info;
+        if (!found->le || found->addr_type != addr_type || memcmp(found->addr, addr, 6))
+            continue;
+        if (!found->unsupported)
+            uc_log_info(
+                "[bt-discovery] address=%s vid=%04x pid=%04x unsupported=ble_identity_not_allowed",
+                addr_str(addr), vid, pid);
+        found->unsupported = 1;
+        snprintf(found->reason, sizeof found->reason, "ble_identity_not_allowed");
+    }
+}
+static void reject_ble_identity(host_t *h, link_t *l)
+{
+    mark_ble_unsupported(h, l->addr, l->le_s.addr_type, l->vid, l->pid);
+    le_hold(h, l->addr, now_ms() + 60000);
+    link_disconnect(h, l, "ble_identity_not_allowed");
+    l->le_s.gatt = G_FAILED;
+}
+
 /* A paired LE pad behind this advertised address: by address, or a
  * resolvable private address its IRK resolves. */
 static db_rec *known_pad(host_t *h, uint8_t type, const uint8_t *a)
@@ -442,6 +469,10 @@ int le_pair_selected(host_t *h, uint8_t type, const unsigned char *addr)
     for (int i = 0; i < HOST_MAX_PADS; i++)
         if (h->links[i].used && h->links[i].le && !h->links[i].connected)
             return 0;
+    for (int i = 0; i < h->discovered_count; i++)
+        if (h->discovered[i].info.le && h->discovered[i].info.addr_type == type &&
+            h->discovered[i].info.unsupported && !memcmp(h->discovered[i].info.addr, addr, 6))
+            return 0;
     le_connect(h, type, addr, NULL);
     return link_by_addr(h, addr) != NULL;
 }
@@ -481,6 +512,10 @@ void le_on_cmd_complete(host_t *h, unsigned op, int status)
             le_create(h, l, now_ms());
     } else if (status != 0) {
         LE_DIAG(h, "le: scan %s answered status %#04x", h->le_scan_last ? "on" : "off", status);
+        uc_log_debug(
+            "[bt-le] scan rejected opcode=%#x status=%#x wanted=%d inquiring=%d outstanding=%d; "
+            "not evidence of absent BLE support; foreign scan state preserved",
+            op, status, h->le_scan_want, h->inquiring, h->le_scan_out);
     }
 }
 
@@ -555,6 +590,42 @@ static int looks_like_gamepad(const uint8_t *d, int n)
     return appearance || (hid && named);
 }
 
+/* Switch 2 uses private GATT, not HOGP/SMP. Identify only documented full
+ * manufacturer AD fields; names alone are not protocol or pairing evidence.
+ * https://github.com/ndeadly/switch2_controller_research/blob/master/bluetooth_interface.md */
+static const char *unsupported_nintendo_ble(const uint8_t *data, int size)
+{
+    const char *model = NULL;
+    for (int off = 0; off < size;) {
+        int len = data[off];
+        if (!len)
+            break;
+        if (len > size - off - 1)
+            return NULL;
+        if (len >= 27 && data[off + 1] == 0xff) {
+            const uint8_t *m = data + off + 2;
+            if (le16(m) == 0x0553 && m[2] == 1 && m[3] == 0 && m[4] == 3 && le16(m + 5) == 0x057e &&
+                m[9] == 0 && m[10] == 1 && (m[11] == 0 || m[11] == 0x81)) {
+                switch (le16(m + 7)) {
+                case 0x2069:
+                    model = "Nintendo Switch 2 Pro";
+                    break;
+                case 0x2067:
+                    model = "Nintendo Switch 2 Joy-Con (L)";
+                    break;
+                case 0x2066:
+                    model = "Nintendo Switch 2 Joy-Con (R)";
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        off += len + 1;
+    }
+    return model;
+}
+
 static void on_advert(host_t *h, const uint8_t *r, int n)
 {
     uint8_t evtype, type, dlen;
@@ -575,7 +646,8 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
         for (i = 0; i < h->discovered_count; i++) {
             host_discovered_info *found = &h->discovered[i].info;
             if (found->le && found->addr_type == type && !memcmp(found->addr, addr, 6)) {
-                host_found(h, 1, type, addr, data, dlen, NULL, 1, (int8_t)r[9 + dlen]);
+                if (!found->unsupported)
+                    host_found(h, 1, type, addr, data, dlen, NULL, 1, (int8_t)r[9 + dlen]);
                 break;
             }
         }
@@ -583,12 +655,40 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
     }
     if (evtype > 1)
         return; /* New candidates require connectable advertisements. */
+    bond = known_pad(h, type, addr);
+    if (bond && !profile_system_bluetooth(bond->vid, bond->pid) &&
+        !profile_ble_allowed(bond->vid, bond->pid)) {
+        if (now_ms() < h->scan_until && type <= 1) {
+            host_found(h, 1, type, addr, data, dlen, NULL, 1, (int8_t)r[9 + dlen]);
+            mark_ble_unsupported(h, addr, type, bond->vid, bond->pid);
+        }
+        return;
+    }
     if (link_by_addr(h, addr) || le_held(h, addr, now_ms()))
         return;
     for (i = 0; i < HOST_MAX_PADS; i++) /* one connection attempt at a time */
         if (h->links[i].used && h->links[i].le && !h->links[i].connected)
             return;
 
+    const char *unsupported = unsupported_nintendo_ble(data, dlen);
+    if (unsupported) {
+        if (now_ms() < h->scan_until && type <= 1) {
+            host_found(h, 1, type, addr, data, dlen, NULL, 1, (int8_t)r[9 + dlen]);
+            for (i = 0; i < h->discovered_count; i++) {
+                host_discovered_info *found = &h->discovered[i].info;
+                if (found->le && found->addr_type == type && !memcmp(found->addr, addr, 6)) {
+                    if (!found->unsupported)
+                        uc_log_info(
+                            "[bt-discovery] address=%s model=%s unsupported=private_switch2_ble",
+                            addr_str(addr), unsupported);
+                    found->unsupported = 1;
+                    snprintf(found->name, sizeof found->name, "%s", unsupported);
+                    snprintf(found->reason, sizeof found->reason, "switch2_ble_not_supported");
+                }
+            }
+        }
+        return; /* Discovery only, including old bonds: no Create Connection/SMP/GATT. */
+    }
     bond = known_pad(h, type, addr);
     if (bond) {
         if (profile_system_bluetooth(bond->vid, bond->pid))
@@ -758,8 +858,7 @@ static void bond_save(host_t *h, link_t *l)
         return;
     }
     if (!profile_ble_allowed(l->vid, l->pid)) {
-        link_disconnect(h, l, "BLE identity not allowed");
-        e->gatt = G_FAILED;
+        reject_ble_identity(h, l);
         return;
     }
     e->deferred_bond = 0;
@@ -1207,8 +1306,7 @@ static void on_att_response(host_t *h, link_t *l, const uint8_t *d, int n)
             e->mtu = (uint16_t)(m < OUR_MTU ? (m < 23 ? 23 : m) : OUR_MTU);
         }
         if (l->ids_known && !profile_ble_allowed(l->vid, l->pid)) {
-            link_disconnect(h, l, "cached BLE identity not allowed");
-            e->gatt = G_FAILED;
+            reject_ble_identity(h, l);
             break;
         }
         gatt_go(h, l, l->ids_known ? G_SVC : G_PNP);
@@ -1224,9 +1322,7 @@ static void on_att_response(host_t *h, link_t *l, const uint8_t *d, int n)
             if (!profile_ble_allowed(l->vid, l->pid)) {
                 LE_DIAG(h, "le pad %s: identity %04x:%04x not allowed", addr_str(l->addr), l->vid,
                         l->pid);
-                le_hold(h, l->addr, now_ms() + 60000);
-                link_disconnect(h, l, "BLE identity not allowed");
-                e->gatt = G_FAILED;
+                reject_ble_identity(h, l);
                 break;
             }
             log_line("le pad %s: vendor %04x product %04x", addr_str(l->addr), l->vid, l->pid);

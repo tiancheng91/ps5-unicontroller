@@ -57,11 +57,8 @@ typedef enum {
     PROFILE_XBOX,
     PROFILE_KNOWN_OTHER
 } profile_family;
-/* VID/PID evidence only; names and address prefixes never determine a protocol. */
+/* VID/PID classification; Classic name candidates require a protocol probe. */
 profile_family profile_classify(uint16_t vid, uint16_t pid);
-/* USB FF/5D/01 only: known wired identities permitted LED activation before
- * their first input report. This does not classify Bluetooth or HID devices. */
-int profile_usb_xinput_activation(uint16_t vid, uint16_t pid);
 /* Receiver-backed modes require real reports; USB presence cannot renew held input. */
 int profile_usb_input_watchdog(uint16_t vid, uint16_t pid);
 const pad_profile *profile_find(uint16_t vid, uint16_t pid);
@@ -69,9 +66,19 @@ const pad_profile *profile_find(uint16_t vid, uint16_t pid);
 int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid);
 int profile_system_bluetooth(uint16_t vid, uint16_t pid);
 int profile_ble_allowed(uint16_t vid, uint16_t pid);
+/* Known SDL family without a Classic codec; local rules/layouts take precedence. */
+int profile_classic_unsupported(uint16_t vid, uint16_t pid);
 /* Builtin resolver is separate so override validation cannot recursively query itself. */
 const pad_profile *profile_builtin_named(const char *key);
 const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);
+/* Builtin Classic selection only; shared with override validation. NULL may
+ * mean descriptor-based HID or an unsupported family (check separately). */
+const pad_profile *profile_classic_default(uint16_t vid, uint16_t pid, const char *name,
+                                           int *probe);
+/* Classic-only identity selection; probe=1 requires successful device info and
+ * full input before exposing this candidate as a connected controller. */
+const pad_profile *profile_classic_candidate(uint16_t vid, uint16_t pid, const uint8_t address[6],
+                                             const char *name, int *probe);
 profile_family profile_classify_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);
 const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid, uint16_t pid,
                                            const char *profile);

@@ -476,6 +476,12 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
             r[10] = (unsigned char)(s->pad.cod >> 8);
             r[11] = (unsigned char)(s->pad.cod >> 16);
             put16(r + 12, 0x1234);
+            size_t length = strlen(s->pad.name);
+            if (length) {
+                r[15] = (unsigned char)(length + 1);
+                r[16] = 9;
+                memcpy(r + 17, s->pad.name, length);
+            }
             event(s, 0x2F, r, 255);
         }
         break;
@@ -494,6 +500,14 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         /* A pad reconnecting by itself authenticates itself. */
         ev_addr(s, 0x17);
         break;
+    case 0x0419: { /* Remote Name Request */
+        unsigned char r[255] = {0};
+        cmd_status(s, op, 0);
+        memcpy(r + 1, s->pad.addr, 6);
+        memcpy(r + 7, s->pad.name, strlen(s->pad.name));
+        event(s, 7, r, sizeof r);
+        break;
+    }
     case 0x0411: /* Authentication Requested */
         cmd_status(s, op, 0);
         ev_addr(s, 0x17);
@@ -596,6 +610,13 @@ static int op_acl_send(void *ctx, const unsigned char *pkt, int len)
         s->got_output = 1;
         s->last_out_len = n < (int)sizeof s->last_out ? n : (int)sizeof s->last_out;
         memcpy(s->last_out, d, (size_t)s->last_out_len);
+        if (n == 12 && d[1] == 1 && d[11] == 2 && s->pad.switch_type) {
+            unsigned char reply[27] = {0xA1, 0x21};
+            reply[14] = s->pad.reject_switch_info ? 0 : 0x82;
+            reply[15] = 2;
+            reply[18] = s->pad.switch_type;
+            acl_to_host(s, s->intr.peer, reply, sizeof reply);
+        }
     }
     return 1;
 }

@@ -1,6 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #define clock_gettime test_clock_gettime
+#define nanosleep test_nanosleep
+#define dlopen test_dlopen
+#define dlsym test_dlsym
 #include "../../src/ps5/backend.c"
 static uint64_t fake_ms = 10000;
 int test_clock_gettime(clockid_t which, struct timespec *time)
@@ -9,6 +12,16 @@ int test_clock_gettime(clockid_t which, struct timespec *time)
     uint64_t current = fake_ms++;
     time->tv_sec = current / 1000;
     time->tv_nsec = (current % 1000) * 1000000;
+    return 0;
+}
+static int retry_sleeps, credential_reads, missing_credentials;
+static int pad_init_calls, pad_init_failures, restore_failure;
+int test_nanosleep(const struct timespec *request, struct timespec *remaining)
+{
+    (void)remaining;
+    assert(request->tv_sec == 5 && !request->tv_nsec);
+    ++retry_sleeps;
+    fake_ms += 5000;
     return 0;
 }
 static uint64_t auth = 7;
@@ -38,6 +51,11 @@ int32_t sceUserServiceGetForegroundUser(int32_t *user)
 }
 int32_t scePadInit(void)
 {
+    ++pad_init_calls;
+    if (pad_init_failures) {
+        --pad_init_failures;
+        return -123;
+    }
     return 0;
 }
 int32_t scePadSetProcessPrivilege(int32_t p)
@@ -99,10 +117,29 @@ static int bind_mock(uint64_t device_id, int32_t user)
     ++bind_calls;
     return 0;
 }
+static int mbus_module, pad_module;
+void *test_dlopen(const char *path, int flags)
+{
+    assert(flags == (RTLD_NOW | RTLD_GLOBAL));
+    if (strstr(path, "libSceMbus.sprx"))
+        return &mbus_module;
+    assert(strstr(path, "libScePad.sprx"));
+    return &pad_module;
+}
+void *test_dlsym(void *module, const char *symbol)
+{
+    if (module == &mbus_module) {
+        assert(!strcmp(symbol, "sceMbusBindDeviceWithUserId"));
+        return (void *)bind_mock;
+    }
+    assert(module == &pad_module && !strcmp(symbol, "scePadVirtualDeviceGetRemoteSetting"));
+    return (void *)feedback;
+}
 uint64_t kernel_get_ucred_authid(pid_t p)
 {
     (void)p;
-    return auth;
+    ++credential_reads;
+    return missing_credentials ? 0 : auth;
 }
 int32_t kernel_get_ucred_caps(pid_t p, uint8_t out[16])
 {
@@ -113,6 +150,8 @@ int32_t kernel_get_ucred_caps(pid_t p, uint8_t out[16])
 int32_t kernel_set_ucred_authid(pid_t p, uint64_t value)
 {
     (void)p;
+    if (value == 7 && restore_failure)
+        return -1;
     auth = value;
     return 0;
 }
@@ -507,6 +546,33 @@ static void system_choice_output(void)
 }
 int main(void)
 {
+    /* No loader/credentials yet: one delayed retry, never reach dlopen or create. */
+    missing_credentials = 1;
+    assert(uc_backend_init() < 0 && credential_reads == 2 && retry_sleeps == 1 && !raised &&
+           !ready);
+    raised = 1;
+    assert(uc_backend_init() < 0 && credential_reads == 2 && retry_sleeps == 1);
+    raised = 0;
+    missing_credentials = 0;
+    ready = 1;
+    assert(!uc_backend_init() && credential_reads == 2 && retry_sleeps == 1);
+    ready = 0;
+    retry_sleeps = pad_init_calls = 0;
+    pad_init_failures = 1;
+    assert(!uc_backend_init() && ready && raised && retry_sleeps == 1 && pad_init_calls == 2);
+    assert(auth == UINT64_C(0x3800000000010003));
+    uc_backend_shutdown();
+    assert(!ready && !raised && auth == 7);
+    for (unsigned i = 0; i < sizeof caps; i++)
+        assert(!caps[i]);
+    retry_sleeps = pad_init_calls = 0;
+    pad_init_failures = restore_failure = 1;
+    assert(uc_backend_init() < 0 && !ready && raised && !retry_sleeps && pad_init_calls == 1);
+    uint64_t saved_auth = old_auth;
+    assert(uc_backend_init() < 0 && old_auth == saved_auth && !retry_sleeps && pad_init_calls == 1);
+    restore_failure = 0;
+    uc_backend_shutdown();
+    assert(!raised && auth == 7);
     candidate(
         "SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0x7b][type:1][subType:22][capabilityBattery:1]");
     assert(!matches);

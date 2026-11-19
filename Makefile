@@ -11,7 +11,8 @@ CFLAGS ?= -std=c11 -Wall -Wextra -Werror -O2
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -Isrc/core -Isrc/web -Isrc/ps5 \
 	-Isrc/drivers/common -Ibuild
 
-CPPFLAGS += -DUC_VERSION='"$(UC_BUILD_VERSION)"'
+CPPFLAGS += -DUC_BUILD_METADATA_HEADER
+export UC_BUILD_VERSION UC_BUILD_BRANCH
 
 CONTROLLER_DATA := build/controller_registry.inc
 
@@ -24,7 +25,8 @@ LOG_HEADERS := src/logging.h vendor/rxi-log/log.h
 BT_DIR := src/drivers/bluetooth
 BT_NAMES := host le smp_crypto usb_desc evstream
 BT_SOURCES := $(addprefix $(BT_DIR)/,$(addsuffix .c,$(BT_NAMES)))
-DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/generic.c \
+DRIVER_SHARED := src/drivers/protocols/profiles.c src/drivers/protocols/nintendo.c \
+	src/drivers/protocols/generic.c \
 	src/drivers/common/util.c src/drivers/common/crc32.c $(LOG_SOURCES)
 BT_MANAGER := src/drivers/bt.c
 
@@ -60,7 +62,8 @@ PYTHON_SOURCES := $(shell find tools tests -type f -name '*.py' | sort)
 all: host
 
 controllers: $(CONTROLLER_DATA)
-build/controller_registry.inc: src/drivers/protocols/controllers.json tools/embed_controllers.py
+build/controller_registry.inc: src/drivers/protocols/controllers.json tools/embed_controllers.py \
+	vendor/sdl/controller_type.h vendor/sdl/controller_list.h
 	$(PYTHON) tools/embed_controllers.py
 
 
@@ -76,7 +79,7 @@ preview:
 
 host: $(HOST_BINARY)
 
-$(HOST_BINARY): $(HOST_SOURCES) $(C_HEADERS) $(BUILD)/assets.c $(CONTROLLER_DATA)
+$(HOST_BINARY): $(HOST_SOURCES) $(C_HEADERS) $(BUILD)/assets.c $(CONTROLLER_DATA) $(BUILD)/build_info.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(HOST_SOURCES) $(BUILD)/assets.c -o $@
 
 ps5: assets controllers $(BUILD)/launcher_icon.inc
@@ -124,7 +127,8 @@ test-web: host
 test-ports: host $(BUILD)/test-http-recovery
 	$(PYTHON) tests/web/test_ports.py $(HOST_BINARY) $(BUILD)/test-http-recovery
 
-$(BUILD)/test-http-recovery: $(HOST_SOURCES) tests/web/fault_runtime.c $(C_HEADERS) $(BUILD)/assets.c
+$(BUILD)/test-http-recovery: $(HOST_SOURCES) tests/web/fault_runtime.c $(C_HEADERS) \
+	$(BUILD)/assets.c $(BUILD)/build_info.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter-out src/web/runtime.c,$(HOST_SOURCES)) \
 		tests/web/fault_runtime.c $(BUILD)/assets.c -o $@
 
@@ -175,14 +179,18 @@ test-usb-protocol: $(BUILD)/test-usb-protocol $(BUILD)/test-usb-native
 
 $(BUILD)/test-usb-protocol: src/drivers/usb/transport.c src/drivers/usb/protocol.c \
 	src/drivers/usb/diagnostics.c src/drivers/usb/generic_hid.c \
-	tests/usb_protocol/test_usb_protocol.c $(C_HEADERS) $(DRIVER_SHARED) $(CONTROLLER_DATA) \
+	tests/usb_protocol/test_usb_protocol.c tests/usb_protocol/switch2_fixture.h \
+	tests/usb_protocol/switch1_fixture.h $(C_HEADERS) \
+	$(DRIVER_SHARED) $(CONTROLLER_DATA) \
 	$(CONFIG_SOURCES)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/drivers/usb/transport.c src/drivers/usb/protocol.c \
 		src/drivers/usb/diagnostics.c src/drivers/usb/generic_hid.c \
 		tests/usb_protocol/test_usb_protocol.c $(DRIVER_SHARED) $(CONFIG_SOURCES) -o $@
 
-$(BUILD)/test-usb-native: tests/usb_native/test_native.c src/drivers/usb/transport.c \
+$(BUILD)/test-usb-native: tests/usb_protocol/switch2_fixture.h tests/usb_protocol/switch1_fixture.h \
+	tests/usb_native/test_native.c \
+	src/drivers/usb/transport.c \
 	src/drivers/usb/diagnostics.c \
 	tests/usb_native/include/dev/usb/usb.h tests/usb_native/include/dev/usb/usb_ioctl.h \
 	$(C_HEADERS) $(LOG_SOURCES)
@@ -258,3 +266,10 @@ test-logging: $(BUILD)/test-logging
 $(BUILD)/test-logging: tests/logging/test_logging.c $(LOG_SOURCES) $(LOG_HEADERS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/logging/test_logging.c $(LOG_SOURCES) -o $@
+
+# Refresh identity when the checkout/ref changes; unchanged bytes keep their mtime.
+.PHONY: FORCE_BUILD_INFO
+FORCE_BUILD_INFO:
+
+build/build_info.h: tools/build_info.py FORCE_BUILD_INFO
+	python3 tools/build_info.py

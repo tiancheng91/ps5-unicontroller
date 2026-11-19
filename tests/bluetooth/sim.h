@@ -26,6 +26,9 @@ typedef struct {
     unsigned char report[128];
     int report_len;
     int needs_output;
+    char name[64];
+    uint8_t switch_type; /* Answer Switch device-info queries when nonzero. */
+    int reject_switch_info;
     /* Streamed before the first output report, if any (a pad's simple
      * mode before it is woken up). */
     unsigned char basic[64];
