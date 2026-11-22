@@ -56,7 +56,7 @@
 | Xbox                | 已登记的 Xbox HID 型号        | Xbox 360 / XInput 兼容接口及报告   | 不支持 Xbox One/Series USB GIP 或专用 Xbox 无线接收器 |
 | Android / 通用 HID  | 可解析的 HID 描述符及已知布局 | 非 Boot HID 手柄输入（待实机验证） | 不保证任意 Android 模式或 USB HID 可用                |
 
-Switch Pro（`057e:2009`）与 Switch 2 Pro（`057e:2069`）提供 [USB 试验性输入](docs/usb.md)，支持按键和摇杆，尚待实机验证；USB 震动暂未接入。第三方手柄还需满足对应接口布局和协议，不能只凭模拟设备 ID 认定兼容。
+Switch Pro（`057e:2009`）与 Switch 2 Pro（`057e:2069`）提供 [USB 试验性输入](docs/usb.md)，支持按键和摇杆，尚待实机验证；一代 Switch Pro 另支持试验性 USB 震动。第三方手柄还需满足对应接口布局和协议，不能只凭模拟设备 ID 认定兼容。
 
 BLE 默认采用白名单，当前内置仅开放 Xbox `045e:0b13`。第三方手柄建议先用已知的 **Switch Classic 模式**验证；不能仅凭 VID/PID、设备名称或“支持 XInput”的商品描述认定兼容。
 

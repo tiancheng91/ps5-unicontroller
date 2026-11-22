@@ -556,7 +556,8 @@ static void poll_slot(unsigned index, uint64_t now)
         uc_log_debug("[usb] rumble test ended key=%s", s->options_key);
     } else if (s->rumble_test_until) {
         (void)uc_usb_protocol_rumble(&s->protocol, 200, 200, now);
-    } else if (active(s) && usb.rumble && s->options.rumble && s->device.kind == UC_USB_XINPUT) {
+    } else if (active(s) && usb.rumble && s->options.rumble &&
+               uc_usb_rumble_available(&s->protocol)) {
         uint8_t strong = 0, weak = 0;
         int feedback = uc_core_read_rumble(s->session, now, &strong, &weak);
         if (feedback > 0)
@@ -921,9 +922,7 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             s->user, s->attached ? "true" : "false", (unsigned long long)s->frames,
             active(s) && s->user > 0 ? "true" : "false",
             s->pending || s->assigning ? "true" : "false",
-            s->device.kind == UC_USB_XINPUT && s->protocol.ready && !s->protocol.rumble_failed
-                ? "true"
-                : "false",
+            uc_usb_rumble_available(&s->protocol) ? "true" : "false",
             (unsigned long long)s->session, s->reason ? s->reason : "");
         ADD(",\"system_assignment\":%s,\"output_active\":%s",
             s->user == 0 || (s->assigning && s->next_user == 0) ? "true" : "false",
@@ -996,8 +995,7 @@ int uc_usb_test_rumble(const char *key, uint64_t session, uint64_t now)
         usb_slot *s = &usb.slots[i];
         if (!s->attached || s->session != session || strcmp(s->options_key, key))
             continue;
-        if (!s->options.rumble || s->device.kind != UC_USB_XINPUT || !s->protocol.ready ||
-            s->protocol.failed || s->protocol.rumble_failed)
+        if (!s->options.rumble || !uc_usb_rumble_available(&s->protocol))
             return -1;
         if (s->rumble_test_seen && (now < s->rumble_test_last || now - s->rumble_test_last < 1000))
             return 2;

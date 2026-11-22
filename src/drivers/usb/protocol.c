@@ -33,7 +33,7 @@ int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *devi
 }
 int uc_usb_protocol_rumble(uc_usb_protocol *p, uint8_t strong, uint8_t weak, uint64_t now)
 {
-    if (!p || !p->ready || p->failed || p->rumble_failed || p->kind != UC_USB_XINPUT)
+    if (!uc_usb_rumble_available(p))
         return -1;
     int changed = !p->rumble_seen || p->rumble_strong != strong || p->rumble_weak != weak;
     p->rumble_seen = 1;
@@ -70,6 +70,16 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
         p->rumble_length = p->rumble_attempts = 0;
     }
     int active = p->rumble_strong || p->rumble_weak;
+    int enable = p->kind == UC_USB_SWITCH_PRO && !p->switch1_vibration_enabled;
+    if (p->switch1_enable_pending) {
+        if (now < p->rumble_sent_at || now - p->rumble_sent_at >= 500) {
+            uc_log_warn("[usb-switch1] vibration enable ACK timed out");
+            return rumble_fail(p);
+        }
+        return 0;
+    }
+    if (enable && !active)
+        return 0;
     if (!p->rumble_dirty && !p->rumble_stops && !active)
         return 0;
     if (!t || !t->ops || !t->ops->write)
@@ -86,9 +96,21 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
             now - p->rumble_sent_at < 60)
             return 0;
         memset(p->rumble_packet, 0, sizeof(p->rumble_packet));
-        const uint8_t packet[8] = {0, 8, 0, p->rumble_strong, p->rumble_weak, 0, 0, 0};
-        memcpy(p->rumble_packet, packet, sizeof(packet));
-        p->rumble_length = sizeof(packet);
+        if (p->kind == UC_USB_SWITCH_PRO) {
+            switch_encode_rumble(p->rumble_packet, p->switch1_counter,
+                                 enable ? 0 : p->rumble_strong, enable ? 0 : p->rumble_weak);
+            p->rumble_length = 10;
+            if (enable) {
+                p->rumble_packet[0] = 0x01;
+                p->rumble_packet[10] = 0x48;
+                p->rumble_packet[11] = 1;
+                p->rumble_length = 12;
+            }
+        } else {
+            const uint8_t packet[8] = {0, 8, 0, p->rumble_strong, p->rumble_weak, 0, 0, 0};
+            memcpy(p->rumble_packet, packet, sizeof(packet));
+            p->rumble_length = sizeof(packet);
+        }
         p->rumble_queued_at = now;
         p->rumble_attempts = 0;
     }
@@ -102,6 +124,12 @@ static int rumble_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t n
     p->rumble_length = p->rumble_attempts = 0;
     p->rumble_sent = 1;
     p->rumble_sent_at = now;
+    if (p->kind == UC_USB_SWITCH_PRO)
+        ++p->switch1_counter;
+    if (enable) {
+        p->switch1_enable_pending = 1;
+        return 0;
+    }
     p->rumble_dirty = 0;
     if (!active && p->rumble_stops)
         --p->rumble_stops;
@@ -119,7 +147,7 @@ static int led_unavailable(uc_usb_protocol *p)
  * handshake, optional 3M baud, handshake, disable USB timeout, select 0x30.
  * Linux joycon_init / joycon_send_usb / joycon_send_subcmd:
  * https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c
- * No SPI writes, device reset, IMU or vibration enable commands are sent. */
+ * Vibration is enabled separately on first demand. */
 static void switch1_next(uc_usb_protocol *p, uint64_t now)
 {
     ++p->switch1_step;
@@ -131,7 +159,7 @@ static int switch1_poll(uc_usb_protocol *p, const uc_usb_transport *t, uint64_t 
 {
     static const uint8_t commands[] = {2, 3, 2, 4};
     if (p->ready)
-        return 0;
+        return rumble_poll(p, t, now);
     if (now < p->started || now - p->started >= INIT_DEADLINE_MS) {
         uc_log_error("[usb-switch1] init timeout step=%u writes=%u waiting_ack=%d elapsed_ms=%llu",
                      p->switch1_step, p->switch1_writes, p->switch1_waiting,
@@ -198,6 +226,13 @@ static int switch1_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_stat
     }
     if (n >= 15 && r[0] == 0x21) {
         uc_log_debug("[usb-switch1] subcommand ACK flags=%02x id=%02x length=%zu", r[13], r[14], n);
+        if (r[14] == 0x48 && p->switch1_enable_pending && !p->rumble_failed) {
+            p->switch1_enable_pending = 0;
+            if (!(r[13] & 0x80))
+                return rumble_fail(p);
+            p->switch1_vibration_enabled = 1;
+            uc_log_info("[usb-switch1] vibration enabled");
+        }
         if (p->switch1_step == 4 && p->switch1_waiting && r[14] == 3) {
             if (!(r[13] & 0x80)) {
                 uc_log_error("[usb-switch1] report-mode command rejected flags=%02x", r[13]);

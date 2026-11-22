@@ -187,9 +187,40 @@ static void switch1_usb(void)
     assert(state.has_battery && state.battery_pct == 100 && !state.has_motion);
     report[3] = report[4] = report[5] = 0;
     assert(uc_usb_protocol_feed(&p, report, 64, &state, 403) == 1 && !state.buttons);
-    assert(uc_usb_protocol_rumble(&p, 100, 100, 404) < 0);
     int writes = m.writes;
-    assert(!uc_usb_protocol_poll(&p, &t, 20000) && m.writes == writes);
+    assert(!uc_usb_protocol_rumble(&p, 0, 0, 404));
+    assert(!uc_usb_protocol_poll(&p, &t, 404) && m.writes == writes);
+    assert(!uc_usb_protocol_rumble(&p, 200, 0, 405));
+    assert(!uc_usb_protocol_poll(&p, &t, 405));
+    assert(m.length == 12 && m.bytes[0] == 1 && m.bytes[1] == 1 &&
+           !memcmp(m.bytes + 2, mode + 2, 8) && m.bytes[10] == 0x48 && m.bytes[11] == 1);
+    ack[14] = 0x48;
+    assert(!uc_usb_protocol_feed(&p, ack, sizeof ack, &state, 415));
+    ack[14] = 3;
+    assert(!uc_usb_protocol_poll(&p, &t, 465));
+    assert(m.length == 10 && m.bytes[0] == 0x10 && m.bytes[1] == 2 &&
+           memcmp(m.bytes + 2, mode + 2, 4) && !memcmp(m.bytes + 6, mode + 6, 4));
+    assert(!uc_usb_protocol_poll(&p, &t, 905));
+    assert(m.bytes[1] == 3 && !memcmp(m.bytes + 2, mode + 2, 8));
+    m.error = 1;
+    assert(!uc_usb_protocol_poll(&p, &t, 970) && !uc_usb_rumble_available(&p));
+    assert(uc_usb_protocol_feed(&p, report, 64, &state, 971) == 1);
+    m.error = 0;
+    for (int nack = 0; nack <= 1; ++nack) {
+        uc_usb_protocol_begin(&p, UC_USB_SWITCH_PRO, 0);
+        p.ready = 1;
+        p.switch1_step = 6;
+        assert(!uc_usb_protocol_rumble(&p, 80, 120, 0));
+        assert(!uc_usb_protocol_poll(&p, &t, 0));
+        if (nack) {
+            uint8_t rejected[15] = {0x21, [14] = 0x48};
+            assert(!uc_usb_protocol_feed(&p, rejected, sizeof rejected, &state, 1));
+        } else {
+            assert(!uc_usb_protocol_poll(&p, &t, 500));
+        }
+        assert(!uc_usb_rumble_available(&p));
+        assert(uc_usb_protocol_feed(&p, report, 49, &state, 501) == 1);
+    }
     report[0] = 9;
     assert(!uc_usb_protocol_feed(&p, report, 64, &state, 20001));
     report[0] = 0x30;
