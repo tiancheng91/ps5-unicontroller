@@ -10,7 +10,7 @@
 
 > **开发测试阶段**：协议适配与自动化构建已接入，具体型号、固件、游戏及休眠共存仍需实机验证。“Make Any Controller Work on PS5”是项目目标，不是全设备兼容承诺。首次使用请保留原装手柄备用，并关闭自动启动。
 
-[下载版本](https://github.com/tiancheng91/ps5-unicontroller/releases) · [更新日志](CHANGELOG.md) · [下载测试构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
+[下载 v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [更新日志](CHANGELOG.md) · [下载测试构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
 
 ## 快速开始
 
@@ -18,7 +18,7 @@
 
 你需要一台**可以加载自制 ELF payload 的 PS5**、Payload Manager 或其他兼容加载器，以及同一局域网的手机或电脑。目前没有完整的固件兼容矩阵，也不适用于未修改的零售系统。
 
-1. 优先从 [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) 下载版本文件；尚无发布版或需要测试最新修改时，在 [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) 中选择目标提交的成功构建，下载并解压 **UniController-PS5** 产物。下载可能需要登录 GitHub。
+1. 优先从 [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) 下载版本文件；需要测试尚未发布的修改时，在 [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) 中选择目标提交的成功构建，下载并解压 **UniController-PS5** 产物。下载可能需要登录 GitHub。
 2. 用加载器运行其中的 `unicontroller.elf`；`build-info.txt` 记录构建版本，SHA256 文件用于校验。
 3. 在浏览器访问 `http://<PS5-IP>:7456/`。端口监听失败时程序会退出，请排除占用后重新加载。
 
@@ -26,7 +26,7 @@
 
 ### 2. 连接手柄
 
-先用原装手柄登录 PS5。正常模式默认使用推荐的已登录用户；多人游戏需要时，可在设备详情的高级选项中指定其他已登录本地用户。
+首次测试建议用原装手柄登录 PS5。蓝牙和 USB 也支持在登录前手动启动。需要更换玩家时，在手柄详情点击“重新选择使用者”，然后在 PS5 上选择账号。
 
 | 输入方式 | 操作                                                                                                                                        |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,7 +34,7 @@
 | USB      | 在设置中启用 USB 服务，使用数据线接入受支持的手柄模式。                                                                                     |
 | 手机测试 | 打开 `/controller`，创建手柄后在 PS5 上选择使用者。休眠后需手动重新创建。                                                                   |
 
-检查设备的输入和详情中的虚拟输出状态，再进入游戏测试；输入已解析不等于游戏已接收。停止搜索不会断开已连接手柄。常规模式下，首台有效输入设备使用默认用户，额外设备在详情中分配独立用户。蓝牙和 USB 可以同时使用；手机测试手柄需要单独使用。
+检查设备的输入和详情中的虚拟输出状态，再进入游戏测试；输入已解析不等于游戏已接收。停止搜索不会断开已连接手柄。蓝牙和 USB 可以同时使用；手机测试手柄需要单独使用。
 
 **双人游戏请给两个手柄分配不同用户。** 菜单能操作但游戏无响应时，先核对账号归属。同账号辅助控制器是 PS5 的另一项功能，程序不会自动开启它。
 

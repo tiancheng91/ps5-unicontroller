@@ -12,7 +12,7 @@
 
 [Download test builds](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [Report an issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [Hardware test checklist](docs/test-checklist.md) (Chinese)
 
-[Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) · [Changelog](CHANGELOG.md)
+[Download v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [Changelog](CHANGELOG.md)
 
 ## Quick start
 
@@ -20,7 +20,7 @@
 
 You need a **PS5 capable of loading homebrew ELF payloads**, Payload Manager or another compatible loader, and a phone or computer on the same LAN. A complete firmware compatibility matrix is not available. Unmodified retail systems are not supported.
 
-1. Download versioned files from [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases). If no release is available or you need newer changes, choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
+1. Download versioned files from [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases). To test unreleased changes, choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
 2. Run `unicontroller.elf` using your loader. The artifact includes `build-info.txt` and a SHA256 checksum.
 3. Open `http://<PS5-IP>:7456/`. If the port cannot be opened, the payload exits; resolve the conflict and reload it.
 
@@ -28,7 +28,7 @@ Web assets are included in the payload. Use the interface on a trusted LAN and d
 
 ### 2. Connect a controller
 
-Sign into PS5 with an original controller. Normal mode uses the recommended signed-in user; assign another signed-in local user from advanced device details when needed for multiplayer.
+For your first test, sign in with an original PS5 controller. You can also start Bluetooth or USB manually before signing in. To change players, use the user selection button in device details, then choose the account on your PS5.
 
 | Input      | Steps                                                                                                                                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -36,7 +36,7 @@ Sign into PS5 with an original controller. Normal mode uses the recommended sign
 | USB        | Enable USB in Settings and connect a supported controller mode using a data cable.                                                                                                                               |
 | Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                           |
 
-Check input and binding status on the device card, then test in a game. In normal mode, the first valid input device uses the user selected at startup; assign additional devices on their cards. Bluetooth and USB can run together. The phone test controller is exclusive.
+Check input and binding status on the device card, then test in a game. Bluetooth and USB can run together. The phone test controller is exclusive.
 
 **Use separate users for two independent players.** If menus work but games do not, check account assignment first. PS5's same-user assist-controller feature is separate and is not enabled automatically.
 
