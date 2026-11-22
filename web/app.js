@@ -370,6 +370,7 @@ document.addEventListener("alpine:init", () => {
           input: "—",
           stateText: "—",
           batteryText: "—",
+          switch2Usb: false,
           assignable: false,
           system_assignment: false,
           known_device: false,
