@@ -487,6 +487,37 @@ static void home_observation(void)
     assert(!home_waiting);
     power_status = 0;
 }
+static void signed_in_startup(void)
+{
+    prepare();
+    suspend_event = 0;
+    for (int trigger = UC_AUTO_DESKTOP; trigger <= UC_AUTO_RESUME; ++trigger) {
+        logged_in = 1;
+        uc_backend_auto_on_load(trigger);
+        assert(auto_mode == UC_AUTO_SIGNED_IN_STARTUP);
+        poll_home(fake_ms);
+        assert(!home_owns_log && !uc_backend_auto_due(10000, 1));
+        fake_ms = home_gate.since + 9000;
+        assert(!uc_backend_auto_due(10000, 1));
+        fake_ms = home_gate.since + 10000;
+        assert(uc_backend_auto_due(10000, 1));
+        assert(!uc_backend_auto_due(10000, 1));
+
+        uc_backend_auto_on_load(trigger);
+        poll_home(fake_ms);
+        assert(!uc_backend_auto_due(10000, 1));
+        logged_in = 0;
+        fake_ms += 11000;
+        assert(!uc_backend_auto_due(10000, 1));
+        int fallback = trigger == UC_AUTO_DESKTOP ? UC_AUTO_DESKTOP : UC_AUTO_OFF;
+        assert(auto_mode == fallback);
+        uc_backend_auto_on_load(trigger);
+        assert(auto_mode == fallback);
+    }
+    logged_in = 1;
+    uc_backend_auto_on_load(UC_AUTO_OFF);
+    assert(auto_mode == UC_AUTO_OFF && !home_waiting);
+}
 static void resume_observation(void)
 {
     prepare();
@@ -616,6 +647,7 @@ int main(void)
     isolation_and_rumble();
     power_guards();
     home_observation();
+    signed_in_startup();
     resume_observation();
     system_choice_output();
     return 0;

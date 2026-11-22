@@ -175,6 +175,11 @@ void host_poll(host_t *h, int timeout)
     if (kind == 3)
         callbacks.on_disconnect(callbacks.ud, event_slot);
 }
+int host_output_pending(const host_t *h, int slot)
+{
+    assert(h == &fake && slot >= 0 && slot < HOST_MAX_PADS);
+    return 0;
+}
 int host_output_ready(const host_t *h, int slot)
 {
     assert(h == &fake && slot >= 0 && slot < HOST_MAX_PADS);

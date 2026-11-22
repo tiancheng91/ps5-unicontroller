@@ -73,6 +73,7 @@ select:hover,
 button:disabled,
 button[aria-disabled="true"],
 select:disabled,
+.switch:disabled,
 fieldset:disabled {
   opacity: 0.5;
   cursor: default;

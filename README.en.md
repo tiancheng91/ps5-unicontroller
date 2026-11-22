@@ -34,7 +34,7 @@ Sign into PS5 with an original controller. Normal mode uses the recommended sign
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bluetooth  | Choose Add Bluetooth device, put the controller in pairing mode, and start a **60-second search**. Click Pair on a discovered device to connect. Use Classic for Switch mode. Stored devices reconnect normally. |
 | USB        | Enable USB in Settings and connect a supported controller mode using a data cable.                                                                                                                               |
-| Phone test | Open `/controller`, select a user and enable it. Disable it before using physical input sources.                                                                                                                 |
+| Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                                 |
 
 Check input and binding status on the device card, then test in a game. In normal mode, the first valid input device uses the user selected at startup; assign additional devices on their cards. Bluetooth and USB can run together. The phone test controller is exclusive.
 
@@ -87,7 +87,7 @@ Enable USB and Bluetooth independently or together. The startup delay defaults t
 - **After login (recommended):** Wait for a fresh home-screen focus event and a signed-in foreground user. Reuse an available saved account, or choose a user on the console.
 - **After resume (experimental):** Start the timer when the console resumes, even before sign-in. Press PS/Home on the connected controller to choose a user. This feature cannot wake the console.
 
-Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
+When the payload loads with a signed-in foreground user, services with auto-start enabled follow the same delays. Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 
 ### Updates and data
 

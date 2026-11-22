@@ -203,9 +203,7 @@ document.addEventListener("alpine:init", () => {
       return this.t(this.usb.state);
     },
     get btServiceNote() {
-      return [this.bt.system_assignment ? this.t("systemChoice") : "", this.bt.reason || ""]
-        .filter(Boolean)
-        .join(" · ");
+      return this.bt.reason || "";
     },
     get usbServiceNote() {
       return this.usb.reason || "";
@@ -214,11 +212,7 @@ document.addEventListener("alpine:init", () => {
       return !this.userReady;
     },
     get btStatus() {
-      return (
-        this.t(this.bt.state) +
-        (this.bt.system_assignment ? " · " + this.t("systemChoice") : "") +
-        (this.bt.reason ? " · " + this.bt.reason : "")
-      );
+      return this.btStateText + (this.btServiceNote ? " · " + this.btServiceNote : "");
     },
     get usbStatus() {
       return this.t(this.usb.state) + (this.usb.reason ? " · " + this.usb.reason : "");
@@ -285,8 +279,10 @@ document.addEventListener("alpine:init", () => {
     get bonds() {
       return this.bt.paired.map((d) => ({
         ...d,
+        title: d.model && d.model !== "Controller" ? d.model : d.address,
         key: (d.le ? "ble:" : "classic:") + d.address,
         detail:
+          (d.model && d.model !== "Controller" ? d.address + " · " : "") +
           d.vid +
           ":" +
           d.pid +
@@ -412,14 +408,22 @@ document.addEventListener("alpine:init", () => {
     get deviceOptionsDisabled() {
       return this.busy || this.detailMissing || !this.detailDevice.settings_key;
     },
+    get deviceRumbleDisabled() {
+      return this.deviceOptionsDisabled || !this.detailDevice.rumble_available;
+    },
+    get deviceRumbleChecked() {
+      return this.detailDevice.rumble_available && this.detailDevice.rumble;
+    },
     get deviceRumbleExperimental() {
-      return !this.detailMissing && !this.detailDevice.known_device;
+      return this.detailDevice.rumble_available && !this.detailDevice.known_device;
     },
     get deviceRumbleHint() {
-      if (!this.detailDevice.known_device) return this.t("experimentalRumbleHint");
-      return this.t(
-        this.detailDevice.rumble_available ? "deviceRumbleHint" : "rumbleUnavailableHint",
-      );
+      const d = this.detailDevice;
+      if (this.detailMissing) return this.t("deviceGone");
+      if (d.rumble_pending) return this.t("rumbleChecking");
+      if (d.rumble_failed) return this.t("rumbleUnavailableHint");
+      if (!d.rumble_available) return this.t("rumbleModeUnsupported");
+      return this.t(d.known_device ? "deviceRumbleHint" : "experimentalRumbleHint");
     },
     get rumbleTestUnavailable() {
       return (
@@ -435,7 +439,7 @@ document.addEventListener("alpine:init", () => {
     },
     get rumbleTestHint() {
       if (this.detailMissing || this.detailDevice.connected === false) return this.t("deviceGone");
-      if (!this.detailDevice.rumble_available) return this.t("rumbleTestUnsupported");
+      if (!this.detailDevice.rumble_available) return "";
       if (!this.detailDevice.rumble_enabled) return this.t("rumbleTestEnableHint");
       return this.t("rumbleTestHint");
     },
@@ -469,6 +473,7 @@ document.addEventListener("alpine:init", () => {
       const d = this.detailDevice;
       const field = event.currentTarget.dataset.option;
       if (this.deviceOptionsDisabled || !["rumble", "swap_ab"].includes(field)) return;
+      if (field === "rumble" && !d.rumble_available) return;
       const input = event.currentTarget;
       const body = {
         key: d.settings_key,

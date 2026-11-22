@@ -717,6 +717,7 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false",
             host_output_ready(bt.host, i) ? "true" : "false",
             rumble_enabled && s->options.rumble ? "true" : "false");
+        ADD(",\"rumble_pending\":%s", host_output_pending(bt.host, i) ? "true" : "false");
         ADD(",\"charging\":%s}", s->valid && s->latest.charging ? "true" : "false");
     }
     ADD("],\"discovered\":[");
@@ -752,9 +753,14 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             continue;
         char addr[18];
         address_text(p.addr, addr);
-        ADD("%s{\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"le\":%s,\"connected\":%s}",
+        ADD("%s{\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"le\":%s,\"connected\":%s,\"model\":",
             count++ ? "," : "", addr, p.vid, p.pid, p.le ? "true" : "false",
             p.connected ? "true" : "false");
+        const char *model = pad_display_name_for_transport(
+            p.le ? PAD_TRANSPORT_BLE : PAD_TRANSPORT_CLASSIC, p.vid, p.pid, NULL);
+        if (json_text(buffer, capacity, &used, model))
+            return 0;
+        ADD("}");
     }
     ADD("]}");
 #undef ADD

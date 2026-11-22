@@ -99,6 +99,10 @@ int uc_backend_power_state(void)
     return 0;
 }
 
+void uc_backend_auto_on_load(int trigger)
+{
+    (void)trigger;
+}
 void uc_backend_auto_watch(int enabled)
 {
     (void)enabled;

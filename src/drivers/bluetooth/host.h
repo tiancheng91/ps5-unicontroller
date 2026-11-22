@@ -80,6 +80,7 @@ int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak);
 /* Cancel both connection pulses and game feedback without changing LEDs. */
 int host_rumble_stop(host_t *h, int slot);
 /* Whether a connected pad is ready for output; avoids querying unsupported pads. */
+int host_output_pending(const host_t *h, int slot);
 int host_output_ready(const host_t *h, int slot);
 
 int host_connected(const host_t *h, int slot);

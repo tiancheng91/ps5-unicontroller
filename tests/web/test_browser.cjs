@@ -168,7 +168,7 @@ const root = path.resolve(__dirname, "../..");
       "keyed refresh preserves focus",
     );
     await details.click();
-    await page.locator('summary[x-label="advancedAssignment"]').click();
+    await page.locator("#assign-device").waitFor({ state: "visible" });
     assert.equal(await page.locator("#user").count(), 0);
     await page.locator("#assign-device").click();
     assert(
@@ -419,7 +419,7 @@ const root = path.resolve(__dirname, "../..");
     assert.equal(await page.locator("#ui-language").inputValue(), "zh");
     await page.goto(url + "/controller");
     await page.waitForFunction(() =>
-      document.querySelector("#status").textContent.includes("选择已登录"),
+      document.querySelector("#status").textContent.includes("创建后"),
     );
     await page.evaluate(() => {
       window.inputs = [];
@@ -522,6 +522,21 @@ const root = path.resolve(__dirname, "../..");
         .getByText("generic-hid-gamepad · IF0 alt0 03/00/00 · HID 7/7", { exact: true })
         .isVisible(),
     );
+    await np.goto(url + "/controller");
+    assert.equal(await np.locator("#user").count(), 0);
+    await np.getByRole("button", { name: "Create controller" }).click();
+    await np.locator("#focus").click();
+    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      await np.setViewportSize(viewport);
+      const key = await np.locator('.padbutton[aria-label="Cross"]').boundingBox();
+      assert(key.width >= 44 && key.height >= 44);
+      assert(await np.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      if (viewport.width > viewport.height) {
+        const stage = await np.locator("#controls").boundingBox();
+        assert(stage.y + stage.height <= viewport.height, "landscape controls fit on screen");
+      }
+    }
+    await np.locator("#disable").click();
     assert.deepEqual(errors, [], "no CSP or Alpine runtime errors");
     console.log(
       "Browser: skeleton layout, CSP, drawers, search ordering, keyed focus, safe text, locale, settings, gamepad, PS input and preview isolation PASS",

@@ -2147,6 +2147,15 @@ int host_pair_device(host_t *h, uint32_t id)
     return 0;
 }
 
+int host_output_pending(const host_t *h, int slot)
+{
+    if (!h || !host_connected(h, slot))
+        return 0;
+    const link_t *l = &h->links[slot];
+    return !l->disconnecting && l->prof->build_output && l->prof->rumble_refresh_ms &&
+           !l->init_done;
+}
+
 int host_output_ready(const host_t *h, int slot)
 {
     const link_t *l;

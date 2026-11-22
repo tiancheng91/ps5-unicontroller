@@ -126,7 +126,7 @@
                   <template x-for="bond in offlineBonds" :key="bond.key"
                     ><article class="paired-row">
                       <div>
-                        <h3 x-text="bond.address"></h3>
+                        <h3 x-text="bond.title"></h3>
                         <p class="mono" x-text="bond.detail"></p>
                       </div>
                       <button
@@ -592,7 +592,8 @@
                   class="switch"
                   type="checkbox"
                   id="device-rumble"
-                  :checked="detailDevice.rumble"
+                  :checked="deviceRumbleChecked"
+                  :disabled="deviceRumbleDisabled"
                   data-option="rumble"
                   @change="changeDeviceOption"
                 />
@@ -623,8 +624,12 @@
                 x-label="rumbleTest"
               ></button>
             </div>
-            <details class="advanced" x-show="detailDevice.assignable">
-              <summary x-label="advancedAssignment"></summary>
+            <section
+              class="advanced"
+              x-show="detailDevice.assignable"
+              aria-labelledby="device-user-heading"
+            >
+              <h2 id="device-user-heading" x-label="deviceUser"></h2>
               <p x-label="assignmentHint"></p>
               <button
                 id="assign-device"
@@ -635,8 +640,7 @@
                 :disabled="detailAssignmentDisabled"
                 x-label="assign"
               ></button>
-              <p class="drawer-note" x-label="assignmentScope"></p>
-            </details>
+            </section>
           </div>
           <p class="drawer-status" role="status" :class="errorClass" x-text="statusText"></p>
         </section>

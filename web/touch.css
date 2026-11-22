@@ -7,12 +7,6 @@
   flex-wrap: wrap;
   gap: 10px;
 }
-.touch-toolbar .stacked {
-  font-size: 0.85rem;
-}
-.touch-toolbar select {
-  max-width: 260px;
-}
 .controller-stage {
   max-width: 740px;
   margin: 28px auto;
@@ -135,7 +129,7 @@
 .focus-mode .app-header,
 .focus-mode .navigation,
 .focus-mode .page-heading,
-.focus-mode .touch-toolbar .stacked,
+.focus-mode .group-hint,
 .focus-mode #enable,
 .focus-mode .touch-hint,
 .focus-mode details,
@@ -194,5 +188,77 @@
   }
   .stick-area > button {
     width: 80px;
+  }
+}
+
+.face-buttons .padbutton {
+  border-radius: 50%;
+}
+@media (max-width: 640px) {
+  .touch-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .touch-toolbar button {
+    min-height: 44px;
+  }
+  .controller-stage {
+    margin: 12px auto;
+    padding: 12px 6px;
+  }
+  .pad-layout {
+    gap: 12px 4px;
+  }
+}
+@media (orientation: landscape) and (max-height: 520px) and (min-width: 600px) {
+  .focus-mode main {
+    padding: 4px max(8px, env(safe-area-inset-right)) 4px max(8px, env(safe-area-inset-left));
+  }
+  .focus-mode .touch-view {
+    margin: 0 auto;
+  }
+  .focus-mode .touch-toolbar,
+  .focus-mode .status-line {
+    display: inline-flex;
+    margin: 0 0 4px;
+  }
+  .focus-mode .controller-stage {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 0 auto;
+    padding: 8px;
+  }
+  .focus-mode .shoulders,
+  .focus-mode .pad-layout {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .focus-mode .pad-layout {
+    grid-template-columns: 1fr 155px 1fr;
+  }
+  .focus-mode .system-keys {
+    grid-area: auto;
+    flex-flow: column nowrap;
+  }
+  .focus-mode .stick-area {
+    flex-direction: row;
+  }
+  .focus-mode .stick-row {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .focus-mode .stick {
+    height: 68px;
+    width: 68px;
+  }
+  .focus-mode .dpad,
+  .focus-mode .face-buttons {
+    grid-template: repeat(3, 44px) / repeat(3, 44px);
+    gap: 2px;
+  }
+  .focus-mode .padbutton {
+    min-height: 44px;
+    padding: 4px;
   }
 }

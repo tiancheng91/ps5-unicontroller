@@ -223,8 +223,12 @@
         .map(([, line]) => line + "\n")
         .join("");
     } else if (path === "/test-controller") {
-      if (method === "DELETE") session = { enabled: false, session_id: null, pending: false };
-      else if (method === "POST") {
+      if (method === "DELETE") {
+        if (body.session_id && body.session_id !== session.session_id) {
+          status = 409;
+          data = { error: "session_changed" };
+        } else session = { enabled: false, session_id: null, pending: false };
+      } else if (method === "POST") {
         if (bt.state === "on" || usb.state === "on") {
           status = 409;
           data = { error: "stop_physical_sources_first" };

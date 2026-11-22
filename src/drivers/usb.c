@@ -927,6 +927,13 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
         ADD(",\"system_assignment\":%s,\"output_active\":%s",
             s->user == 0 || (s->assigning && s->next_user == 0) ? "true" : "false",
             active(s) ? "true" : "false");
+        int supports_rumble = uc_usb_supports_rumble(s->protocol.kind);
+        ADD(",\"rumble_pending\":%s,\"rumble_failed\":%s",
+            supports_rumble && s->attached && !s->protocol.ready && !s->protocol.failed &&
+                    !s->failed
+                ? "true"
+                : "false",
+            supports_rumble && (s->protocol.failed || s->protocol.rumble_failed) ? "true" : "false");
         int waiting = waiting_for_hid_input(s);
         ADD(",\"waiting_for_input\":%s,\"first_input_remaining_ms\":%llu",
             waiting ? "true" : "false",

@@ -29,7 +29,9 @@ int32_t uc_backend_preferred_user(void);
 /* Optional one-shot auto-start. Desktop mode requires new focus plus signed-in
  * foreground user; resume mode permits the explicit system-selection experiment without
  * accounts. */
-enum { UC_AUTO_OFF, UC_AUTO_DESKTOP, UC_AUTO_RESUME };
+enum { UC_AUTO_OFF, UC_AUTO_DESKTOP, UC_AUTO_RESUME, UC_AUTO_SIGNED_IN_STARTUP };
+/* Once on payload load. With no signed-in foreground, retain the configured trigger. */
+void uc_backend_auto_on_load(int trigger);
 /* Resume must only be armed after suspend, never on initial payload load. */
 void uc_backend_auto_watch(int mode);
 int uc_backend_auto_due(unsigned delay_ms, int idle);

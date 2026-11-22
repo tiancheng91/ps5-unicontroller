@@ -62,6 +62,7 @@ static int bt_start_queued, bt_start_automatic;
 static int32_t bt_start_user;
 static uint64_t bt_start_at;
 static int enable_pending;
+static uint64_t test_activity;
 static volatile sig_atomic_t stop_requested;
 static volatile sig_atomic_t resume_requested;
 static void request_resume(int signal_number)
@@ -854,22 +855,42 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         }
         if (!strcmp(method, "POST")) {
             Json j;
-            const char *keys[] = {"user_id"};
-            int64_t user;
-            if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 1) ||
-                jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user)) {
+            const char *keys[] = {"user_id", "session_id"};
+            int64_t user, retry = 0;
+            if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 2) ||
+                jint(&j, jget(&j, "user_id"), 0, INT32_MAX, &user) ||
+                (jget(&j, "session_id") >= 0 &&
+                 jint(&j, jget(&j, "session_id"), 1, INT64_MAX, &retry))) {
                 error_response(c, 400, "invalid_user");
+                return;
+            }
+            uint64_t owned = uc_core_test_session();
+            if ((retry && (uint64_t)retry != owned) ||
+                (enable_pending && (user != active_user || (!user && !retry)))) {
+                error_response(c, 409, "session_changed");
                 return;
             }
             if (active_session) {
                 error_response(c, 409, "already_enabled");
                 return;
             }
+            if (!enable_pending)
+                cancel_auto_start();
             uint64_t session = 0;
             int rc = uc_core_enable((int32_t)user, millis(), &session);
             if (rc == 2) {
+                uint64_t pending = uc_core_test_session();
+                if (!pending) {
+                    error_response(c, 409, "output_busy");
+                    return;
+                }
+                active_user = (int)user;
+                test_activity = millis();
                 enable_pending = 1;
-                response(c, 202, "application/json", "{\"pending\":true}");
+                char reply[96];
+                snprintf(reply, sizeof reply, "{\"pending\":true,\"session_id\":%llu}",
+                         (unsigned long long)pending);
+                response(c, 202, "application/json", reply);
                 return;
             }
             if (rc || !session) {
@@ -878,9 +899,25 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             }
             enable_pending = 0;
             active_session = session;
+            test_activity = millis();
             active_user = (int)user;
         } else if (!strcmp(method, "DELETE")) {
-            if (uc_core_disable()) {
+            uint64_t owned = uc_core_test_session();
+            if (*body) {
+                Json j;
+                const char *keys[] = {"session_id"};
+                int64_t expected;
+                if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 1) ||
+                    jint(&j, jget(&j, "session_id"), 1, INT64_MAX, &expected)) {
+                    error_response(c, 400, "invalid_session");
+                    return;
+                }
+                if (owned != (uint64_t)expected) {
+                    error_response(c, 409, "session_changed");
+                    return;
+                }
+            }
+            if (owned && uc_core_disable_session(owned)) {
                 error_response(c, 503, "disable_failed");
                 return;
             }
@@ -896,8 +933,8 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             snprintf(b, sizeof(b), "{\"enabled\":true,\"session_id\":%llu,\"user_id\":%d}",
                      (unsigned long long)active_session, active_user);
         else
-            snprintf(b, sizeof(b), "{\"enabled\":false,\"session_id\":null,\"pending\":%s}",
-                     enable_pending ? "true" : "false");
+            snprintf(b, sizeof(b), "{\"enabled\":false,\"session_id\":null,\"pending\":%s,\"pending_id\":%llu}",
+                     enable_pending ? "true" : "false", (unsigned long long)uc_core_test_session());
         response(c, 200, "application/json", b);
         return;
     }
@@ -933,6 +970,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "input_rejected");
             return;
         }
+        test_activity = millis();
         response(c, 200, "application/json", "{\"accepted\":true}");
         return;
     }
@@ -1148,9 +1186,9 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     uint64_t check_at = 0, retry_at = 0, previous_loop = millis();
     unsigned recovery_attempts = 0;
     int run_failed = 0, http_rest_seen = 0;
-    uc_backend_auto_watch((settings.bt_auto || settings.usb_auto) && !settings.bt_auto_resume
-                              ? UC_AUTO_DESKTOP
-                              : UC_AUTO_OFF);
+    uc_backend_auto_on_load(!(settings.bt_auto || settings.usb_auto) ? UC_AUTO_OFF
+                            : settings.bt_auto_resume                ? UC_AUTO_RESUME
+                                                                     : UC_AUTO_DESKTOP);
     listening_port = port;
 #ifdef UC_PS5
     uc_launcher_startup(port);
@@ -1315,7 +1353,19 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         uc_core_tick(millis());
         if (active_session && !uc_core_session_active(active_session))
             active_session = 0;
-        if (!active_session)
+        if (enable_pending && !uc_core_test_session())
+            enable_pending = 0;
+        if ((active_session || enable_pending) && active_user == 0 &&
+            millis() - test_activity >= 15000) {
+            /* Browser disappeared or its creation reply was lost. Core retries failed deletes. */
+            uint64_t owned = uc_core_test_session();
+            if (owned)
+                (void)uc_core_disable_session(owned);
+            active_session = 0;
+            enable_pending = 0;
+            uc_log_info("[test-controller] released idle simulator");
+        }
+        if (!active_session && !enable_pending)
             active_user = -1;
         for (int count = 0; listener >= 0 && count < CLIENTS; count++) {
             int fd = accept(listener, NULL, NULL);
