@@ -424,8 +424,22 @@ with tempfile.TemporaryDirectory() as directory:
             )
             assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 409
             assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 409
-            assert request("DELETE", "/api/v1/test-controller", {"session_id": previous_session})[0] == 409
-            assert request("DELETE", "/api/v1/test-controller", {"session_id": next_state["session_id"]})[0] == 200
+            assert (
+                request(
+                    "DELETE",
+                    "/api/v1/test-controller",
+                    {"session_id": previous_session},
+                )[0]
+                == 409
+            )
+            assert (
+                request(
+                    "DELETE",
+                    "/api/v1/test-controller",
+                    {"session_id": next_state["session_id"]},
+                )[0]
+                == 200
+            )
             previous_session = next_state["session_id"]
         status, lines = request("GET", "/api/v1/logs?level=trace")
         assert status == 200 and isinstance(lines, str)

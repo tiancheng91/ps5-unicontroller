@@ -753,7 +753,8 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             continue;
         char addr[18];
         address_text(p.addr, addr);
-        ADD("%s{\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"le\":%s,\"connected\":%s,\"model\":",
+        ADD("%s{\"address\":\"%s\",\"vid\":\"%04X\",\"pid\":\"%04X\",\"le\":%s,\"connected\":%s,"
+            "\"model\":",
             count++ ? "," : "", addr, p.vid, p.pid, p.le ? "true" : "false",
             p.connected ? "true" : "false");
         const char *model = pad_display_name_for_transport(

@@ -526,7 +526,10 @@ const root = path.resolve(__dirname, "../..");
     assert.equal(await np.locator("#user").count(), 0);
     await np.getByRole("button", { name: "Create controller" }).click();
     await np.locator("#focus").click();
-    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 844, height: 390 },
+    ]) {
       await np.setViewportSize(viewport);
       const key = await np.locator('.padbutton[aria-label="Cross"]').boundingBox();
       assert(key.width >= 44 && key.height >= 44);

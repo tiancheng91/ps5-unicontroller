@@ -933,7 +933,8 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             snprintf(b, sizeof(b), "{\"enabled\":true,\"session_id\":%llu,\"user_id\":%d}",
                      (unsigned long long)active_session, active_user);
         else
-            snprintf(b, sizeof(b), "{\"enabled\":false,\"session_id\":null,\"pending\":%s,\"pending_id\":%llu}",
+            snprintf(b, sizeof(b),
+                     "{\"enabled\":false,\"session_id\":null,\"pending\":%s,\"pending_id\":%llu}",
                      enable_pending ? "true" : "false", (unsigned long long)uc_core_test_session());
         response(c, 200, "application/json", b);
         return;

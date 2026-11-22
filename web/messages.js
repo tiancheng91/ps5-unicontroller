@@ -287,8 +287,7 @@ window.UCMessages = {
     testOutput: "Phone test output",
     enable: "Enable test output",
     disable: "Disable output",
-    phoneHint:
-      "Create a controller, choose a user on PS5, then play using your phone.",
+    phoneHint: "Create a controller, choose a user on PS5, then play using your phone.",
     openTest: "Open touch controller",
     ready: "Service connected",
     operationFailed: "Operation not confirmed: {error}",

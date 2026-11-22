@@ -34,8 +34,7 @@ static inline int uc_usb_supports_rumble(uc_usb_kind kind)
 }
 static inline int uc_usb_rumble_available(const uc_usb_protocol *p)
 {
-    return p && p->ready && !p->failed && !p->rumble_failed &&
-           uc_usb_supports_rumble(p->kind);
+    return p && p->ready && !p->failed && !p->rumble_failed && uc_usb_supports_rumble(p->kind);
 }
 int uc_usb_protocol_hid_descriptor(uc_usb_protocol *, const uc_usb_device *);
 void uc_usb_protocol_begin(uc_usb_protocol *, uc_usb_kind, uint64_t now);

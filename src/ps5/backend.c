@@ -471,10 +471,11 @@ void uc_backend_auto_watch(int mode)
     home_waiting = mode != UC_AUTO_OFF;
     home_foreground = -1;
     uc_bt_auto_cancel(&home_gate);
-    const char *description = mode == UC_AUTO_RESUME           ? "waiting for stable resume"
-                              : mode == UC_AUTO_DESKTOP        ? "waiting for fresh desktop event"
-                              : mode == UC_AUTO_SIGNED_IN_STARTUP ? "signed-in foreground at startup"
-                                                                  : "disabled/cancelled";
+    const char *description = mode == UC_AUTO_RESUME    ? "waiting for stable resume"
+                              : mode == UC_AUTO_DESKTOP ? "waiting for fresh desktop event"
+                              : mode == UC_AUTO_SIGNED_IN_STARTUP
+                                  ? "signed-in foreground at startup"
+                                  : "disabled/cancelled";
     uc_log_info("[input-auto] mode=%d (%s)", mode, description);
 }
 void uc_backend_auto_on_load(int trigger)
@@ -568,9 +569,10 @@ int uc_backend_auto_due(unsigned delay_ms, int idle)
     if (auto_mode == UC_AUTO_SIGNED_IN_STARTUP || auto_mode == UC_AUTO_RESUME) {
         if (auto_mode == UC_AUTO_SIGNED_IN_STARTUP) {
             int32_t foreground = -1;
-            if (sceUserServiceGetForegroundUser(&foreground) != 0 || foreground != home_foreground ||
-                !user_live(foreground)) {
-                uc_log_info("[input-auto] startup user no longer confirmed; cancelling startup delay");
+            if (sceUserServiceGetForegroundUser(&foreground) != 0 ||
+                foreground != home_foreground || !user_live(foreground)) {
+                uc_log_info(
+                    "[input-auto] startup user no longer confirmed; cancelling startup delay");
                 uc_backend_auto_watch(startup_fallback);
                 return 0;
             }

@@ -933,7 +933,8 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
                     !s->failed
                 ? "true"
                 : "false",
-            supports_rumble && (s->protocol.failed || s->protocol.rumble_failed) ? "true" : "false");
+            supports_rumble && (s->protocol.failed || s->protocol.rumble_failed) ? "true"
+                                                                                 : "false");
         int waiting = waiting_for_hid_input(s);
         ADD(",\"waiting_for_input\":%s,\"first_input_remaining_ms\":%llu",
             waiting ? "true" : "false",
