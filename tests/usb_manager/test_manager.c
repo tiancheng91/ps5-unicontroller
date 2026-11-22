@@ -421,8 +421,119 @@ static void test_hid_first_input_deadline(void)
     }
 }
 
+static void test_account_follows_input_not_scanner(void)
+{
+    char json[32768];
+    setup(3);
+    for (unsigned i = 0; i < 3; i++)
+        ports[i].available = 0;
+    assert(!uc_usb_start(1));
+    /* Even the first device may be found by a scanner other than slot zero. */
+    unsigned previous = 2;
+    ports[previous].available = ports[previous].reports = 1;
+    uc_usb_poll(1000);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].active);
+    uint64_t old_session = sessions[by_user(1)].id;
+    for (unsigned attempt = 0; attempt < 9; attempt++) {
+        unsigned target = attempt % 3;
+        if (target == previous)
+            target = (target + 1) % 3;
+        ports[previous].alive = ports[previous].available = 0;
+        ports[target].alive = ports[target].available = ports[target].reports = 1;
+        uint64_t now = 1100 + attempt * 100;
+        uc_usb_poll(now);
+        uc_usb_poll(now + 1); /* A lower-index scanner may run before old output cleanup. */
+        int u = by_user(1);
+        assert(u >= 0 && sessions[u].active && sessions[u].id != old_session);
+        old_session = sessions[u].id;
+        assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"bound\":true"));
+        previous = target;
+    }
+    finish();
+
+    setup(2);
+    ports[1].available = 0;
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(3000);
+    int old = by_user(1);
+    sessions[old].disable_error = 1;
+    ports[0].available = ports[0].alive = 0;
+    ports[1].available = ports[1].reports = 1;
+    uc_usb_poll(3100);
+    assert(sessions[old].id && !sessions[old].active);
+    assert(uc_usb_assign(1, "/dev/ugen1.2", 1) < 0); /* Cleanup still reserves the account. */
+    for (uint64_t now = 3200; now <= 3700; now += 100)
+        uc_usb_poll(now);
+    sessions[old].disable_error = 0;
+    uc_usb_poll(3800);
+    assert(by_user(1) < 0); /* Stale input cannot reserve the now-free account. */
+    ports[1].reports = 1;
+    uc_usb_poll(3810);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].active);
+    /* Empty slot zero no longer prevents explicit reassignment on slot one. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 1));
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 2));
+    ports[1].reports = 1;
+    uc_usb_poll(3820);
+    assert(by_user(1) < 0 && by_user(2) >= 0);
+    ports[1].available = ports[1].alive = 0;
+    ports[0].available = ports[0].alive = ports[0].reports = 1;
+    uc_usb_poll(3920);
+    uc_usb_poll(3921);
+    assert(by_user(2) >= 0 && sessions[by_user(2)].active && by_user(1) < 0);
+    finish();
+
+    setup(3);
+    assert(!uc_usb_start(1));
+    ports[0].reports = ports[1].reports = ports[2].reports = 1;
+    uc_usb_poll(5000);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].submits == 1);
+    assert(uc_usb_assign(1, "/dev/ugen1.2", 1) < 0); /* Never steal a live account. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 2));
+    ports[1].reports = 1;
+    uc_usb_poll(5010);
+    assert(by_user(1) >= 0 && by_user(2) >= 0 && by_user(3) < 0);
+    assert(sessions[by_user(1)].active && sessions[by_user(2)].active);
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(6000);
+    unavailable_user = 1;
+    uc_usb_poll(6100);
+    assert(by_user(1) < 0);
+    unavailable_user = 0;
+    ports[0].reports = 1;
+    uc_usb_poll(6110);
+    assert(by_user(1) < 0); /* Logging in again does not bypass explicit reassignment. */
+    assert(!uc_usb_assign(0, "/dev/ugen1.1", 1));
+    ports[0].reports = 1;
+    uc_usb_poll(6120);
+    assert(by_user(1) >= 0);
+    finish();
+
+    setup(2);
+    ports[0].available = ports[1].available = 0;
+    assert(!uc_usb_start(1));
+    uc_usb_poll(7000);
+    unavailable_user = 1;
+    uc_usb_poll(7100);
+    unavailable_user = 0;
+    ports[1].available = ports[1].reports = 1;
+    uc_usb_poll(7200);
+    assert(by_user(1) < 0); /* Account loss while no device is attached also clears preference. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 1));
+    ports[1].reports = 1;
+    uc_usb_poll(7210);
+    assert(by_user(1) >= 0);
+    finish();
+}
+
 int main(void)
 {
+    test_account_follows_input_not_scanner();
     test_hid_first_input_deadline();
     test_failed_connection_recycles_slots();
     uc_usb_set_log_level(0);

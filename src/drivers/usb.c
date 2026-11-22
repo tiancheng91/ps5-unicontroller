@@ -36,10 +36,11 @@ static struct {
     uc_usb_device rejected[16];
     unsigned rejected_count;
     int enabled, rumble, clock_valid;
+    int32_t preferred_user;
     uint64_t clock, last_presence;
     int presence_valid;
     const char *reason;
-} usb = {.level = 3, .rumble = 1};
+} usb = {.level = 3, .rumble = 1, .preferred_user = -1};
 static int waiting_for_hid_input(const usb_slot *s)
 {
     return s->attached && s->device.kind == UC_USB_GENERIC_HID && !s->frames;
@@ -57,6 +58,19 @@ static int transport_valid(const uc_usb_transport *t)
 static int active(const usb_slot *s)
 {
     return s->session && uc_core_session_active(s->session);
+}
+/* Only live sources and outstanding output cleanup reserve an account. */
+static int user_reserved(unsigned except, int32_t user)
+{
+    for (unsigned i = 0; i < usb.count; i++) {
+        const usb_slot *other = &usb.slots[i];
+        if (i == except)
+            continue;
+        if ((other->user == user && (other->attached || other->session || other->cleanup)) ||
+            (other->assigning && other->next_user == user))
+            return 1;
+    }
+    return 0;
 }
 static void log_code(unsigned level, unsigned slot, const char *code)
 {
@@ -122,16 +136,15 @@ static void release_slot(usb_slot *s)
     }
 }
 static void record_rejection(const uc_usb_device *device);
-/* Called only after output cleanup; retain the scanner lease and account policy. */
+/* Called only after output cleanup; empty scanners must not reserve accounts. */
 static void recycle_slot(usb_slot *s, uint64_t now)
 {
     uc_usb_transport transport = s->transport;
     int native_lease = s->native_lease;
-    int32_t user = s->user;
     memset(s, 0, sizeof *s);
     s->transport = transport;
     s->native_lease = native_lease;
-    s->user = user;
+    s->user = -1;
     s->scanned = 1;
     s->last_scan = now;
 }
@@ -242,7 +255,7 @@ int uc_usb_start(int32_t user)
         usb.reason = "transport_unsupported_or_open_failed";
         return -1;
     }
-    usb.slots[0].user = user;
+    usb.preferred_user = user;
     usb.enabled = 1;
     usb.reason = NULL;
     usb.clock_valid = usb.presence_valid = 0;
@@ -254,6 +267,7 @@ int uc_usb_start(int32_t user)
 int uc_usb_stop(void)
 {
     usb.enabled = 0;
+    usb.preferred_user = -1;
     uc_log_info("[usb] stopping and releasing owned interfaces");
     int result = 0;
     for (unsigned i = 0; i < usb.count; i++) {
@@ -284,10 +298,9 @@ int uc_usb_assign(unsigned slot, const char *node, int32_t user)
         return -1;
     }
     usb_slot *s = &usb.slots[slot];
-    for (unsigned i = 0; i < usb.count; i++)
-        if (i != slot && (usb.slots[i].user == user ||
-                          (usb.slots[i].assigning && usb.slots[i].next_user == user)))
-            return -1;
+    if (user_reserved(slot, user))
+        return -1;
+    usb.preferred_user = user;
     if (!s->assigning && s->user == user)
         return 0;
     stop_motors(s, usb.clock);
@@ -403,6 +416,8 @@ static void poll_slot(unsigned index, uint64_t now)
                     "reassignment",
                     index, s->user);
         stop_motors(s, now);
+        if (usb.preferred_user == s->user)
+            usb.preferred_user = -1;
         s->user = s->next_user = -1;
         s->assigning = s->valid = 0;
         s->reason = "user_unavailable";
@@ -567,6 +582,19 @@ static void poll_slot(unsigned index, uint64_t now)
         fail_slot(index, "session_lost", 0, now);
         return;
     }
+    if (!s->assigning && s->user <= 0 && s->protocol.ready && s->valid && now >= s->latest_at &&
+        now - s->latest_at <= 500 && (!s->reason || strcmp(s->reason, "user_unavailable")) &&
+        usb.preferred_user > 0) {
+        if (!uc_backend_can_start(usb.preferred_user)) {
+            uc_log_info("[usb] preferred user=%d unavailable; explicit selection required",
+                        usb.preferred_user);
+            usb.preferred_user = -1;
+        } else if (!user_reserved(index, usb.preferred_user)) {
+            s->user = usb.preferred_user;
+            uc_log_info("[usb] slot=%u node=%s selected user=%d; registering virtual output", index,
+                        s->device.node, s->user);
+        }
+    }
     if (s->assigning || s->user <= 0 || !s->protocol.ready || !s->valid)
         return;
     if (!s->session || s->pending) {
@@ -620,6 +648,11 @@ void uc_usb_poll(uint64_t now)
     }
     usb.clock = now;
     usb.clock_valid = 1;
+    if (usb.enabled && usb.preferred_user > 0 && !uc_backend_can_start(usb.preferred_user)) {
+        uc_log_info("[usb] preferred user=%d unavailable; explicit selection required",
+                    usb.preferred_user);
+        usb.preferred_user = -1;
+    }
     if (usb.enabled && (!usb.presence_valid || now - usb.last_presence >= 100)) {
         usb.presence_valid = 1;
         usb.last_presence = now;
@@ -767,12 +800,10 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
     size_t used = 0;
     buffer[0] = 0;
     int bound = 0, pending = 0;
-    int32_t user = -1;
+    int32_t user = usb.preferred_user;
     for (unsigned i = 0; i < usb.count; i++) {
         bound |= active(&usb.slots[i]);
         pending |= usb.slots[i].pending;
-        if (i == 0)
-            user = usb.slots[i].user;
     }
 #define ADD(...)                                                                                   \
     do {                                                                                           \

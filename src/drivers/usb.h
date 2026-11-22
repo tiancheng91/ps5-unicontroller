@@ -2,6 +2,7 @@
 #define UC_USB_H
 #include "usb/transport.h"
 /* Single event-loop, same return convention as Bluetooth manager. No auto-start. */
+/* user is a service preference, not an account reservation on scanner slot 0. */
 int uc_usb_start(int32_t user);
 int uc_usb_stop(void);
 void uc_usb_poll(uint64_t now);
