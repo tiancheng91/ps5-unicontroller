@@ -38,6 +38,14 @@ int uc_backend_transport_ready(void)
 {
     return gate;
 }
+int uc_core_system_assignment_available(uint64_t replacing_session)
+{
+    for (int i = 0; i < 4; ++i)
+        if (sessions[i].id && sessions[i].id != replacing_session &&
+            (sessions[i].pending || sessions[i].disable_error))
+            return 0;
+    return 1;
+}
 int uc_core_session_active(uint64_t session)
 {
     int i = find(session);
@@ -82,6 +90,14 @@ int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
         return -1; /* A closing partially created output still belongs to this token. */
     }
     return wait_creation ? 2 : 0;
+}
+int uc_core_enable_system_assigned(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
+}
+int uc_core_enable_reselected(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
 }
 int uc_core_disable_session(uint64_t id)
 {
@@ -531,8 +547,46 @@ static void test_account_follows_input_not_scanner(void)
     finish();
 }
 
+static void test_system_user_reselection(void)
+{
+    setup(1);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    int original = by_user(1);
+    assert(original >= 0);
+    uint64_t old = sessions[original].id;
+    assert(uc_usb_reselect_user(0, "stale-node") < 0);
+    uint64_t other = 0;
+    assert(!uc_core_enable_physical(2, 1, &other));
+
+    assert(uc_core_session_active(old) && uc_core_session_active(other));
+    int closes = ports[0].closes;
+    sessions[original].disable_error = 1;
+    assert(uc_usb_reselect_user(0, "/dev/ugen1.1") == 2);
+    assert(uc_usb_reselect_user(0, "/dev/ugen1.1") == 2);
+    uc_usb_poll(1);
+    assert(by_user(0) < 0 && ports[0].closes == closes);
+    sessions[original].disable_error = 0;
+    uc_usb_poll(2);
+    assert(by_user(0) < 0 && by_user(1) < 0); /* No stale report replay. */
+    ports[0].reports = 1;
+    uc_usb_poll(3);
+    assert(by_user(0) >= 0 && by_user(1) < 0);
+    assert(uc_core_session_active(other) && !uc_usb_reselection_pending());
+    assert(!uc_core_disable_session(other));
+    assert(sessions[by_user(0)].id != old && sessions[by_user(0)].submits == 1);
+    char json[8192];
+    assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true") &&
+           strstr(json, "\"output_active\":true") &&
+           strstr(json, "\"user_id\":0,\"connected\":true"));
+    /* The service preference remains 1, never overwritten by a guessed final owner. */
+    assert(strstr(json, "\"user_id\":1,\"pending\":"));
+    finish();
+}
 int main(void)
 {
+    test_system_user_reselection();
     test_account_follows_input_not_scanner();
     test_hid_first_input_deadline();
     test_failed_connection_recycles_slots();

@@ -25,6 +25,7 @@ typedef struct {
     uc_device_options options;
     int scanned, assigning, failed, recycle, first_input_warned;
     uint64_t opened_at;
+    int reselecting;
     int32_t user, next_user;
     uint64_t session, sequence, frames, submitted, latest_at, health_at, last_scan;
     const char *reason;
@@ -314,6 +315,41 @@ int uc_usb_assign(unsigned slot, const char *node, int32_t user)
     s->reason = NULL;
     return 0;
 }
+int uc_usb_reselection_pending(void)
+{
+    for (unsigned i = 0; i < usb.count; ++i) {
+        const usb_slot *s = &usb.slots[i];
+        if (s->attached && !s->failed && s->reselecting && !active(s))
+            return 1;
+    }
+    return 0;
+}
+int uc_usb_reselect_user(unsigned slot, const char *node)
+{
+    if (!usb.enabled || slot >= usb.count || !node || !usb.slots[slot].attached ||
+        strcmp(node, usb.slots[slot].device.node) || !uc_backend_transport_ready())
+        return -1;
+    usb_slot *s = &usb.slots[slot];
+    if (s->assigning)
+        return s->next_user == 0 ? 2 : -1;
+    if (!uc_core_system_assignment_available(s->session))
+        return -3;
+
+    s->reselecting = 1;
+    stop_motors(s, usb.clock);
+    s->assigning = 1;
+    s->next_user = 0; /* Zero means system choice, never the startup preference. */
+    s->valid = 0;
+    s->reason = NULL;
+    uc_log_info("[usb] slot=%u node=%s user reselection requested; PS5 chooses user, "
+                "final ownership unverified",
+                slot, node);
+    if (cleanup_output(s))
+        return 2;
+    s->user = 0;
+    s->assigning = 0;
+    return 0;
+}
 static int16_t axis(uint8_t value)
 {
     return value >= 128 ? (int16_t)(((int)value - 128) * 32767 / 127)
@@ -404,6 +440,10 @@ static void poll_slot(unsigned index, uint64_t now)
     }
     if (!usb.enabled || s->failed)
         return;
+    if (s->user == 0 && !uc_backend_transport_ready()) {
+        fail_slot(index, "power_or_user_unavailable", 0, now);
+        return;
+    }
     if (s->user > 0 && !uc_backend_can_start(s->user)) {
         if (!uc_backend_transport_ready()) {
             fail_slot(index, "power_or_user_unavailable", 0, now);
@@ -582,7 +622,7 @@ static void poll_slot(unsigned index, uint64_t now)
         fail_slot(index, "session_lost", 0, now);
         return;
     }
-    if (!s->assigning && s->user <= 0 && s->protocol.ready && s->valid && now >= s->latest_at &&
+    if (!s->assigning && s->user < 0 && s->protocol.ready && s->valid && now >= s->latest_at &&
         now - s->latest_at <= 500 && (!s->reason || strcmp(s->reason, "user_unavailable")) &&
         usb.preferred_user > 0) {
         if (!uc_backend_can_start(usb.preferred_user)) {
@@ -595,13 +635,14 @@ static void poll_slot(unsigned index, uint64_t now)
                         s->device.node, s->user);
         }
     }
-    if (s->assigning || s->user <= 0 || !s->protocol.ready || !s->valid)
+    if (s->assigning || s->user < 0 || !s->protocol.ready || !s->valid)
         return;
     if (!s->session || s->pending) {
         if (!s->pending && (now < s->latest_at || now - s->latest_at > 500))
             return;
         uint64_t session = s->pending ? s->session : 0;
-        int result = uc_core_enable_physical(s->user, now, &session);
+        int result = s->user == 0 ? uc_core_enable_reselected(now, &session)
+                                  : uc_core_enable_physical(s->user, now, &session);
         if (result && session)
             s->session = session;
         if (result == 2) {
@@ -617,7 +658,7 @@ static void poll_slot(unsigned index, uint64_t now)
             return;
         }
         s->session = session;
-        s->pending = 0;
+        s->pending = s->reselecting = 0;
         s->reason = NULL;
         s->sequence = s->submitted = 0;
         if (now < s->latest_at || now - s->latest_at > 500) {
@@ -845,11 +886,15 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             "\"pending\":%s,\"rumble_available\":%s,\"session_id\":%llu,\"reason\":\"%s\"",
             comma++ ? "," : "", i, s->device.node, s->device.vid, s->device.pid, profile, escaped,
             s->user, s->attached ? "true" : "false", (unsigned long long)s->frames,
-            active(s) ? "true" : "false", s->pending ? "true" : "false",
+            active(s) && s->user > 0 ? "true" : "false",
+            s->pending || s->assigning ? "true" : "false",
             s->device.kind == UC_USB_XINPUT && s->protocol.ready && !s->protocol.rumble_failed
                 ? "true"
                 : "false",
             (unsigned long long)s->session, s->reason ? s->reason : "");
+        ADD(",\"system_assignment\":%s,\"output_active\":%s",
+            s->user == 0 || (s->assigning && s->next_user == 0) ? "true" : "false",
+            active(s) ? "true" : "false");
         int waiting = waiting_for_hid_input(s);
         ADD(",\"waiting_for_input\":%s,\"first_input_remaining_ms\":%llu",
             waiting ? "true" : "false",

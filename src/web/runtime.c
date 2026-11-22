@@ -547,15 +547,18 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") &&
-        (!strcmp(path, "/api/v1/bluetooth/assign") || !strcmp(path, "/api/v1/usb/assign"))) {
-        int wireless = !strcmp(path, "/api/v1/bluetooth/assign");
+        (!strcmp(path, "/api/v1/bluetooth/assign") || !strcmp(path, "/api/v1/usb/assign") ||
+         !strcmp(path, "/api/v1/bluetooth/reselect-user") ||
+         !strcmp(path, "/api/v1/usb/reselect-user"))) {
+        int wireless = !strncmp(path, "/api/v1/bluetooth/", 18);
+        int reselect = strstr(path, "/reselect-user") != NULL;
         Json j;
-        int64_t slot, user;
+        int64_t slot, user = 0;
         const char *identity = wireless ? "address" : "node";
         const char *keys[] = {"slot", identity, "user_id"};
-        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 3) ||
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, reselect ? 2 : 3) ||
             jint(&j, jget(&j, "slot"), 0, 3, &slot) ||
-            jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user)) {
+            (!reselect && jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user))) {
             error_response(c, 400, "invalid_assignment");
             return;
         }
@@ -569,17 +572,28 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         memcpy(device, j.s + j.t[n].start + 1, (size_t)len);
         device[len] = 0;
         /* Device identities are literal ASCII, never escaped JSON strings. */
-        if (strchr(device, '\\') || !uc_backend_can_start((int32_t)user)) {
+        if (strchr(device, '\\') ||
+            (reselect ? !uc_backend_transport_ready() : !uc_backend_can_start((int32_t)user))) {
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
-        int rc = wireless ? uc_bt_assign((int)slot, device, (int32_t)user)
-                          : uc_usb_assign((unsigned)slot, device, (int32_t)user);
-        if (rc < 0)
+        if (reselect && (uc_usb_reselection_pending() || uc_bt_reselection_pending())) {
+            error_response(c, 409, "reselection_busy");
+            return;
+        }
+        int rc = reselect ? (wireless ? uc_bt_reselect_user((int)slot, device)
+                                      : uc_usb_reselect_user((unsigned)slot, device))
+                          : (wireless ? uc_bt_assign((int)slot, device, (int32_t)user)
+                                      : uc_usb_assign((unsigned)slot, device, (int32_t)user));
+        if (rc == -3)
+            error_response(c, 409, "reselection_busy");
+        else if (rc < 0)
             error_response(c, 409, "device_or_user_unavailable");
         else
             response(c, rc == 2 ? 202 : 200, "application/json",
-                     rc == 2 ? "{\"pending\":true}" : "{\"assigned\":true}");
+                     rc == 2    ? "{\"pending\":true}"
+                     : reselect ? "{\"system_choice_requested\":true}"
+                                : "{\"assigned\":true}");
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/forget")) {

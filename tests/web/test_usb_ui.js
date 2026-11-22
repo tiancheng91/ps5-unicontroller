@@ -6,11 +6,41 @@ const assert = require("assert"),
     m = h.model;
   h.state.usb.rejected = [
     { node: "/dev/ugen2.7", vid: "3537", pid: "1040", reason: "claim_interface", errno: 16 },
+    {
+      node: "/dev/ugen0.1",
+      vid: "0000",
+      pid: "0000",
+      reason: "control_open",
+      device_descriptor_ok: false,
+      errno: 6,
+    },
+    {
+      node: "/dev/ugen2.1",
+      vid: "0000",
+      pid: "0000",
+      reason: "device_descriptor",
+      device_descriptor_ok: false,
+      errno: 25,
+    },
+    { node: "/dev/ugen2.2", vid: "054c", pid: "0ce6", reason: "system_device_excluded", errno: 0 },
   ];
   await m.refresh();
   assert(m.usbRejected.length === 1 && m.usbRejected[0].detail.includes("claim_interface"));
   assert(m.usbRejected[0].detail.includes("errno=16"));
   assert(m.usbDevices.length === 0);
+  assert(m.usb.rejected.length === 4, "Full scan evidence remains available to diagnostics");
+  m.usb.devices = [{ node: "/dev/ugen2.7", connected: true }];
+  assert.equal(m.usbRejected.length, 0, "An active connection hides stale failures on its node");
+  m.usb.devices = [];
+  m.usb.rejected.push({
+    node: "/dev/ugen3.2",
+    vid: "0000",
+    pid: "0000",
+    device_descriptor_ok: true,
+    reason: "hid_first_input_timeout",
+  });
+  assert.equal(m.usbRejected.length, 2, "A descriptor-verified zero-ID HID failure stays visible");
+  m.usb.rejected.pop();
   assert(!m.usbStartDisabled, "USB can start immediately after loading signed-in users");
   h.advance(5001);
   await m.refresh();
@@ -38,6 +68,36 @@ const assert = require("assert"),
   release();
   await starting;
   assert(m.usbRunning);
+  const choiceDevice = {
+    slot: 0,
+    node: "/dev/ugen1.2",
+    vid: "3537",
+    pid: "1040",
+    connected: true,
+    input_frames: 1,
+    bound: true,
+    user_id: 1,
+  };
+  h.state.usb.devices = [choiceDevice];
+  await m.refresh();
+  m.selectedDeviceKey = m.usbDevices[0].key;
+  assert.equal(m.detailAssignmentDisabled, false);
+  const chosen = m.selectedUser;
+  await m.reselectDevice({
+    currentTarget: {
+      dataset: {
+        source: "usb",
+        slot: "0",
+        identity: "/dev/ugen1.2",
+      },
+    },
+  });
+  assert.deepEqual(h.calls.find((c) => c.route === "/usb/reselect-user").body, {
+    slot: 0,
+    node: "/dev/ugen1.2",
+  });
+  assert.equal(m.selectedUser, chosen);
+  assert(m.statusText.includes("PS"));
   const event = { currentTarget: { dataset: { slot: "0", identity: "/dev/ugen1.2" } } };
   await m.assignUSB(event);
   assert.deepEqual(h.calls.find((c) => c.route === "/usb/assign").body, {

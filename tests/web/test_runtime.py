@@ -160,6 +160,13 @@ with tempfile.TemporaryDirectory() as directory:
             ("bluetooth", "address", "01:02:03:04:05:06"),
             ("usb", "node", "/dev/ugen1.2"),
         ):
+            reselect = f"/api/v1/{source}/reselect-user"
+            choice = {"slot": 0, identity: value}
+            assert request("POST", reselect, choice, auth=False)[0] == 403
+            assert request("POST", reselect, {})[0] == 400
+            assert request("POST", reselect, dict(choice, user_id=2))[0] == 400
+            assert request("POST", reselect, dict(choice, slot=4))[0] == 400
+            assert request("POST", reselect, choice)[0] == 409
             endpoint = f"/api/v1/{source}/assign"
             assignment = {"slot": 0, identity: value, "user_id": 4}
             assert request("POST", endpoint, assignment, auth=False)[0] == 403

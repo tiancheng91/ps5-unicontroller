@@ -21,4 +21,7 @@ int uc_usb_device_options_match(const char *key, uint64_t session);
 void uc_usb_device_options_changed(void);
 /* 500ms pulse: 0 accepted, 2 rate-limited, negative unavailable. Identity must match. */
 int uc_usb_test_rumble(const char *key, uint64_t session, uint64_t now);
+/* -3=conflicting registration or exclusive output; no changes made. 2=cleanup pending. */
+int uc_usb_reselection_pending(void);
+int uc_usb_reselect_user(unsigned slot, const char *node);
 #endif

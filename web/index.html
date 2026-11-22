@@ -610,19 +610,12 @@
             <details class="advanced" x-show="detailDevice.assignable">
               <summary x-label="advancedAssignment"></summary>
               <p x-label="assignmentHint"></p>
-              <label class="stacked"
-                ><span x-label="user"></span
-                ><select id="user" :value="selectedUser" @change="userChanged">
-                  <option value="" x-label="noUsers"></option>
-                  <template x-for="user in users" :key="user.id"
-                    ><option :value="user.id" x-text="user.name"></option
-                  ></template></select></label
-              ><button
+              <button
                 id="assign-device"
                 :data-source="detailDevice.source"
                 :data-slot="detailDevice.slot"
                 :data-identity="detailDevice.identity"
-                @click="assignDevice"
+                @click="reselectDevice"
                 :disabled="detailAssignmentDisabled"
                 x-label="assign"
               ></button>

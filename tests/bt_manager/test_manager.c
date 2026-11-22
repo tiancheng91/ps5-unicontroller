@@ -72,6 +72,10 @@ int uc_core_enable_system_assigned(uint64_t now, uint64_t *out)
 {
     return uc_core_enable_physical(0, now, out);
 }
+int uc_core_enable_reselected(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
+}
 int uc_core_disable_session(uint64_t session)
 {
     assert(session);
@@ -87,6 +91,13 @@ int uc_core_disable_session(uint64_t session)
             return 0;
         }
     return -2;
+}
+int uc_core_system_assignment_available(uint64_t replacing_session)
+{
+    for (int i = 0; i <= 4; ++i)
+        if (sessions[i] && sessions[i] != replacing_session && !ready[i])
+            return 0;
+    return 1;
 }
 int uc_core_session_active(uint64_t session)
 {
@@ -425,6 +436,8 @@ int main(void)
     event(2, 1, 23005);
     uint64_t second = sessions[2];
     assert(second && second != first && ready[1] && ready[2]);
+    assert(uc_core_system_assignment_available(second));
+    assert(sessions[1] == first && sessions[2] == second);
     assert(uc_bt_status_json(json, sizeof json) > 0 && strstr(json, "\"user_id\":2") &&
            strstr(json, "\"pending\":false"));
     feedback_session = second;
@@ -520,6 +533,25 @@ int main(void)
     /* Experimental resume injects before login, without choosing an account. */
     unavailable_user = 1;
     assert(uc_bt_start(1) == -1);
+    unavailable_user = 0;
+    assert(uc_bt_start(1) == 0);
+    event(1, 0, 25510);
+    event(2, 0, 25511);
+    assert(sessions[1]);
+    uint64_t old_owner_session = sessions[1];
+    assert(uc_bt_reselect_user(0, "00:00:00:00:00:00") < 0);
+    cleanup_fail = 1;
+    assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 2);
+    assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 2);
+    assert(sessions[1] == old_owner_session && !sessions[0]);
+    cleanup_fail = 0;
+    uc_bt_poll(25512);
+    assert(!sessions[1] && !sessions[0]);
+    event(2, 0, 25513);
+    assert(sessions[0] && ready[0]);
+    assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true"));
+    assert(!uc_bt_stop());
+    unavailable_user = 1;
     assert(uc_bt_start_system_assigned() == 0);
     enabled = enable_calls;
     event(1, 0, 26000);
