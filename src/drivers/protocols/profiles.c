@@ -1,9 +1,14 @@
 #include "profiles.h"
+#include "nintendo.h"
 #include "../config/overrides.h"
 #include "crc32.h"
 #include "util.h"
 
 #include <string.h>
+
+/* Pinned, unmodified SDL/Valve tables. No SDL library/runtime dependency. */
+#include "../../../vendor/sdl/controller_type.h"
+#include "../../../vendor/sdl/controller_list.h"
 
 /* Trigger travel past which L2/R2 also count as pressed buttons. */
 #define TRIGGER_PRESS 0x20
@@ -364,261 +369,22 @@ static int xbox_output(void *ctx, const pad_output *o, uint8_t *b, int max)
     return 9;
 }
 
-/* ---- Nintendo Switch Pro Controller and compatibles -------------------------
- *
- * Starts in a simple HID mode (report 0x3F) and moves to the standard full
- * report 0x30 when asked with subcommands in output report 0x01:
- *
- *   0x01: [1] packet counter (low nibble)  [2..9] rumble data
- *         [10] subcommand id  [11..] subcommand arguments
- *
- *   0x30: [1] timer  [2] battery (high nibble) and connection
- *         [3] right buttons: Y X B A SR SL R ZR
- *         [4] shared: - + RS LS Home Capture
- *         [5] left buttons: down up right left SR SL L ZL
- *         [6..8] left stick, [9..11] right stick: two 12-bit values each
- *         [13..48] three IMU samples: accel xyz, gyro xyz, 16-bit each
- *
- *   0x3F: [1] B A Y X L R ZL ZR  [2] - + LS RS Home Capture  [3] hat
- *         [4..11] sticks, 16-bit each
- *
- * Buttons are placed by position, as on the PlayStation: B (bottom) is
- * cross, A (right) circle, Y (left) square, X (top) triangle.
- */
-
-typedef struct {
-    uint8_t counter;
-} switch_ctx;
-
-/* Protocol amplitude levels (milli-units), from dekuNukem's rumble data:
- * github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/rumble_data_table.md
- * Also used by Linux hid-nintendo. Fixed 160/320 Hz avoids libm and
- * keeps the encoded amplitude at or below the normal 1.003 maximum. */
-static void switch_motor(uint8_t strength, uint8_t b[4])
-{
-    static const uint16_t amplitudes[] = {
-        0,   8,   12,  14,  17,  20,  24,  28,  33,  40,  47,  56,  67,  80,  95,  112,  117,
-        123, 128, 134, 140, 146, 152, 159, 166, 173, 181, 189, 198, 206, 215, 225, 230,  235,
-        240, 245, 251, 256, 262, 268, 273, 279, 286, 292, 298, 305, 311, 318, 325, 332,  340,
-        347, 355, 362, 370, 378, 387, 395, 404, 413, 422, 431, 440, 450, 460, 470, 480,  491,
-        501, 512, 524, 535, 547, 559, 571, 584, 596, 609, 623, 636, 650, 665, 679, 694,  709,
-        725, 741, 757, 773, 790, 808, 825, 843, 862, 881, 900, 920, 940, 960, 981, 1003,
-    };
-    unsigned amplitude = strength * 1000u / 255u;
-    unsigned i = 0;
-
-    while (i + 1 < sizeof amplitudes / sizeof amplitudes[0] && amplitudes[i] < amplitude)
-        i++;
-    b[0] = 0x00; /* 320 Hz high band */
-    b[1] = (uint8_t)(0x01 + 2 * i);
-    b[2] = (uint8_t)(0x40 + ((i & 1) << 7)); /* 160 Hz low band */
-    b[3] = (uint8_t)(0x40 + (i >> 1));
-}
-
-void switch_encode_rumble(uint8_t *b, uint8_t counter, uint8_t strong, uint8_t weak)
-{
-    b[0] = 0x10;
-    b[1] = counter & 15;
-    switch_motor(strong, b + 2);
-    switch_motor(weak, b + 6);
-}
-
-static int switch_output(void *ctx, const pad_output *o, uint8_t *b, int max)
-{
-    switch_ctx *c = ctx;
-
-    if (max < 10)
-        return 0;
-    switch_encode_rumble(b, c->counter++, o->strong, o->weak);
-    return 10;
-}
-
-/* Stick travel from centre the raw values usually reach; factory
- * calibration (SPI flash) is not read yet. */
-#define SWITCH_STICK_RANGE 1600
-
-static uint8_t switch_axis(int v, int invert)
-{
-    int s = (v - 2048) * 127 / SWITCH_STICK_RANGE;
-
-    if (invert)
-        s = -s;
-    s += 128;
-    return (uint8_t)(s < 0 ? 0 : s > 255 ? 255 : s);
-}
-
-static void switch_stick(const uint8_t *p, uint8_t *x, uint8_t *y)
-{
-    *x = switch_axis(p[0] | (p[1] & 0x0F) << 8, 0);
-    *y = switch_axis(p[1] >> 4 | p[2] << 4, 1); /* up is positive */
-}
-
-static int switch_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
-{
-    uint32_t b = 0;
-
-    (void)ctx;
-    if (r[0] == 0x3F && n >= 12) {
-        if (r[1] & 0x01)
-            b |= PAD_CROSS; /* B */
-        if (r[1] & 0x02)
-            b |= PAD_CIRCLE; /* A */
-        if (r[1] & 0x04)
-            b |= PAD_SQUARE; /* Y */
-        if (r[1] & 0x08)
-            b |= PAD_TRIANGLE; /* X */
-        if (r[1] & 0x10)
-            b |= PAD_L1;
-        if (r[1] & 0x20)
-            b |= PAD_R1;
-        if (r[1] & 0x40)
-            b |= PAD_L2;
-        if (r[1] & 0x80)
-            b |= PAD_R2;
-        if (r[2] & 0x01)
-            b |= PAD_CREATE;
-        if (r[2] & 0x02)
-            b |= PAD_OPTIONS;
-        if (r[2] & 0x04)
-            b |= PAD_L3;
-        if (r[2] & 0x08)
-            b |= PAD_R3;
-        if (r[2] & 0x10)
-            b |= PAD_PS;
-        if (r[2] & 0x20)
-            b |= PAD_TOUCHPAD; /* Capture */
-        b |= hat_buttons(r[3]);
-        st->lx = (uint8_t)(le16(r + 4) >> 8);
-        st->ly = (uint8_t)(le16(r + 6) >> 8);
-        st->rx = (uint8_t)(le16(r + 8) >> 8);
-        st->ry = (uint8_t)(le16(r + 10) >> 8);
-        st->l2 = b & PAD_L2 ? 255 : 0;
-        st->r2 = b & PAD_R2 ? 255 : 0;
-        st->buttons = b;
-        return PARSE_OK;
-    }
-    if (r[0] != 0x30 || n < 12)
-        return PARSE_NONE;
-
-    if (r[3] & 0x01)
-        b |= PAD_SQUARE; /* Y */
-    if (r[3] & 0x02)
-        b |= PAD_TRIANGLE; /* X */
-    if (r[3] & 0x04)
-        b |= PAD_CROSS; /* B */
-    if (r[3] & 0x08)
-        b |= PAD_CIRCLE; /* A */
-    if (r[3] & 0x40)
-        b |= PAD_R1;
-    if (r[3] & 0x80)
-        b |= PAD_R2;
-    if (r[4] & 0x01)
-        b |= PAD_CREATE; /* - */
-    if (r[4] & 0x02)
-        b |= PAD_OPTIONS; /* + */
-    if (r[4] & 0x04)
-        b |= PAD_R3;
-    if (r[4] & 0x08)
-        b |= PAD_L3;
-    if (r[4] & 0x10)
-        b |= PAD_PS; /* Home */
-    if (r[4] & 0x20)
-        b |= PAD_TOUCHPAD; /* Capture */
-    if (r[5] & 0x01)
-        b |= PAD_DOWN;
-    if (r[5] & 0x02)
-        b |= PAD_UP;
-    if (r[5] & 0x04)
-        b |= PAD_RIGHT;
-    if (r[5] & 0x08)
-        b |= PAD_LEFT;
-    if (r[5] & 0x40)
-        b |= PAD_L1;
-    if (r[5] & 0x80)
-        b |= PAD_L2;
-    switch_stick(r + 6, &st->lx, &st->ly);
-    switch_stick(r + 9, &st->rx, &st->ry);
-    st->l2 = b & PAD_L2 ? 255 : 0; /* ZL/ZR are digital */
-    st->r2 = b & PAD_R2 ? 255 : 0;
-    st->buttons = b;
-
-    {
-        unsigned level = r[2] >> 5; /* 0 empty .. 4 full */
-        st->battery_pct = (uint8_t)(level * 25);
-        st->charging = (uint8_t)((r[2] >> 4) & 1);
-        st->has_battery = 1;
-    }
-    if (n >= 25) {
-        /* First IMU sample: accel then gyro, 16-bit each. */
-        int i;
-        for (i = 0; i < 3; i++) {
-            st->accel[i] = les16(r + 13 + 2 * i);
-            st->gyro[i] = les16(r + 19 + 2 * i);
-        }
-        st->has_motion = 1;
-    }
-    return PARSE_FULL;
-}
-
-/* An output report 0x01 carrying one subcommand, rumble neutral. */
-static int switch_subcmd(switch_ctx *c, uint8_t id, const uint8_t *arg, int alen, uint8_t *b,
-                         int max)
-{
-    static const uint8_t neutral[8] = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40};
-
-    if (max < 11 + alen)
-        return 0;
-    b[0] = 0x01;
-    b[1] = c->counter++ & 0x0F;
-    memcpy(b + 2, neutral, 8);
-    b[10] = id;
-    memcpy(b + 11, arg, (size_t)alen);
-    return 11 + alen;
-}
-
-static int switch_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
-{
-    static const uint8_t full_mode[1] = {0x30};
-    static const uint8_t on[1] = {0x01};
-    uint8_t leds[1];
-    switch_ctx *c = ctx;
-
-    switch (step) {
-    case 0:
-        return switch_subcmd(c, 0x03, full_mode, 1, b, max); /* report mode */
-    case 1:
-        return switch_subcmd(c, 0x40, on, 1, b, max); /* IMU on */
-    case 2:
-        return switch_subcmd(c, 0x48, on, 1, b, max); /* vibration on */
-    case 3:
-        leds[0] = (uint8_t)((1u << ((o->player ? o->player : 1) - 1)) & 0x0F);
-        return switch_subcmd(c, 0x30, leds, 1, b, max); /* player LEDs */
-    default:
-        return 0;
-    }
-}
-
-/* ---- the table --------------------------------------------------------- */
-
-/* Standalone halves retain their physical orientation; no automatic combining.
- * A missing stick must remain centred even when its wire bytes are all zero. */
-static int joycon_left_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
-{
-    int result = switch_parse(ctx, r, n, st);
-    if (result != PARSE_NONE)
-        st->rx = st->ry = 128;
-    return result;
-}
-static int joycon_right_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
-{
-    int result = switch_parse(ctx, r, n, st);
-    if (result != PARSE_NONE)
-        st->lx = st->ly = 128;
-    return result;
-}
-
-/* One validated source for protocol bindings, names, layouts and USB quirks. */
+/* Local exceptions precede SDL family hints; capabilities stay transport-specific. */
 #include "controller_registry.inc"
+
+static const ControllerDescription_t *sdl_device(uint16_t vid, uint16_t pid)
+{
+    unsigned id = ((unsigned)vid << 16) | pid;
+    for (size_t i = 0; i < sizeof arrControllers / sizeof arrControllers[0]; i++)
+        if (arrControllers[i].m_unDeviceID == id)
+            return &arrControllers[i];
+    return NULL;
+}
+static EControllerType sdl_type(uint16_t vid, uint16_t pid)
+{
+    const ControllerDescription_t *device = sdl_device(vid, pid);
+    return device ? device->m_eControllerType : k_eControllerType_UnknownNonSteamController;
+}
 
 const pad_profile *profile_find(uint16_t vid, uint16_t pid)
 {
@@ -641,9 +407,10 @@ const char *profile_model_name(uint16_t vid, uint16_t pid)
     size_t i;
 
     for (i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
-        if (k_models[i].vid == vid && k_models[i].pid == pid)
+        if (k_models[i].vid == vid && k_models[i].pid == pid && k_models[i].name)
             return k_models[i].name;
-    return NULL;
+    const ControllerDescription_t *device = sdl_device(vid, pid);
+    return device ? device->m_pszName : NULL;
 }
 
 const char *pad_display_name(uint16_t vid, uint16_t pid, const char *profile)
@@ -677,20 +444,12 @@ profile_family profile_classify(uint16_t vid, uint16_t pid)
     return PROFILE_KNOWN_OTHER;
 }
 
-static unsigned model_usb_flags(uint16_t vid, uint16_t pid)
+int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
 {
     for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
         if (k_models[i].vid == vid && k_models[i].pid == pid)
-            return k_models[i].usb_flags;
+            return k_models[i].usb_input_watchdog;
     return 0;
-}
-int profile_usb_xinput_activation(uint16_t vid, uint16_t pid)
-{
-    return (model_usb_flags(vid, pid) & 1u) != 0;
-}
-int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
-{
-    return (model_usb_flags(vid, pid) & 2u) != 0;
 }
 const char *profile_hid_mapping(uint16_t vid, uint16_t pid)
 {
@@ -717,6 +476,113 @@ const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t 
         return selected;
     return profile_find(vid, pid);
 }
+/* SDL classifies a family, not a universal wire protocol. Use this mapping
+ * only on Classic HID links. In particular Xbox 360/XInput USB and Xbox One
+ * USB GIP cannot select the Xbox Bluetooth parser merely from their ID. */
+static const pad_profile *sdl_classic_candidate(uint16_t vid, uint16_t pid, int *probe)
+{
+    switch (sdl_type(vid, pid)) {
+    case k_eControllerType_SwitchProController:
+    /* SDL's input-only distinction applies to USB. Its Switch HIDAPI driver
+     * uses the full Pro wireless protocol for third-party Bluetooth devices.
+     * Still require device-info and full-input validation on this Classic path.
+     * https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_switch.c */
+    case k_eControllerType_SwitchInputOnlyController:
+        if (probe)
+            *probe = 1;
+        return profile_builtin_named("switch");
+    case k_eControllerType_SwitchJoyConLeft:
+        return profile_builtin_named("joycon-left");
+    case k_eControllerType_SwitchJoyConRight:
+        return profile_builtin_named("joycon-right");
+    case k_eControllerType_XBoxOneController:
+    case k_eControllerType_XBoxEliteController:
+        return profile_builtin_named("xbox");
+    case k_eControllerType_PS4Controller:
+        return profile_builtin_named("ds4");
+    case k_eControllerType_PS5Controller:
+    case k_eControllerType_PS5EdgeController:
+        return profile_builtin_named("ds5");
+    default:
+        return NULL;
+    }
+}
+int profile_classic_unsupported(uint16_t vid, uint16_t pid)
+{
+    if (profile_find(vid, pid) || profile_hid_mapping(vid, pid))
+        return 0; /* Local, maintained protocol/layout exceptions win. */
+    if (sdl_classic_candidate(vid, pid, NULL))
+        return 0;
+    switch (sdl_type(vid, pid)) {
+    case k_eControllerType_Unknown:
+    case k_eControllerType_UnknownNonSteamController:
+    case k_eControllerType_AndroidController:
+    case k_eControllerType_AppleController:
+        return 0; /* Standard HID still needs a usable descriptor. */
+    default:
+        return 1; /* Known proprietary or USB-only family without a Classic codec. */
+    }
+}
+
+/* The host enforces authentication and native-device exclusion before selection.
+ * A single most-specific matching rule wins (fields are not merged across rules).
+ * SDL-style builtin order: zero-ID exact names, placeholder IDs, then the
+ * known VID/PID table. Classification selects a candidate, not verified input.
+ * Verified-bond fallback and the generic HID descriptor path live in host.c. */
+const pad_profile *profile_classic_candidate(uint16_t vid, uint16_t pid, const uint8_t address[6],
+                                             const char *name, int *probe)
+{
+    if (probe)
+        *probe = 0;
+    if (profile_system_bluetooth(vid, pid))
+        return NULL;
+    const uc_controller_override *rule =
+        uc_controller_override_identity(PAD_TRANSPORT_CLASSIC, vid, pid, address, name);
+    if (rule && rule->has_profile) {
+        const pad_profile *p =
+            !strcmp(rule->profile, "generic-hid") ? NULL : profile_builtin_named(rule->profile);
+        if (probe && p == profile_builtin_named("switch"))
+            *probe = 1;
+        return p;
+    }
+    if (rule && rule->has_mapping)
+        return NULL; /* Validated raw mappings retain the generic decoder. */
+    return profile_classic_default(vid, pid, name, probe);
+}
+
+/* Also used by configuration validation, without consulting active overrides. */
+const pad_profile *profile_classic_default(uint16_t vid, uint16_t pid, const char *name, int *probe)
+{
+    if (probe)
+        *probe = 0;
+    /* SDL_GetGamepadTypeFromVIDPID handles zero IDs before its VID/PID table.
+     * These exact names are shared by licensed/compatible models; none proves
+     * a vendor or protocol. Require the bounded Nintendo probe for every match.
+     * This rule applies only to Classic, never grants BLE access or USB support.
+     * https://github.com/libsdl-org/SDL/blob/main/src/joystick/SDL_joystick.c */
+    if (!vid && !pid) {
+        static const char *const switch_names[] = {
+            "Lic Pro Controller",
+            "Nintendo Wireless Gamepad",
+            "Wireless Gamepad",
+        };
+        for (size_t i = 0; name && i < sizeof switch_names / sizeof switch_names[0]; i++) {
+            if (!strcmp(name, switch_names[i])) {
+                if (probe)
+                    *probe = 1;
+                return profile_builtin_named("switch");
+            }
+        }
+        return NULL;
+    }
+    /* SDL treats this placeholder identity as standard, not an Xbox/Switch ID. */
+    if (vid == 1 && pid == 1)
+        return NULL;
+    const pad_profile *local = profile_find(vid, pid);
+    if (local || profile_hid_mapping(vid, pid))
+        return local; /* A maintained generic HID layout wins over SDL inference. */
+    return sdl_classic_candidate(vid, pid, probe);
+}
 profile_family profile_classify_for_transport(pad_transport transport, uint16_t vid, uint16_t pid)
 {
     const pad_profile *p = profile_find_for_transport(transport, vid, pid);
@@ -737,8 +603,11 @@ const char *pad_display_name_for_transport(pad_transport transport, uint16_t vid
 
 int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid)
 {
-    return profile_model_name(vid, pid) != NULL ||
-           profile_find_for_transport(transport, vid, pid) != NULL;
+    /* A display label from SDL is not evidence of supported protocol/output. */
+    for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid && k_models[i].name)
+            return 1;
+    return profile_find_for_transport(transport, vid, pid) != NULL;
 }
 
 int profile_system_bluetooth(uint16_t vid, uint16_t pid)
@@ -749,6 +618,18 @@ int profile_system_bluetooth(uint16_t vid, uint16_t pid)
 int profile_ble_allowed(uint16_t vid, uint16_t pid)
 {
     if (profile_system_bluetooth(vid, pid))
+        return 0;
+    /* Use the vendored SDL classification instead of a separate Nintendo PID
+     * denylist. Unlisted devices (e.g. 057e:2073 in this snapshot) fall through
+     * to the normal BLE allowlist/override policy; an absent SDL entry neither
+     * grants access nor proves compatibility. */
+    EControllerType type = sdl_type(vid, pid);
+    if (type == k_eControllerType_SwitchProController ||
+        type == k_eControllerType_SwitchInputOnlyController ||
+        type == k_eControllerType_SwitchJoyConLeft || type == k_eControllerType_SwitchJoyConRight ||
+        type == k_eControllerType_SwitchJoyConPair ||
+        type == k_eControllerType_Switch2ProController ||
+        type == k_eControllerType_Switch2InputOnlyController)
         return 0;
     if (profile_classify(vid, pid) == PROFILE_SWITCH ||
         profile_classify_for_transport(PAD_TRANSPORT_BLE, vid, pid) == PROFILE_SWITCH)

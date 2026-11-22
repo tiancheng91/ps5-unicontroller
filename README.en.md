@@ -34,7 +34,7 @@ Sign into PS5 with an original controller. Normal mode uses the recommended sign
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bluetooth  | Choose Add Bluetooth device, put the controller in pairing mode, and start a **60-second search**. Click Pair on a discovered device to connect. Use Classic for Switch mode. Stored devices reconnect normally. |
 | USB        | Enable USB in Settings and connect a supported controller mode using a data cable.                                                                                                                               |
-| Phone test | Open `/controller`, select a user and enable it. Disable it before using physical input sources.                                                                                                                 |
+| Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                           |
 
 Check input and binding status on the device card, then test in a game. In normal mode, the first valid input device uses the user selected at startup; assign additional devices on their cards. Bluetooth and USB can run together. The phone test controller is exclusive.
 
@@ -53,14 +53,14 @@ These are **implemented paths**, not a certified hardware list. A product can us
 | Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
 | --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Switch Pro-compatible | Classic input and rumble                    | `057e:2009`, input and rumble                            | The original Switch Pro has the most complete support                    |
-| Switch 2 Pro          | BLE unsupported                             | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
+| Switch 2 Pro          | BLE identification only                     | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
 | Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
 **Connecting a Switch 2 Pro over USB** may redirect PS5 audio to the controller. Under **Sound → Audio Output**, turn off automatic output device switching and select your TV or headset. Features on third-party Switch Pro-compatible controllers depend on their protocol and USB interface. [USB support details](docs/usb.md)
 
-BLE uses an allowlist; the only built-in enabled identity is currently Xbox `045e:0b13`. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
+BLE uses an allowlist; only Xbox `045e:0b13` is enabled by default. Switch 2 BLE models are identified but shown as unsupported, with pairing disabled. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 
 Rumble and battery reporting depend on the device protocol and firmware. Game rumble feedback is implemented for selected protocols; adaptive triggers and full DualSense haptics are not implied. An unknown battery reading does not necessarily prevent input.
 
@@ -82,18 +82,12 @@ Settings also includes rumble and log levels. Settings can also be saved while c
 
 Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. By default, only Bluetooth automatic start is enabled; USB automatic start is disabled. Existing saved choices are preserved.
 
-Bluetooth and USB automatic-start switches share two triggers, Bluetooth delayed by **15 seconds** and USB by **25 seconds**:
+Enable USB and Bluetooth independently or together. The startup delay defaults to **10 seconds** (adjustable from 5 to 60). USB starts at 10 seconds and Bluetooth at 13 seconds after the trigger. Each service keeps its scheduled time when enabled alone. Manual starts bypass this delay.
 
-| Trigger                                  | Behavior                                                                                                                                                                   |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| After login and home focus (recommended) | Wait for a fresh home-focus event and signed-in foreground and saved target users. Reuse the account from the last successful manual Bluetooth start.                      |
-| After resume (experimental)              | Start without waiting for login; after a third-party controller connects, create an application-unbound virtual controller and inject input to test system user selection. |
+- **After login (recommended):** Wait for a fresh home-screen focus event and a signed-in foreground user. Reuse an available saved account, or choose a user on the console.
+- **After resume (experimental):** Start the timer when the console resumes, even before sign-in. Press PS/Home on the connected controller to choose a user. This feature cannot wake the console.
 
-The experiment permits one input source, ignores the saved account and lets you press PS/Home to choose a user on PS5. **User selection and game input still require hardware validation.** “System binding unverified” is not a success indicator. This mode does not start immediately when settings are saved or the payload loads, and it cannot wake the console with a third-party controller. Use the console power button for this test and keep an original controller available.
-
-After-login USB startup requires its saved account. Resume mode can start USB before sign-in. Press PS/Home to choose a user on the console. Resume mode permits only Bluetooth or USB; after-login mode supports both.
-
-Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
+When the payload loads with a signed-in foreground user, services with auto-start enabled follow the same delays. Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 
 ### Updates and data
 
@@ -134,8 +128,16 @@ GitHub Actions uses a pinned PS5 SDK; local Docker is not required. Optional loc
 
 ## License
 
-Licensed under [GNU GPLv3](LICENSE). Third-party sources and licensing requirements are documented in [NOTICE](NOTICE).
+UniController is licensed under [GNU GPLv3](LICENSE). The inherited Bluetooth bridge code retains its upstream GPL-3.0-or-later license. Bundled third-party components retain their own licenses and copyright notices. See [NOTICE](NOTICE).
 
 ### Maintenance and releases
 
 Maintain user-facing changes in [CHANGELOG.md](CHANGELOG.md). Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)
+
+## Acknowledgments
+
+Thank you to StonedModder and seregonwar for [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher) and its early research on creating a virtual DualSense on PS5 and assigning it to a user.
+
+UniController’s Bluetooth bridge, pairing, and controller protocol code derive from [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads) by AngelLopezTorres. We also thank X-F1REBALL-X for its upstream project, [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5), and sinfiltros for AnyPad-PS5, the original Bluetooth bridge in this lineage.
+
+Thank you to SDL and Valve for the controller identification table. UniController uses its VID/PID entries, controller types, and model names to help identify devices. UniController’s drivers handle connections and decode input. [SDL sources and zlib license](vendor/sdl/README.md)

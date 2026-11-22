@@ -197,7 +197,9 @@ int main(void)
     assert(!uc_core_disable_session(chosen) && uc_core_session_active(peer));
     assert(!uc_core_disable_session(peer));
     uint64_t system_session = 0, other = 0;
-    assert(uc_core_enable(0, 8200, &other) < 0);
+    assert(!uc_core_enable(0, 8200, &other) && uc_core_test_session() == other);
+    assert(!uc_core_disable_session(other));
+    other = 0;
     assert(uc_core_enable_physical(0, 8200, &other) < 0);
     assert(uc_core_system_assignment_available(0));
     assert(uc_core_enable_system_assigned(8201, &system_session) == 0);

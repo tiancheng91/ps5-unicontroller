@@ -64,6 +64,24 @@ with tempfile.TemporaryDirectory() as directory:
         UC_TEST_FAIL_BIND=str(fail_bind),
         UC_TEST_REST=str(rest),
     )
+    due = root / "auto-due"
+    settings_path = root / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "page_level": "info",
+                "recording_level": "info",
+                "rumble": True,
+                "swap_ab": False,
+                "button_mapping": list(range(32)),
+                "bluetooth_auto_start": True,
+                "usb_auto_start": True,
+                "auto_start_delay_seconds": 7,
+            }
+        )
+    )
+    env["UC_TEST_AUTO_DUE"] = str(due)
     with reserve() as available:
         port = available.getsockname()[1]
     with (root / "settings.json.runtime.log").open("w+") as log:
@@ -75,6 +93,23 @@ with tempfile.TemporaryDirectory() as directory:
         )
         try:
             initial = ready(p, port)
+
+            def startup_log():
+                return (root / "settings.json.runtime.log").read_text()
+
+            due.touch()
+            for _ in range(100):
+                if "[usb-auto] start result=" in startup_log():
+                    break
+                time.sleep(0.02)
+            assert "[usb-auto] start result=" in startup_log()
+            time.sleep(2.5)
+            assert "[bluetooth] queued start result=" not in startup_log()
+            for _ in range(100):
+                if "[bluetooth] queued start result=" in startup_log():
+                    break
+                time.sleep(0.02)
+            assert "[bluetooth] queued start result=" in startup_log()
             # Resume keeps the configured port and authentication token.
             for _ in range(3):
                 p.send_signal(signal.SIGCONT)

@@ -42,26 +42,32 @@ async function api(path, method = "GET", body, keepalive = false) {
 }
 let enabling = false;
 let enableEpoch = 0;
-async function enableOutput(user_id, operation) {
+let pendingId = null;
+function removeOutput(id, keepalive = false) {
+  if (!Number.isSafeInteger(id) || id <= 0) return Promise.resolve();
+  return api("/test-controller", "DELETE", { session_id: id }, keepalive);
+}
+async function enableOutput(operation) {
   const started = Date.now();
+  let id = null;
   try {
     while (operation === enableEpoch) {
-      const result = await api("/test-controller", "POST", { user_id });
+      const body = id ? { user_id: 0, session_id: id } : { user_id: 0 };
+      const result = await api("/test-controller", "POST", body);
+      id = result.session_id;
+      if (!Number.isSafeInteger(id) || id <= 0) throw Error("服务器会话编号无效");
       if (operation !== enableEpoch) break;
       if (!result.pending) return result;
+      pendingId = id;
       if (Date.now() - started > 10000) throw Error("初始化仍未完成，请稍后重试");
       status("正在初始化虚拟输出…");
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
+    throw Error("启用已取消");
   } catch (error) {
-    // A timed-out request may still have created an output; cleanup after it settles.
-    if (operation !== enableEpoch || error.httpStatus !== 409)
-      await api("/test-controller", "DELETE").catch(() => {});
+    await removeOutput(id).catch(() => {});
     throw error;
   }
-  // A cancelled POST may succeed after the first DELETE; remove that late result.
-  await api("/test-controller", "DELETE");
-  throw Error("启用已取消");
 }
 const touchMessages = {
   服务器未返回会话令牌: "No session token returned",
@@ -69,11 +75,9 @@ const touchMessages = {
   "初始化仍未完成，请稍后重试": "Initialization not complete; retry later",
   "正在初始化虚拟输出…": "Initializing virtual output…",
   启用已取消: "Enable cancelled",
-  "已启用 · 输入已确认 · 租约超时 500ms": "Enabled · input acknowledged · 500ms lease",
+  "已连接 · 输入正常": "Connected · input received",
   "输入失败，已停止发送：": "Input failed; sending stopped: ",
-  "默认关闭 · 选择已登录用户后启用": "Off by default · choose a signed-in user to enable",
-  "读取账号失败：": "Unable to load users: ",
-  没有可用的已登录用户: "No signed-in users available",
+  "未创建 · 创建后在 PS5 上选择使用者": "Ready · create a controller, then choose a user on PS5",
   "页面已隐藏，输出已关闭": "Page hidden; output disabled",
   服务器会话编号无效: "Invalid server session ID",
   "启用失败：": "Enable failed: ",
@@ -92,8 +96,6 @@ const touchMessages = {
   "状态同步失败：": "State synchronization failed: ",
   专注操控: "Focus mode",
   退出专注: "Exit focus mode",
-  "默认关闭 · 正在读取已登录用户": "Off by default · loading signed-in users",
-  没有已登录用户: "No signed-in users",
 };
 function translateTouch(message) {
   if (!window.UCUI || UCUI.get().lang === "zh") return message;
@@ -101,7 +103,7 @@ function translateTouch(message) {
     message = message.split(key).join(touchMessages[key]);
   return message;
 }
-let lastStatus = "默认关闭 · 正在读取已登录用户";
+let lastStatus = "正在同步手柄状态…";
 function status(message, error = false) {
   lastStatus = message;
   $("status").textContent = translateTouch(message);
@@ -113,26 +115,6 @@ window.addEventListener("uc-language", () => {
     document.body.classList.contains("focus-mode") ? "退出专注" : "专注操控",
   );
 });
-function userList(data) {
-  return Array.isArray(data) ? data : data.users || [];
-}
-function fillUsers(data) {
-  $("user").replaceChildren();
-  for (const u of userList(data)) {
-    if (u.signed_in === false) continue;
-    const id = u.user_id ?? u.id;
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = (u.display_name || u.name || "用户") + " · " + id;
-    $("user").append(o);
-  }
-  if (!$("user").options.length) {
-    const o = document.createElement("option");
-    o.value = "";
-    o.textContent = translateTouch("没有已登录用户");
-    $("user").append(o);
-  }
-}
 let stateReady = false,
   statePending = false,
   externalSource = null,
@@ -181,8 +163,7 @@ function render() {
     !stateReady || !!externalSource || session !== null || statePending || enabling || disabling;
   $("disable").disabled =
     disabling || !!externalSource || (session === null && !statePending && !enabling);
-  $("user").disabled =
-    !stateReady || !!externalSource || session !== null || statePending || enabling || disabling;
+  $("release").disabled = !active;
 }
 function reset() {
   held.clear();
@@ -205,7 +186,7 @@ async function pump() {
   const body = frame();
   try {
     await api("/test-controller/input", "POST", body);
-    if (sentEpoch === epoch) status("已启用 · 输入已确认 · 租约超时 500ms");
+    if (sentEpoch === epoch) status("已连接 · 输入正常");
   } catch (e) {
     if (sentEpoch === epoch) {
       stop();
@@ -256,7 +237,7 @@ async function syncState() {
       stop();
     }
     session = serverSession;
-    if (data.enabled && data.user_id) $("user").value = String(data.user_id);
+    pendingId = statePending ? data.pending_id : null;
     if (!active) {
       status(
         externalSource === "bluetooth"
@@ -267,7 +248,7 @@ async function syncState() {
               ? "模拟手柄正在初始化 · 可取消"
               : session !== null
                 ? "模拟手柄已启用 · 可停用后重新启用"
-                : "默认关闭 · 选择已登录用户后启用",
+                : "未创建 · 创建后在 PS5 上选择使用者",
       );
     }
   } catch (e) {
@@ -280,30 +261,21 @@ async function syncState() {
     render();
   }
 }
-async function init() {
-  try {
-    fillUsers(await api("/users"));
-    await syncState();
-  } catch (e) {
-    status("读取账号失败：" + e.message, true);
-  }
-}
 $("enable").onclick = async () => {
   if (enabling || disabling || !stateReady || externalSource || session !== null || statePending)
     return;
-  if (!$("user").value) return status("没有可用的已登录用户", true);
   enabling = true;
   const operation = ++enableEpoch;
   render();
   try {
-    if (session !== null) await api("/test-controller", "DELETE");
-    const data = await enableOutput(Number($("user").value), operation);
+    const data = await enableOutput(operation);
     if (operation !== enableEpoch) return;
     if (document.hidden) {
-      await api("/test-controller", "DELETE");
+      await removeOutput(data.session_id);
       throw Error("页面已隐藏，输出已关闭");
     }
     if (!Number.isSafeInteger(data.session_id)) throw Error("服务器会话编号无效");
+    pendingId = null;
     session = data.session_id;
     sequence = 0;
     epoch++;
@@ -326,7 +298,8 @@ $("disable").onclick = async () => {
   epoch++;
   stop();
   try {
-    await api("/test-controller", "DELETE");
+    await removeOutput(session || pendingId);
+    pendingId = null;
     session = null;
     statePending = false;
     render();
@@ -413,41 +386,31 @@ for (const [id, offset] of [
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"])
     stick.addEventListener(type, end);
 }
+function leaveController() {
+  const id = active ? session : enabling ? pendingId : null;
+  ++enableEpoch;
+  epoch++;
+  if (active) releaseAll(true);
+  stop();
+  removeOutput(id, true).catch(() => {});
+}
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    if (enabling) {
-      ++enableEpoch;
-      api("/test-controller", "DELETE", undefined, true).catch(() => {});
-    }
-    releaseAll(true);
-    epoch++;
-    stop();
+    leaveController();
     status("页面已隐藏 · 已释放，返回后请重新启用");
   } else {
     syncState();
   }
 });
-window.addEventListener("pagehide", () => {
-  if (enabling) {
-    ++enableEpoch;
-    api("/test-controller", "DELETE", undefined, true).catch(() => {});
-  }
-  releaseAll(true);
-  epoch++;
-  stop();
+window.addEventListener("pagehide", leaveController);
+window.addEventListener("blur", () => {
+  if (active) releaseAll();
 });
-window.addEventListener("blur", () => releaseAll());
 window.addEventListener("offline", () => {
-  if (enabling) {
-    ++enableEpoch;
-    api("/test-controller", "DELETE", undefined, true).catch(() => {});
-  }
-  releaseAll(true);
-  epoch++;
-  stop();
+  leaveController();
   status("网络已断开 · 输入停止；服务器将在 500ms 内释放", true);
 });
-init();
+syncState();
 render();
 setInterval(syncState, 2000);
 window.addEventListener("focus", syncState);

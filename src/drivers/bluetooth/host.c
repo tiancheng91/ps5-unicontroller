@@ -1,6 +1,8 @@
+#include "../protocols/nintendo.h"
 #include "host_int.h"
 #include "log.h"
 #include "util.h"
+#include "../config/overrides.h"
 
 #include <errno.h>
 #include <sys/stat.h>
@@ -89,8 +91,58 @@ link_t *link_new(host_t *h, const unsigned char *addr)
     return NULL;
 }
 
+enum {
+    SECURITY_PIN = 1u << 0,
+    SECURITY_KEY_REQUEST = 1u << 1,
+    SECURITY_KEY_NEW = 1u << 2,
+    SECURITY_IO_REQUEST = 1u << 3,
+    SECURITY_IO_RESPONSE = 1u << 4,
+    SECURITY_CONFIRM = 1u << 5,
+    SECURITY_SSP_COMPLETE = 1u << 6,
+    SECURITY_PASSKEY = 1u << 7,
+    SECURITY_OOB = 1u << 8,
+};
+
+/* Only allocated links are diagnosed. Replies can fail before reaching HCI;
+ * command completion is logged separately and is not proof of authentication. */
+static void security_reply(host_t *h, link_t *l, unsigned op, const void *p, int len)
+{
+    int sent = send_cmd(h, op, p, len);
+    if (l->diag_security_replies < 24) {
+        l->diag_security_replies++;
+        uc_log_debug(
+            "[bt-security] reply address=%s handle=%#x opcode=%#x queued=%d elapsed_ms=%ld",
+            addr_str(l->addr), l->handle, op, sent, now_ms() - l->t_conn);
+    }
+}
+
+static void security_wait(link_t *l, long now)
+{
+    long elapsed = now - l->t_conn;
+    if (l->diag_security_waits >= 4 || elapsed < (l->diag_security_waits + 1) * 5000L)
+        return;
+    l->diag_security_waits++;
+    uc_log_info("[bt-security] waiting address=%s handle=%#x stage=%s elapsed_ms=%ld "
+                "events=%#x auth=%d/%d encryption=%d/%d",
+                addr_str(l->addr), l->handle, l->auth_ok ? "encryption" : "authentication", elapsed,
+                l->diag_security_events, l->auth_sent, l->auth_ok, l->enc_sent, l->enc_on);
+}
+
 void link_free(host_t *h, link_t *l)
 {
+    if (l->used && l->connected && !l->le) {
+        unsigned events = l->diag_security_events;
+        uc_log_info("[bt-security] summary address=%s handle=%#x pairing=%d "
+                    "auth=%d/%d encryption=%d/%d pin=%u key_request=%u key_new=%u "
+                    "io_request=%u io_response=%u confirm=%u ssp_complete=%u unsupported=%#x "
+                    "elapsed_ms=%ld",
+                    addr_str(l->addr), l->handle, l->pairing, l->auth_sent, l->auth_ok, l->enc_sent,
+                    l->enc_on, !!(events & SECURITY_PIN), !!(events & SECURITY_KEY_REQUEST),
+                    !!(events & SECURITY_KEY_NEW), !!(events & SECURITY_IO_REQUEST),
+                    !!(events & SECURITY_IO_RESPONSE), !!(events & SECURITY_CONFIRM),
+                    !!(events & SECURITY_SSP_COMPLETE), events & (SECURITY_PASSKEY | SECURITY_OOB),
+                    now_ms() - l->t_conn);
+    }
     if (l->used)
         uc_log_debug("[bt-link] release address=%s handle=%#x transport=%s connected=%d "
                      "pairing=%d auth_sent=%d auth_ok=%d encrypted=%d ids_known=%d "
@@ -189,6 +241,9 @@ int db_save(host_t *h)
         memcpy(r + 31, d->rand, 8);
         memcpy(r + 39, d->irk, 16);
         r[55] = d->has_irk;
+        /* Reserved bytes, compatible with existing 64-byte PADBRG02 stores. */
+        r[56] = d->switch_type;
+        r[57] = d->switch_type ? 0x53 : 0;
         fwrite(r, 1, sizeof r, f);
     }
     ok = fflush(f) == 0 && !ferror(f) && fsync(fileno(f)) == 0;
@@ -228,6 +283,7 @@ static void db_load(host_t *h)
         memcpy(d->rand, r + 31, 8);
         memcpy(d->irk, r + 39, 16);
         d->has_irk = r[55];
+        d->switch_type = !d->le && r[57] == 0x53 && (r[56] == 3 || r[56] == 6) ? r[56] : 0;
     }
     fclose(f);
     log_line("store: %d paired pad(s)", h->ndb);
@@ -774,6 +830,8 @@ static void sdp_finish(host_t *h, link_t *l, int ok)
         uint16_t vid = 0, pid = 0;
         if (ok && sdp_find_ids(l->sdp_buf, l->sdp_len, &vid, &pid)) {
             db_rec *r = db_put(h, l->addr);
+            if (r->vid != vid || r->pid != pid)
+                r->switch_type = 0;
             r->vid = vid;
             r->pid = pid;
             db_save(h);
@@ -928,6 +986,35 @@ void link_input(host_t *h, link_t *l, const unsigned char *rep, int len)
     if (!l->prof || len < 1)
         return;
     l->diag_rx++;
+    if (l->switch_probe && !l->switch_probe_done) {
+        if (!l->switch_probe_writes)
+            return; /* No unsolicited reply may authorize output. */
+        uint8_t type = 0;
+        int result = profile_switch_info_reply(l->pctx.bytes, rep, len, &type);
+        if (result < 0) {
+            uc_log_warn(
+                "[bt-identify] address=%s device-info rejected flags=%02x type=%02x length=%d",
+                addr_str(l->addr), len > 13 ? rep[13] : 0, len > 17 ? rep[17] : 0, len);
+            link_disconnect(h, l, "Switch device-info rejected or unsupported type");
+        } else if (result > 0) {
+            l->switch_probe_done = 1;
+            l->switch_type = type;
+            l->t_init = now_ms();
+            log_line("[bt-identify] address=%s device-info type=%02x; waiting for full input",
+                     addr_str(l->addr), type);
+        }
+        return;
+    }
+    if (l->switch_probe && rep[0] == 0x21) {
+        /* Factory calibration is metadata, not input: it cannot satisfy the
+         * full-report gate or publish a state frame. Ignore repeated device-info
+         * replies here so they cannot change the already verified family. */
+        if (len >= 15 && rep[14] == 0x10)
+            (void)l->prof->parse(l->pctx.bytes, rep, len, &l->st);
+        return;
+    }
+    if (l->switch_probe && (rep[0] != 0x30 || len < 49 || len > 64))
+        return;
     r = l->prof->parse(l->pctx.bytes, rep, len, &l->st);
     if (l->diag_rx <= 6) {
         log_line("pad %s: input sample id=%02x len=%d parse=%d ready=%d", addr_str(l->addr), rep[0],
@@ -945,7 +1032,7 @@ void link_input(host_t *h, link_t *l, const unsigned char *rep, int len)
         }
         l->diag_buttons = l->st.buttons;
     }
-    if (r == PARSE_FULL)
+    if (r == PARSE_FULL || (l->input_probe == 2 && r != PARSE_NONE && rep[0] == 1 && len >= 16))
         l->full = 1;
     if (r != PARSE_NONE && l->ready && h->ev.on_state)
         h->ev.on_state(h->ev.ud, slot_of(h, l), &l->st);
@@ -956,11 +1043,22 @@ void link_ready(host_t *h, link_t *l)
     pad_info info;
 
     l->ready = 1;
+    if (l->switch_probe && l->full && l->switch_type) {
+        db_rec *bond = db_find(h, l->addr);
+        if (bond && bond->switch_type != l->switch_type) {
+            bond->switch_type = l->switch_type;
+            (void)db_save(h);
+        }
+    }
     memset(&info, 0, sizeof info);
     info.transport = l->le ? PAD_TRANSPORT_BLE : PAD_TRANSPORT_CLASSIC;
     info.vid = l->vid;
     info.pid = l->pid;
     info.profile = l->prof->name;
+    const uc_controller_override *rule =
+        uc_controller_override_identity(info.transport, l->vid, l->pid, l->addr, l->name);
+    if (rule && rule->has_name)
+        info.display_name = rule->name;
     memcpy(info.addr, l->addr, 6);
     log_line("pad %s: ready as %s in slot %d", addr_str(l->addr), l->prof->name, slot_of(h, l));
     if (!l->le)
@@ -1252,7 +1350,8 @@ void host_found(host_t *h, int le, uint8_t addr_type, const unsigned char *addr,
     if (!h || now >= h->scan_until || h->clearing || link_by_addr(h, addr))
         return;
     db_rec *bond = db_find(h, addr);
-    if (bond && (profile_system_bluetooth(bond->vid, bond->pid) || bond->le == le))
+    if (bond && (profile_system_bluetooth(bond->vid, bond->pid) ||
+                 (bond->le == le && (!le || profile_ble_allowed(bond->vid, bond->pid)))))
         return; /* Reconnection is independent of new-device discovery. */
     if (!le)
         for (int i = 0; i < h->system_addr_count; i++)
@@ -1371,12 +1470,33 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         l->handle = le16(ev + 3) & 0x0FFF;
         l->t_conn = now_ms();
         log_line("pad %s: connected, handle %#05x", addr_str(l->addr), l->handle);
+        uc_log_debug("[bt-security] connection address=%s handle=%#x pairing=%d "
+                     "link_type=%u initial_encryption=%u stored_bond=%d",
+                     addr_str(l->addr), l->handle, l->pairing, ev[11], ev[12],
+                     db_find(h, l->addr) != NULL);
         break;
 
+    case 0x07: /* Remote Name Request Complete: only our allocated Classic links. */
+        if (len >= 9 && (l = link_by_addr(h, ev + 3)) && !l->le && l->name_requested &&
+            !l->name_done) {
+            l->name_done = 1;
+            if (!ev[2]) {
+                size_t size = (size_t)(len - 9);
+                if (size >= sizeof l->name)
+                    size = sizeof l->name - 1;
+                memcpy(l->name, ev + 9, size);
+                l->name[size] = 0;
+            }
+            uc_log_debug("[bt-identify] address=%s remote-name status=%02x available=%d",
+                         addr_str(l->addr), ev[2], l->name[0] != 0);
+        }
+        break;
     case 0x05: /* Disconnection Complete: status, handle, reason */
         if (len < 6 || !(l = link_by_handle(h, le16(ev + 3))))
             break;
         log_line("pad %s: disconnected (reason %#04x)", addr_str(l->addr), ev[5]);
+        uc_log_debug("[bt-security] disconnect address=%s handle=%#x status=%#x reason=%#x",
+                     addr_str(l->addr), l->handle, ev[2], ev[5]);
         link_free(h, l);
         break;
 
@@ -1491,8 +1611,9 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         break;
 
     case 0x16: /* PIN Code Request: legacy pairing */
-        if (len < 8 || !link_by_addr(h, ev + 2))
+        if (len < 8 || !(l = link_by_addr(h, ev + 2)))
             break;
+        l->diag_security_events |= SECURITY_PIN;
         memset(p, 0, sizeof p);
         memcpy(p, ev + 2, 6);
         p[6] = 4;
@@ -1500,12 +1621,13 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         uc_log_debug(
             "[bt-security] PIN request address=%s; replying with legacy policy (PIN redacted)",
             addr_str(ev + 2));
-        send_cmd(h, OP_PIN_CODE_REPLY, p, 23);
+        security_reply(h, l, OP_PIN_CODE_REPLY, p, 23);
         break;
 
     case 0x17: /* Link Key Request */
-        if (len < 8 || !link_by_addr(h, ev + 2))
+        if (len < 8 || !(l = link_by_addr(h, ev + 2)))
             break;
+        l->diag_security_events |= SECURITY_KEY_REQUEST;
         {
             db_rec *r = db_find(h, ev + 2);
             uc_log_debug("[bt-security] link-key request address=%s stored=%d; key redacted",
@@ -1513,9 +1635,9 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             if (r) {
                 memcpy(p, ev + 2, 6);
                 memcpy(p + 6, r->key, 16);
-                send_cmd(h, OP_LINK_KEY_REPLY, p, 22);
+                security_reply(h, l, OP_LINK_KEY_REPLY, p, 22);
             } else {
-                send_cmd(h, OP_LINK_KEY_NEG_REPLY, ev + 2, 6);
+                security_reply(h, l, OP_LINK_KEY_NEG_REPLY, ev + 2, 6);
             }
         }
         break;
@@ -1531,38 +1653,59 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             r->type = ev[24];
             db_save(h);
         }
+        l->diag_security_events |= SECURITY_KEY_NEW;
         log_line("pad %s: paired, key stored", addr_str(ev + 2));
+        uc_log_debug("[bt-security] new link-key address=%s type=%#x; key redacted",
+                     addr_str(l->addr), ev[24]);
         break;
 
     case 0x31: /* IO Capability Request */
-        if (len < 8 || !link_by_addr(h, ev + 2))
+        if (len < 8 || !(l = link_by_addr(h, ev + 2)))
             break;
+        l->diag_security_events |= SECURITY_IO_REQUEST;
         memcpy(p, ev + 2, 6);
         p[6] = 0x03; /* NoInputNoOutput */
         p[7] = 0x00; /* no OOB data */
         p[8] = 0x04; /* general bonding, no MITM */
         uc_log_debug("[bt-security] IO capability request address=%s capability=3 auth=4",
                      addr_str(ev + 2));
-        send_cmd(h, OP_IO_CAP_REPLY, p, 9);
+        security_reply(h, l, OP_IO_CAP_REPLY, p, 9);
         break;
 
     case 0x32: /* IO Capability Response: metadata only; never log authentication secrets. */
-        if (len >= 11 && link_by_addr(h, ev + 2))
+        if (len >= 11 && (l = link_by_addr(h, ev + 2))) {
+            l->diag_security_events |= SECURITY_IO_RESPONSE;
             uc_log_debug("[bt-security] remote capability address=%s capability=%u oob=%u auth=%u",
                          addr_str(ev + 2), ev[8], ev[9], ev[10]);
+        }
         break;
     case 0x36: /* Simple Pairing Complete */
-        if (len >= 9 && link_by_addr(h, ev + 3))
+        if (len >= 9 && (l = link_by_addr(h, ev + 3))) {
+            l->diag_security_events |= SECURITY_SSP_COMPLETE;
             uc_log_debug("[bt-security] simple pairing complete address=%s status=%#x",
                          addr_str(ev + 3), ev[2]);
+        }
+        break;
+
+    case 0x34: /* User Passkey Request: current policy has no passkey entry. */
+    case 0x35: /* Remote OOB Data Request: current policy has no OOB data. */
+        if (len >= 8 && (l = link_by_addr(h, ev + 2))) {
+            unsigned bit = ev[0] == 0x34 ? SECURITY_PASSKEY : SECURITY_OOB;
+            if (!(l->diag_security_events & bit))
+                uc_log_warn("[bt-security] unsupported request address=%s handle=%#x event=%#x "
+                            "method=%s; authentication policy unchanged",
+                            addr_str(l->addr), l->handle, ev[0], ev[0] == 0x34 ? "passkey" : "oob");
+            l->diag_security_events |= bit;
+        }
         break;
 
     case 0x33: /* User Confirmation Request */
-        if (len < 8 || !link_by_addr(h, ev + 2))
+        if (len < 8 || !(l = link_by_addr(h, ev + 2)))
             break;
+        l->diag_security_events |= SECURITY_CONFIRM;
         uc_log_debug("[bt-security] user confirmation request address=%s; numeric value redacted",
                      addr_str(ev + 2));
-        send_cmd(h, OP_USER_CONFIRM_REPLY, ev + 2, 6);
+        security_reply(h, l, OP_USER_CONFIRM_REPLY, ev + 2, 6);
         break;
 
     default:
@@ -1572,9 +1715,46 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
 
 /* ---- per-link state machine ---------------------------------------------- */
 
-/* Advances one link from whatever has happened so far. Each step waits
- * first for the pad to take it, then takes it itself, so it works for pads
- * that drive their own reconnection and for those that wait to be asked. */
+/* Only user-selected/previously bonded Classic links reach this probe. Never
+ * send vendor commands to arbitrary scan results. Linux reads device info before
+ * controller initialization; licensed devices retain default stick calibration.
+ * https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c */
+static int switch_candidate_tick(host_t *h, link_t *l, long now)
+{
+    if (!l->switch_probe)
+        return 1;
+    if (l->switch_probe_done) {
+        init_tick(h, l, now);
+        if (l->full)
+            return 1;
+        if (l->init_done)
+            link_disconnect(h, l, "Switch candidate has no full input");
+        return 0;
+    }
+    if (!l->t_switch_probe) {
+        l->t_switch_probe = now;
+        log_line("[bt-identify] address=%s Switch candidate; querying device info",
+                 addr_str(l->addr));
+    }
+    if (now < l->t_switch_probe || now - l->t_switch_probe >= 2400 ||
+        (now >= l->t_switch_probe_next &&
+         (l->switch_probe_writes >= 3 || l->switch_probe_attempts >= 16))) {
+        link_disconnect(h, l, "Switch device-info timeout");
+        return 0;
+    }
+    if (now < l->t_switch_probe_next)
+        return 0;
+    unsigned char packet[32];
+    int length = profile_switch_info_request(l->pctx.bytes, packet + 1, sizeof packet - 1);
+    ++l->switch_probe_attempts;
+    int sent = length > 0 && send_report(h, l, packet, length);
+    l->switch_probe_writes += sent != 0;
+    l->t_switch_probe_next = now + (sent ? 600 : 20);
+    uc_log_debug("[bt-identify] address=%s device-info attempt=%u sent=%d", addr_str(l->addr),
+                 l->switch_probe_attempts, sent);
+    return 0;
+}
+/* Each link waits for the controller to drive a step, then takes it itself. */
 static void link_step(host_t *h, link_t *l, long now)
 {
     unsigned char p[3];
@@ -1603,7 +1783,9 @@ static void link_step(host_t *h, link_t *l, long now)
         return;
     }
 
-    /* Authentication and encryption. */
+    /* Authentication and encryption. No new retries or security policy changes. */
+    if (!l->auth_ok || !l->enc_on)
+        security_wait(l, now);
     if (!l->auth_ok) {
         if (!l->auth_sent && now - l->t_conn >= (l->pairing ? 0 : T_SELF_AUTH)) {
             put16(p, l->handle);
@@ -1636,8 +1818,14 @@ static void link_step(host_t *h, link_t *l, long now)
         log_line("pad %s: link encrypted", addr_str(l->addr));
     }
 
-    /* Which pad is it: the store, the pad's Device ID record, and for pads
-     * with no profile, the pad's own HID descriptor. */
+    /* Classic identification order (docs/bluetooth.md):
+     * authentication/encryption -> stored or SDP identity -> native PS5 exclusion
+     * -> explicit rule (address > exact name > VID/PID) -> zero-ID exact SDL names
+     * -> placeholder identity -> builtin VID/PID -> SDL family candidate
+     * -> unsupported-family rejection -> verified bond family hint
+     * -> descriptor-based generic HID. Missing names are queried with a deadline.
+     * Candidate Switch profiles must pass device-info and full input gates below;
+     * neither a name nor a cached type grants a ready virtual controller. */
     if (!l->ids_known && !l->sdp_query) {
         db_rec *r = db_find(h, l->addr);
         if (r && (r->vid || r->pid)) {
@@ -1653,7 +1841,64 @@ static void link_step(host_t *h, link_t *l, long now)
         return;
     }
     if (l->ids_known && !l->prof && !l->sdp_query) {
-        l->prof = profile_find_for_transport(PAD_TRANSPORT_CLASSIC, l->vid, l->pid);
+        db_rec *bond = db_find(h, l->addr);
+        /* A bond's verified family survives restarts, but is re-probed each time.
+         * Explicit configuration still wins over this hint. */
+        const uc_controller_override *rule = uc_controller_override_identity(
+            PAD_TRANSPORT_CLASSIC, l->vid, l->pid, l->addr, l->name);
+        if (!l->name[0] && !l->name_done &&
+            (uc_controller_override_needs_name(l->vid, l->pid, l->addr) ||
+             (!profile_find(l->vid, l->pid) && !(rule && rule->has_profile)))) {
+            if (!l->name_requested) {
+                unsigned char request[10] = {0};
+                memcpy(request, l->addr, 6);
+                request[6] = 1;
+                l->name_requested = 1;
+                l->t_name = now;
+                if (!send_cmd(h, OP_REMOTE_NAME_REQUEST, request, sizeof request))
+                    l->name_done = 1;
+            }
+            if (!l->name_done && now - l->t_name < 2000)
+                return;
+            l->name_done = 1;
+        }
+        l->prof = profile_classic_candidate(l->vid, l->pid, l->addr, l->name, &l->switch_probe);
+        const char *source = rule && rule->has_profile       ? "override"
+                             : profile_find(l->vid, l->pid)  ? "vid-pid"
+                             : l->prof && (l->vid || l->pid) ? "sdl-id"
+                             : l->prof                       ? "name-candidate"
+                                                             : "descriptor";
+        if (!l->prof && !(rule && (rule->has_profile || rule->has_mapping)) &&
+            profile_classic_unsupported(l->vid, l->pid)) {
+            for (int i = 0; i < h->discovered_count; i++) {
+                host_discovered_info *found = &h->discovered[i].info;
+                if (!found->le && !memcmp(found->addr, l->addr, 6)) {
+                    found->unsupported = 1;
+                    snprintf(found->reason, sizeof found->reason, "classic_protocol_not_supported");
+                    const char *model = profile_model_name(l->vid, l->pid);
+                    if (model)
+                        snprintf(found->name, sizeof found->name, "%s", model);
+                }
+            }
+            uc_log_warn("[bt-identify] address=%s vid=%04x pid=%04x source=sdl-id "
+                        "protocol=unsupported-classic",
+                        addr_str(l->addr), l->vid, l->pid);
+            db_forget(h, l->addr);
+            link_disconnect(h, l, "classic_protocol_not_supported");
+            return;
+        }
+        if (!l->prof && !(rule && (rule->has_profile || rule->has_mapping)) && bond &&
+            bond->switch_type && !profile_hid_mapping(l->vid, l->pid)) {
+            l->prof = profile_builtin_named("switch");
+            l->switch_probe = 1;
+            source = "verified-bond";
+        }
+        uc_log_info("[bt-identify] address=%s vid=%04x pid=%04x source=%s profile=%s probe=%d",
+                    addr_str(l->addr), l->vid, l->pid, source,
+                    l->prof ? l->prof->name : "generic-hid", l->switch_probe);
+        if (l->prof && !l->switch_probe && !profile_find(l->vid, l->pid) &&
+            !(rule && rule->has_profile))
+            l->input_probe = l->prof == profile_builtin_named("xbox") ? 2 : 1;
         if (l->prof && l->prof->setup)
             l->prof->setup(l->pctx.bytes, l->vid, l->pid);
         if (!l->prof) {
@@ -1680,8 +1925,12 @@ static void link_step(host_t *h, link_t *l, long now)
         chan_connect(h, l, &l->intr);
 
     if (!l->ready) {
-        if (l->ctrl.st == CH_OPEN && l->intr.st == CH_OPEN)
-            link_ready(h, l);
+        if (l->ctrl.st == CH_OPEN && l->intr.st == CH_OPEN && switch_candidate_tick(h, l, now)) {
+            if (l->input_probe)
+                init_tick(h, l, now);
+            if (!l->input_probe || l->full)
+                link_ready(h, l);
+        }
         return;
     }
 
@@ -1846,6 +2095,8 @@ int host_discovered_get(const host_t *h, int index, host_discovered_info *out)
     long now = now_ms();
     if (now < h->discovered[index].seen || now - h->discovered[index].seen >= 120000)
         out->state = "expired";
+    else if (out->unsupported)
+        out->state = "unsupported";
     else if (h->discovered[index].attempted) {
         int paired = 0;
         for (int i = 0; i < h->ndb; i++)
@@ -1878,18 +2129,31 @@ int host_pair_device(host_t *h, uint32_t id)
         host_discovered_info info;
         if (!host_discovered_get(h, i, &info) || info.id != id)
             continue;
-        if (!strcmp(info.state, "expired") || !strcmp(info.state, "connected") ||
-            !strcmp(info.state, "paired") || link_by_addr(h, info.addr))
+        if (info.unsupported || !strcmp(info.state, "expired") ||
+            !strcmp(info.state, "connected") || !strcmp(info.state, "paired") ||
+            link_by_addr(h, info.addr))
             return 0;
         int accepted = info.le ? le_pair_selected(h, (uint8_t)info.addr_type, info.addr)
                                : pair_with(h, h->discovered[i].classic_record);
         if (accepted) {
+            link_t *link = link_by_addr(h, info.addr);
+            if (link && !info.le)
+                snprintf(link->name, sizeof link->name, "%s", info.name);
             h->discovered[i].attempted = 1;
             h->discovered[i].info.reason[0] = 0;
         }
         return accepted;
     }
     return 0;
+}
+
+int host_output_pending(const host_t *h, int slot)
+{
+    if (!h || !host_connected(h, slot))
+        return 0;
+    const link_t *l = &h->links[slot];
+    return !l->disconnecting && l->prof->build_output && l->prof->rumble_refresh_ms &&
+           !l->init_done;
 }
 
 int host_output_ready(const host_t *h, int slot)
@@ -2053,6 +2317,10 @@ int host_pad_get(const host_t *h, int slot, pad_info *info, pad_state *st)
     info->vid = l->vid;
     info->pid = l->pid;
     info->profile = l->prof ? l->prof->name : "";
+    const uc_controller_override *rule =
+        uc_controller_override_identity(info->transport, l->vid, l->pid, l->addr, l->name);
+    if (rule && rule->has_name)
+        info->display_name = rule->name;
     memcpy(info->addr, link_identity(l), 6);
     *st = l->st;
     return 1;

@@ -168,7 +168,7 @@ const root = path.resolve(__dirname, "../..");
       "keyed refresh preserves focus",
     );
     await details.click();
-    await page.locator('summary[x-label="advancedAssignment"]').click();
+    await page.locator("#assign-device").waitFor({ state: "visible" });
     assert.equal(await page.locator("#user").count(), 0);
     await page.locator("#assign-device").click();
     assert(
@@ -229,12 +229,15 @@ const root = path.resolve(__dirname, "../..");
     }
     await page.locator('nav a[data-page="settings"]').click();
     await page.locator("#settings-view").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () => document.querySelector("#build-id")?.textContent === "preview + local",
+    );
     const usbAuto = page.locator("#usb-auto-start");
     await usbAuto.check();
     await page.locator('[data-form="bluetooth_auto_start"]').check();
     await page.locator('[data-form="bluetooth_auto_trigger"]').selectOption("resume");
-    assert(await page.locator("#save").isDisabled());
-    await page.locator('[x-label="autoConflict"]').waitFor({ state: "visible" });
+    assert(await page.locator("#save").isEnabled());
+    await page.locator('[data-form="auto_start_delay_seconds"]').fill("20");
     await page.locator('[data-form="bluetooth_auto_trigger"]').selectOption("login");
     assert(await page.locator("#save").isEnabled());
     await usbAuto.uncheck();
@@ -372,6 +375,12 @@ const root = path.resolve(__dirname, "../..");
     await page.locator("#add-controller").click();
     await page.locator("#bt-scan").click();
     await page.locator(".discovered-device").first().waitFor({ state: "visible" });
+    const unsupportedSwitch2 = page
+      .locator(".discovered-device")
+      .filter({ hasText: "Nintendo Switch 2 Pro" });
+    await unsupportedSwitch2.waitFor({ state: "visible" });
+    assert(await unsupportedSwitch2.locator("button").isDisabled());
+    assert(/暂不支持|Unsupported/.test(await unsupportedSwitch2.innerText()));
     const firstScanTitle = await page.locator(".search-panel h3").innerText();
     const firstSeconds = await page.evaluate(
       () => Alpine.$data(document.querySelector("#management")).scanRemaining,
@@ -410,7 +419,7 @@ const root = path.resolve(__dirname, "../..");
     assert.equal(await page.locator("#ui-language").inputValue(), "zh");
     await page.goto(url + "/controller");
     await page.waitForFunction(() =>
-      document.querySelector("#status").textContent.includes("选择已登录"),
+      document.querySelector("#status").textContent.includes("创建后"),
     );
     await page.evaluate(() => {
       window.inputs = [];
@@ -513,6 +522,24 @@ const root = path.resolve(__dirname, "../..");
         .getByText("generic-hid-gamepad · IF0 alt0 03/00/00 · HID 7/7", { exact: true })
         .isVisible(),
     );
+    await np.goto(url + "/controller");
+    assert.equal(await np.locator("#user").count(), 0);
+    await np.getByRole("button", { name: "Create controller" }).click();
+    await np.locator("#focus").click();
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 844, height: 390 },
+    ]) {
+      await np.setViewportSize(viewport);
+      const key = await np.locator('.padbutton[aria-label="Cross"]').boundingBox();
+      assert(key.width >= 44 && key.height >= 44);
+      assert(await np.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      if (viewport.width > viewport.height) {
+        const stage = await np.locator("#controls").boundingBox();
+        assert(stage.y + stage.height <= viewport.height, "landscape controls fit on screen");
+      }
+    }
+    await np.locator("#disable").click();
     assert.deepEqual(errors, [], "no CSP or Alpine runtime errors");
     console.log(
       "Browser: skeleton layout, CSP, drawers, search ordering, keyed focus, safe text, locale, settings, gamepad, PS input and preview isolation PASS",

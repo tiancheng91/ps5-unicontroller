@@ -39,7 +39,8 @@
               ><span class="nav-index">04</span><span x-label="settings"></span
             ></a>
             <div class="nav-footer">
-              <span>UniController for PS5</span><span x-label="footer"></span>
+              <span>UniController for PS5</span><span class="build-id" x-text="buildId"></span
+              ><span x-label="footer"></span>
             </div>
           </nav>
           <main>
@@ -91,7 +92,9 @@
                         <span class="tag" x-text="device.transport"></span>
                       </div>
                       <div class="device-metadata">
-                        <span x-label="connected"></span><span x-text="device.batteryText"></span
+                        <span x-label="connected"></span
+                        ><span x-show="device.waitingForUser" x-label="waitingForUser"></span
+                        ><span x-text="device.batteryText"></span
                         ><span x-text="device.inputStatus"></span>
                       </div>
                     </div>
@@ -123,7 +126,7 @@
                   <template x-for="bond in offlineBonds" :key="bond.key"
                     ><article class="paired-row">
                       <div>
-                        <h3 x-text="bond.address"></h3>
+                        <h3 x-text="bond.title"></h3>
                         <p class="mono" x-text="bond.detail"></p>
                       </div>
                       <button
@@ -185,6 +188,7 @@
               <div class="page-heading">
                 <div>
                   <h1 x-label="settings"></h1>
+                  <p class="build-id" id="build-id" x-text="buildId"></p>
                   <p x-label="settingsIntro"></p>
                 </div>
               </div>
@@ -356,9 +360,19 @@
                         <option value="login" x-label="login"></option>
                         <option value="resume" x-label="resume"></option></select
                     ></label>
+                    <label class="setting"
+                      ><span x-label="autoDelay"></span>
+                      <input
+                        type="number"
+                        min="5"
+                        max="60"
+                        step="1"
+                        :value="form.auto_start_delay_seconds"
+                        data-form="auto_start_delay_seconds"
+                        @input="formChanged"
+                      />
+                    </label>
                     <p class="group-hint" x-label="autoHint"></p>
-                    <p class="group-hint" x-show="usbAutoNeedsUser" x-label="usbAutoNeedsUser"></p>
-                    <p class="error" x-show="autoConflict" x-label="autoConflict"></p>
                   </div>
                   <h2 class="group-title" x-label="diagnostics"></h2>
                   <div class="settings-group">
@@ -545,6 +559,7 @@
                   ></button>
                 </article>
               </template>
+              <p class="muted" x-label="discoverySelectionHint"></p>
             </section>
           </div>
           <div class="drawer-body" x-show="viewingDevice">
@@ -577,7 +592,8 @@
                   class="switch"
                   type="checkbox"
                   id="device-rumble"
-                  :checked="detailDevice.rumble"
+                  :checked="deviceRumbleChecked"
+                  :disabled="deviceRumbleDisabled"
                   data-option="rumble"
                   @change="changeDeviceOption"
                 />
@@ -608,8 +624,12 @@
                 x-label="rumbleTest"
               ></button>
             </div>
-            <details class="advanced" x-show="detailDevice.assignable">
-              <summary x-label="advancedAssignment"></summary>
+            <section
+              class="advanced"
+              x-show="detailDevice.assignable"
+              aria-labelledby="device-user-heading"
+            >
+              <h2 id="device-user-heading" x-label="deviceUser"></h2>
               <p x-label="assignmentHint"></p>
               <button
                 id="assign-device"
@@ -620,8 +640,7 @@
                 :disabled="detailAssignmentDisabled"
                 x-label="assign"
               ></button>
-              <p class="drawer-note" x-label="assignmentScope"></p>
-            </details>
+            </section>
           </div>
           <p class="drawer-status" role="status" :class="errorClass" x-text="statusText"></p>
         </section>

@@ -36,6 +36,7 @@ int uc_core_submit(uint64_t session, uint64_t sequence, uint32_t buttons, const 
 int uc_core_refresh_source(uint64_t session, uint64_t now_ms);
 int uc_core_tick(uint64_t now_ms);
 /* Cleanup is neutral-before-delete and retryable; failures retain ownership. */
+uint64_t uc_core_test_session(void); /* Includes pending test output. */
 int uc_core_disable(void);
 /* Removes only this owned token, including pending creation. Stale tokens return -2; cleanup
  * failures return -1. */

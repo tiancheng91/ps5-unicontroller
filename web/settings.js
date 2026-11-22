@@ -25,6 +25,7 @@ document.addEventListener("alpine:init", () => {
     form: {
       recording_level: "info",
       page_level: "info",
+      auto_start_delay_seconds: 10,
       usb_auto_start: false,
       bluetooth_auto_start: true,
       bluetooth_auto_trigger: "login",
@@ -69,20 +70,13 @@ document.addEventListener("alpine:init", () => {
         : this.t(this.message);
     },
     get saveDisabled() {
-      return !this.current || this.loading || this.saving || this.autoConflict;
-    },
-    get autoConflict() {
       return (
-        this.form.bluetooth_auto_trigger === "resume" &&
-        this.form.bluetooth_auto_start &&
-        this.form.usb_auto_start
-      );
-    },
-    get usbAutoNeedsUser() {
-      return (
-        this.form.bluetooth_auto_trigger === "login" &&
-        this.form.usb_auto_start &&
-        !(this.current?.usb_auto_user > 0)
+        !this.current ||
+        this.loading ||
+        this.saving ||
+        !Number.isInteger(this.form.auto_start_delay_seconds) ||
+        this.form.auto_start_delay_seconds < 5 ||
+        this.form.auto_start_delay_seconds > 60
       );
     },
     get savedUser() {
@@ -148,6 +142,7 @@ document.addEventListener("alpine:init", () => {
         key = el.dataset.form;
       if (["recording_level", "page_level", "bluetooth_auto_trigger"].includes(key))
         this.form[key] = el.value;
+      else if (key === "auto_start_delay_seconds") this.form[key] = Number(el.value);
       else if (["rumble", "swap_ab", "bluetooth_auto_start", "usb_auto_start"].includes(key))
         this.form[key] = el.checked;
     },
@@ -171,6 +166,7 @@ document.addEventListener("alpine:init", () => {
           swap_ab: this.form.swap_ab,
           bluetooth_auto_start: this.form.bluetooth_auto_start,
           usb_auto_start: this.form.usb_auto_start,
+          auto_start_delay_seconds: this.form.auto_start_delay_seconds,
           bluetooth_auto_trigger: this.form.bluetooth_auto_trigger,
           button_mapping: this.fields.map((f) => Number(f.value)),
         };

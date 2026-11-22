@@ -1,6 +1,7 @@
 /* End-to-end runs of the host stack against the simulated controller. */
 #include "sim.h"
 #include "../../src/drivers/common/crc32.h"
+#include "../../src/drivers/config/overrides.h"
 #include "../../src/drivers/bluetooth/host.h"
 #include "../../src/drivers/bluetooth/host_int.h"
 #include "../../src/drivers/common/log.h"
@@ -391,8 +392,8 @@ static void test_generic_pad(void)
     pad.mode = SIM_WAIT_PAIRING;
     memcpy(pad.addr, addr, 6);
     pad.cod = 0x002508;
-    pad.vid = 0x2DC8;
-    pad.pid = 0x6001;
+    pad.vid = 0x1234;
+    pad.pid = 0x5678;
     memcpy(pad.desc, k_desc, sizeof k_desc);
     pad.desc_len = (int)sizeof k_desc;
     /* left stick right, hat south, button 1 (A), accelerator half */
@@ -952,6 +953,309 @@ static void test_manual_switch_discovery(void)
     unlink(DB);
 }
 
+static void test_switch_candidate_calibration(void)
+{
+    host_t h = {0};
+    seen observed = {0};
+    h.ev = (host_events){on_connect, on_state, on_disconnect, &observed, NULL};
+    link_t *l = &h.links[0];
+    l->prof = profile_builtin_named("switch");
+    l->switch_probe = l->switch_probe_done = 1;
+    l->prof->setup(l->pctx.bytes, 0x057e, 0x2009);
+    unsigned char info[49] = {0x21}, cal[49] = {0x21}, input[49] = {0x30}, out[32];
+    info[13] = 0x82;
+    info[14] = 2;
+    info[17] = 3;
+    l->prof->parse(l->pctx.bytes, info, sizeof info, &l->st);
+    pad_output output = {0};
+    CHECK(l->prof->init_report(l->pctx.bytes, 5, &output, out, sizeof out) == 16);
+    cal[13] = 0x90;
+    cal[14] = 0x10;
+    cal[15] = 0x3d;
+    cal[16] = 0x60;
+    cal[19] = 9;
+    /* Positive travel 1000/900, centre 2100/2200, negative 700/800. */
+    const unsigned char values[9] = {0xe8, 0x43, 0x38, 0x34, 0x88, 0x89, 0xbc, 0x02, 0x32};
+    memcpy(cal + 20, values, sizeof values);
+    link_input(&h, l, cal, sizeof cal);
+    CHECK(!l->full && !observed.connects && !observed.states);
+    /* Reject truncated full reports even after valid metadata. */
+    link_input(&h, l, input, 12);
+    CHECK(!l->full && !observed.states);
+    memcpy(input + 6, values + 3, 3);
+    input[10] = 8;
+    input[11] = 128;
+    link_input(&h, l, input, sizeof input);
+    CHECK(l->full && l->st.lx == 128 && l->st.ly == 128);
+    CHECK(!observed.states); /* No output until host registration. */
+    l->ready = 1;
+    link_input(&h, l, cal, sizeof cal);
+    CHECK(!observed.states); /* Metadata never publishes an input frame. */
+}
+
+/* SDL-only IDs exercise family selection, not hardware compatibility claims. */
+static void test_sdl_classic_candidates(void)
+{
+    static const uint16_t ids[][2] = {
+        {0x0e6f, 0x0186}, {0x1532, 0x1000}, {0x0f0d, 0x0184},
+        {0x045e, 0x02e3}, {0x054c, 0x0268}, {0x20d6, 0xa711},
+    };
+    for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++) {
+        unlink(DB);
+        sim_pad pad = {.mode = SIM_WAIT_PAIRING,
+                       .cod = 0x002508,
+                       .vid = ids[i][0],
+                       .pid = ids[i][1],
+                       .needs_output = i < 3 || i == 5,
+                       .switch_type = 6,
+                       .addr = {9, 8, 7, 6, 5, 4}};
+        unsigned char report[78] = {0};
+        int len = 78;
+        if (i == 0 || i == 5) {
+            report[0] = 0x30;
+            len = 49;
+            memcpy(pad.report, report, (size_t)len);
+            pad.report_len = len;
+        } else if (i == 1) {
+            len = ds4_report(report);
+        } else if (i == 2) {
+            report[0] = 0x31;
+            memset(report + 2, 128, 4);
+            report[9] = 0x28;
+            report[54] = 10;
+        } else if (i == 3) {
+            /* Battery metadata alone must not activate an Xbox candidate. */
+            pad.report[0] = 4;
+            pad.report_len = 2;
+            report[0] = 1;
+            report[14] = 1;
+            len = 17;
+        }
+        sim_t *sim = sim_new(&pad);
+        seen result = {0};
+        host_t *h = open_host(sim, &result);
+        CHECK(h && select_first(h, 10));
+        if (i > 0 && i < 4) {
+            run(h, 3500);
+            CHECK(!result.connects && !result.states);
+            sim_set_report(sim, report, len);
+        }
+        run(h, 10000);
+        if (i < 4 || i == 5) {
+            CHECK(result.connects == 1 && result.states > 0);
+            if (i == 0 || i == 5)
+                CHECK(h->links[0].switch_probe_done);
+            else
+                CHECK(result.last.buttons & PAD_CROSS);
+        } else {
+            CHECK(!result.connects && !result.states && !sim_outputs(sim));
+            CHECK(!sim_link_up(sim) && !host_paired_count(h));
+            host_discovered_info found;
+            CHECK(host_discovered_get(h, 0, &found) && found.unsupported);
+            CHECK(!host_pair_device(h, found.id));
+        }
+        host_close(h);
+        sim_free(sim);
+    }
+    unlink(DB);
+}
+
+static void test_classic_switch_candidates(void)
+{
+    printf("Classic name candidates: bounded device-info verification and reconnect\n");
+    for (unsigned scenario = 0; scenario < 10; scenario++) {
+        unlink(DB);
+        sim_pad pad = {.mode = SIM_WAIT_PAIRING, .cod = 0x002508, .needs_output = 1};
+        const unsigned char addr[6] = {0xf6, 0x97, 0x6e, 0x7d, 0x31, 0x30};
+        memcpy(pad.addr, addr, 6);
+        snprintf(pad.name, sizeof pad.name, "%s",
+                 scenario == 4   ? "Some Pro Controller"
+                 : scenario == 8 ? "Nintendo Wireless Gamepad"
+                 : scenario == 9 ? "Wireless Gamepad"
+                                 : "Lic Pro Controller");
+        pad.switch_type = scenario == 1 ? 1 : scenario == 2 ? 0 : 6;
+        pad.reject_switch_info = scenario == 3;
+        pad.report[0] = 0x30;
+        pad.report_len = scenario == 5 ? 12 : scenario == 6 ? 0 : 49;
+        sim_t *sim = sim_new(&pad);
+        seen result = {0};
+        host_t *h = open_host(sim, &result);
+        CHECK(h && select_first(h, 10));
+        if (scenario == 7)
+            sim_fail_outputs(sim, 100);
+        run(h, 10000);
+        if (!scenario) {
+            CHECK(result.connects == 1 && result.states > 0);
+            CHECK(h->db[0].switch_type == 6 && !h->db[0].vid && !h->db[0].pid);
+            host_close(h);
+            sim_free(sim);
+            /* Restart host: stored family remains a hint and is queried again. */
+            pad.mode = SIM_RECONNECT;
+            sim = sim_new(&pad);
+            result = (seen){0};
+            h = open_host(sim, &result);
+            sim_give_key(sim, h->db[0].key);
+            CHECK(h->db[0].switch_type == 6);
+            sim_power_on(sim);
+            run(h, 10000);
+            CHECK(result.connects == 1 && result.states > 0);
+            CHECK(h->links[0].switch_probe_done && h->links[0].switch_type == 6);
+        } else if (scenario >= 8) {
+            CHECK(result.connects == 1 && result.states > 0);
+            CHECK(h->db[0].switch_type == 6);
+        } else {
+            CHECK(!result.connects && !result.states);
+            if (scenario != 4)
+                CHECK(!sim_link_up(sim));
+            if (scenario == 2)
+                CHECK(sim_outputs(sim) == 3);
+            if (scenario == 4)
+                CHECK(!sim_outputs(sim));
+            if (scenario == 7)
+                CHECK(sim_output_attempts(sim) == 16 && !sim_outputs(sim));
+        }
+        host_close(h);
+        sim_free(sim);
+    }
+    unlink(DB);
+}
+/* A name override must also win on reconnect when the cached VID/PID already
+ * has a builtin profile and discovery has not supplied the name again. */
+static void test_named_override_reconnect(void)
+{
+    const char *path = "build/test-name-override.json";
+    FILE *file = fopen(path, "w");
+    CHECK(file != NULL);
+    if (!file)
+        return;
+    fputs("{\"schema_version\":1,\"devices\":[{\"match\":{\"transport\":"
+          "\"classic\",\"name\":\"Custom Switch\"},\"profile\":\"switch\"}]}",
+          file);
+    fclose(file);
+    char error[160];
+    CHECK(uc_controller_overrides_load(path, error, sizeof error) == 1);
+    unlink(DB);
+    sim_pad pad = {.mode = SIM_WAIT_PAIRING,
+                   .cod = 0x002508,
+                   .vid = 0x045e,
+                   .pid = 0x02fd,
+                   .switch_type = 6,
+                   .needs_output = 1,
+                   .report_len = 49,
+                   .addr = {1, 2, 3, 4, 5, 6},
+                   .name = "Custom Switch",
+                   .report = {0x30}};
+    sim_t *sim = sim_new(&pad);
+    seen result = {0};
+    host_t *h = open_host(sim, &result);
+    CHECK(h != NULL);
+    if (h) {
+        CHECK(select_first(h, 10));
+        run(h, 10000);
+        CHECK(result.connects == 1 && result.states > 0);
+        host_close(h);
+    }
+    sim_free(sim);
+    pad.mode = SIM_RECONNECT;
+    sim = sim_new(&pad);
+    result = (seen){0};
+    h = open_host(sim, &result);
+    CHECK(h != NULL);
+    if (h) {
+        sim_give_key(sim, h->db[0].key);
+        sim_power_on(sim);
+        run(h, 10000);
+        CHECK(result.connects == 1 && result.states > 0);
+        link_t *link = link_by_addr(h, pad.addr);
+        CHECK(link && link->name_requested && link->switch_probe_done);
+        CHECK(link && !strcmp(link->name, "Custom Switch"));
+        host_close(h);
+    }
+    sim_free(sim);
+    uc_controller_overrides_clear();
+    unlink(path);
+    unlink(DB);
+}
+
+static void test_pairing_diagnostics(void)
+{
+    const char *path = "build/test-pairing-diag.log";
+    printf("pairing diagnostics: handshake metadata and stalled-stage summary\n");
+    unlink(DB);
+    CHECK(log_open(path));
+    uc_log_set_level(4);
+    sim_pad pad = {.mode = SIM_WAIT_PAIRING,
+                   .cod = 0x002508,
+                   .vid = 0x054c,
+                   .pid = 0x05c4,
+                   .addr = {1, 2, 3, 4, 5, 6}};
+    pad.report_len = ds4_report(pad.report);
+    sim_t *sim = sim_new(&pad);
+    seen result = {0};
+    host_t *h = open_host(sim, &result);
+    CHECK(h != NULL);
+    if (h) {
+        CHECK(select_first(h, 10));
+        run(h, 5000);
+        CHECK(result.connects == 1);
+        sim_inject_event(sim, 0x34, pad.addr, sizeof pad.addr);
+        sim_inject_event(sim, 0x34, pad.addr, sizeof pad.addr);
+        sim_inject_event(sim, 0x35, pad.addr, sizeof pad.addr);
+        run(h, 10);
+        host_close(h);
+    }
+    sim_free(sim);
+    /* A silent controller must produce bounded wait diagnostics without changing
+     * the authentication/encryption policy or registering a virtual pad. */
+    for (unsigned encrypted_stage = 0; encrypted_stage < 2; encrypted_stage++) {
+        unlink(DB);
+        sim = sim_new(&pad);
+        h = open_host(sim, &result);
+        CHECK(h != NULL);
+        if (h) {
+            sim_go_deaf(sim);
+            link_t *link = link_new(h, pad.addr);
+            CHECK(link != NULL);
+            if (link) {
+                link->connected = link->pairing = 1;
+                link->handle = 2;
+                link->t_conn = sim_now();
+                link->auth_ok = (int)encrypted_stage;
+                link->t_auth_ok = sim_now();
+                run(h, 12000);
+                CHECK(link->diag_security_waits == 2);
+                CHECK(!link->ready);
+                link_free(h, link);
+            }
+            host_close(h);
+        }
+        sim_free(sim);
+    }
+    log_close();
+    uc_log_set_level(3);
+    FILE *file = fopen(path, "r");
+    CHECK(file != NULL);
+    int summary = 0, authentication_wait = 0, encryption_wait = 0, queued = 0;
+    int io = 0, key_type = 0, unsupported = 0;
+    char line[1024];
+    while (file && fgets(line, sizeof line, file)) {
+        summary += strstr(line, "[bt-security] summary") != NULL;
+        authentication_wait += strstr(line, "stage=authentication") != NULL;
+        encryption_wait += strstr(line, "stage=encryption") != NULL;
+        queued += strstr(line, "[bt-security] reply address=") != NULL;
+        io += strstr(line, "io_request=1") != NULL;
+        key_type += strstr(line, "new link-key address=") != NULL;
+        unsupported += strstr(line, "[bt-security] unsupported request") != NULL;
+        CHECK(strstr(line, "PIN=0000") == NULL);
+    }
+    if (file)
+        fclose(file);
+    CHECK(summary == 3 && authentication_wait == 2 && encryption_wait == 2);
+    CHECK(queued > 0 && io > 0 && key_type == 1 && unsupported == 2);
+    unlink(path);
+    unlink(DB);
+}
+
 static void test_recording_level(void)
 {
     const char *path = "build/test-log-level.log";
@@ -1031,11 +1335,16 @@ static void test_inbound_sdp(void)
 
 int main(void)
 {
+    test_switch_candidate_calibration();
+    test_sdl_classic_candidates();
+    test_classic_switch_candidates();
+    test_named_override_reconnect();
     test_inbound_sdp();
     test_system_controller_filter();
     test_discovery_cache();
     test_manual_switch_discovery();
     test_recording_level();
+    test_pairing_diagnostics();
     test_clear_pairings();
     test_input_diagnostics();
     test_sdp_parse();

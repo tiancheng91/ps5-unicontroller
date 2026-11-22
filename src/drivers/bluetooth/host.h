@@ -53,8 +53,9 @@ typedef struct {
     uint32_t id;
     unsigned char addr[6];
     int le, addr_type, rssi, has_rssi;
+    int unsupported; /* Identified, but must never initiate a connection. */
     char name[HOST_DISCOVERY_NAME], reason[80];
-    const char *state; /* discovered, pairing, paired, connected, failed, expired */
+    const char *state; /* discovered, pairing, paired, connected, failed, expired, unsupported */
 } host_discovered_info;
 /* seconds=0 stops discovery only; existing/selected links and bonds stay intact. */
 int host_scan(host_t *h, int seconds);
@@ -79,6 +80,7 @@ int host_rumble_feedback(host_t *h, int slot, uint8_t strong, uint8_t weak);
 /* Cancel both connection pulses and game feedback without changing LEDs. */
 int host_rumble_stop(host_t *h, int slot);
 /* Whether a connected pad is ready for output; avoids querying unsupported pads. */
+int host_output_pending(const host_t *h, int slot);
 int host_output_ready(const host_t *h, int slot);
 
 int host_connected(const host_t *h, int slot);

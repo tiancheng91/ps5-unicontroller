@@ -107,7 +107,7 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
     *session = 0;
     if (observe(now))
         return -1;
-    if (user <= 0 && !(physical >= 2 && user == 0))
+    if (user < 0 || (user == 0 && physical == 1))
         return fail("invalid_user");
     struct core_session *candidate = NULL, *free_slot = NULL;
     for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i) {
@@ -230,6 +230,13 @@ int uc_core_disable_session(uint64_t session)
         return -2;
     }
     return remove_session(s);
+}
+uint64_t uc_core_test_session(void)
+{
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id && !state.sessions[i].physical)
+            return state.sessions[i].id;
+    return 0;
 }
 int uc_core_disable(void)
 {

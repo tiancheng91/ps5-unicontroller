@@ -175,6 +175,11 @@ void host_poll(host_t *h, int timeout)
     if (kind == 3)
         callbacks.on_disconnect(callbacks.ud, event_slot);
 }
+int host_output_pending(const host_t *h, int slot)
+{
+    assert(h == &fake && slot >= 0 && slot < HOST_MAX_PADS);
+    return 0;
+}
 int host_output_ready(const host_t *h, int slot)
 {
     assert(h == &fake && slot >= 0 && slot < HOST_MAX_PADS);
@@ -538,6 +543,20 @@ int main(void)
     event(1, 0, 25510);
     event(2, 0, 25511);
     assert(sessions[1]);
+    int prior_closes = closes;
+    unavailable_user = 1;
+    uc_bt_poll(25512);
+    assert(uc_bt_running() && closes == prior_closes && !sessions[1]);
+    assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"waiting_for_user\":true"));
+    unavailable_user = 0;
+    event(2, 0, 25513);
+    assert(!sessions[1]); /* A returning user cannot silently reclaim the controller. */
+    assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 0);
+    event(2, 0, 25514);
+    assert(sessions[0] && ready[0] && closes == prior_closes);
+    assert(uc_bt_assign(0, "06:05:04:03:02:01", 1) == 0);
+    event(2, 0, 25515);
+    assert(sessions[1]);
     uint64_t old_owner_session = sessions[1];
     assert(uc_bt_reselect_user(0, "00:00:00:00:00:00") < 0);
     cleanup_fail = 1;
@@ -545,14 +564,14 @@ int main(void)
     assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 2);
     assert(sessions[1] == old_owner_session && !sessions[0]);
     cleanup_fail = 0;
-    uc_bt_poll(25512);
+    uc_bt_poll(25516);
     assert(!sessions[1] && !sessions[0]);
-    event(2, 0, 25513);
+    event(2, 0, 25517);
     assert(sessions[0] && ready[0]);
     assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true"));
     assert(!uc_bt_stop());
     unavailable_user = 1;
-    assert(uc_bt_start_system_assigned() == 0);
+    assert(uc_bt_start(0) == 0);
     enabled = enable_calls;
     event(1, 0, 26000);
     event(2, 0, 26001);
@@ -579,14 +598,14 @@ int main(void)
     assert(uc_bt_status_json(status_json, sizeof status_json));
     assert(strstr(status_json, "\"state\":\"off\"") &&
            !strstr(status_json, "suspended_manual_restart_required"));
-    assert(uc_bt_start_system_assigned() == 0);
+    assert(uc_bt_start(0) == 0);
     event(1, 0, 27000);
     event(2, 0, 27001);
     assert(ready[0]);
     gate = 0;
     uc_bt_poll(27002);
     assert(!uc_bt_running() && !sessions[0]);
-    assert(uc_bt_start_system_assigned() == -1);
+    assert(uc_bt_start(0) == -1);
     gate = 1;
     char options_path[128];
     snprintf(options_path, sizeof options_path, "/tmp/uc-bt-options-%ld.json", (long)getpid());

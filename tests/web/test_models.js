@@ -5,6 +5,7 @@ const assert = require("assert"),
   const h = harness(),
     m = h.model;
   await m.refresh();
+  assert.equal(m.buildId, "test-branch + abcdef123456");
   assert.equal(
     m.deviceView({ vid: "057E", pid: "2069", experimental: true }, false).experimental,
     true,
@@ -57,6 +58,33 @@ const assert = require("assert"),
   search.model.acceptBluetooth(search.state.bt); // Even a stale response cannot reset the clock.
   assert.equal(search.model.scanRemaining, 59);
   assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+  search.state.bt.discovered.push({
+    id: 8,
+    name: "Nintendo Switch 2 Pro",
+    transport: "ble",
+    state: "unsupported",
+    reason: "switch2_ble_not_supported",
+  });
+  search.model.acceptBluetooth(search.state.bt);
+  const unsupported = search.model.discovered.find((d) => d.id === 8);
+  assert(unsupported.disabled);
+  assert.equal(unsupported.buttonText, search.model.t("discovery_unsupported"));
+  await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "8" } } });
+  assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+
+  search.state.bt.discovered.push({
+    id: 9,
+    transport: "ble",
+    state: "unsupported",
+    reason: "ble_identity_not_allowed",
+  });
+  search.model.acceptBluetooth(search.state.bt);
+  const deniedBLE = search.model.discovered.find((d) => d.id === 9);
+  assert(deniedBLE.disabled);
+  assert.equal(deniedBLE.reasonText, search.model.t("bleIdentityUnsupported"));
+  await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "9" } } });
+  assert(!search.calls.some((c) => c.route === "/bluetooth/pair"));
+
   await search.model.pairDevice({ currentTarget: { dataset: { discoveryId: "7" } } });
   assert.deepEqual(search.calls.find((c) => c.route === "/bluetooth/pair").body, {
     discovery_id: 7,
@@ -97,6 +125,7 @@ const assert = require("assert"),
       bluetooth_auto_trigger: "login",
       bluetooth_auto_user: 2,
       usb_auto_start: false,
+      auto_start_delay_seconds: 10,
       usb_auto_user: 1,
       button_mapping: Array.from({ length: 32 }, (_, i) => i),
     };
@@ -113,13 +142,10 @@ const assert = require("assert"),
   s.model.form.usb_auto_start = true;
   s.model.form.bluetooth_auto_start = true;
   s.model.form.bluetooth_auto_trigger = "resume";
-  assert(s.model.autoConflict && s.model.saveDisabled);
-  const saveCount = s.calls.filter((c) => c.method === "POST").length;
+  s.model.form.auto_start_delay_seconds = 20;
+  assert(!s.model.saveDisabled);
   await s.model.save();
-  assert.equal(s.calls.filter((c) => c.method === "POST").length, saveCount);
-  s.model.form.bluetooth_auto_trigger = "login";
-  assert(!s.model.autoConflict && !s.model.saveDisabled);
-  await s.model.save();
+  assert.equal(s.calls.filter((c) => c.method === "POST").at(-1).body.auto_start_delay_seconds, 20);
   assert(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_start);
   assert.equal(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_user, 1);
 

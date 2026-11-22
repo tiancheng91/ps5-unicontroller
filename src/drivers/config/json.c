@@ -58,6 +58,28 @@ static int hexid(Json *j, int n, uint16_t *out)
     *out = (uint16_t)v;
     return 0;
 }
+static int address(Json *j, int n, uint8_t out[6])
+{
+    char s[18];
+    if (text(j, n, s, sizeof s) || strlen(s) != 17)
+        return -1;
+    for (int i = 0; i < 6; i++) {
+        unsigned value = 0;
+        for (int k = 0; k < 2; k++) {
+            char c = s[i * 3 + k];
+            if (c >= 'A' && c <= 'F')
+                c += 'a' - 'A';
+            const char *digit = strchr("0123456789abcdef", c);
+            if (!digit)
+                return -1;
+            value = value * 16 + (unsigned)(digit - "0123456789abcdef");
+        }
+        if (i < 5 && s[i * 3 + 2] != ':')
+            return -1;
+        out[5 - i] = (uint8_t)value;
+    }
+    return 0;
+}
 static int binding(const char *key, const char *value)
 {
     const char *roles[] = {"lx", "ly", "rx", "ry", "l2", "r2"};
@@ -91,7 +113,7 @@ int uc_controller_json_parse(const unsigned char *data, size_t size, uc_controll
 {
     static const char *const rootkeys[] = {"schema_version", "devices"},
                              *const entrykeys[] = {"match", "name", "profile", "mapping", "ble"},
-                             *const matchkeys[] = {"transport", "vid", "pid"};
+                             *const matchkeys[] = {"transport", "vid", "pid", "address", "name"};
     (void)jobject;
     (void)jget;
     memset(out, 0, sizeof *out);
@@ -112,8 +134,28 @@ int uc_controller_json_parse(const unsigned char *data, size_t size, uc_controll
             goto done;
         uc_controller_override *e = &out->devices[out->count];
         int m = get(j, n, "match");
-        if (object(j, m, matchkeys, 3) || hexid(j, get(j, m, "vid"), &e->vid) ||
-            hexid(j, get(j, m, "pid"), &e->pid))
+        if (object(j, m, matchkeys, 5))
+            goto done;
+        int v = get(j, m, "vid"), p = get(j, m, "pid");
+        if ((v >= 0) != (p >= 0))
+            goto done;
+        if (v >= 0) {
+            if (hexid(j, v, &e->vid) || hexid(j, p, &e->pid))
+                goto done;
+            e->has_ids = 1;
+        }
+        int a = get(j, m, "address"), nm = get(j, m, "name");
+        if (a >= 0) {
+            if (address(j, a, e->address))
+                goto done;
+            e->has_address = 1;
+        }
+        if (nm >= 0) {
+            if (text(j, nm, e->match_name, sizeof e->match_name))
+                goto done;
+            e->has_match_name = 1;
+        }
+        if (!e->has_ids && !e->has_address && !e->has_match_name)
             goto done;
         char transport[16];
         if (text(j, get(j, m, "transport"), transport, sizeof transport))
@@ -122,7 +164,8 @@ int uc_controller_json_parse(const unsigned char *data, size_t size, uc_controll
                        : !strcmp(transport, "ble")   ? PAD_TRANSPORT_BLE
                        : !strcmp(transport, "usb")   ? PAD_TRANSPORT_USB
                                                      : 0;
-        if (!e->transport)
+        if (!e->transport ||
+            (e->transport != PAD_TRANSPORT_CLASSIC && (e->has_address || e->has_match_name)))
             goto done;
         int t = get(j, n, "ble");
         if (t >= 0) {
@@ -144,6 +187,9 @@ int uc_controller_json_parse(const unsigned char *data, size_t size, uc_controll
         }
         t = get(j, n, "mapping");
         if (t >= 0) {
+            /* The generic decoder's raw field mapping is still VID/PID scoped. */
+            if (e->has_address || e->has_match_name)
+                goto done;
             if (j->t[t].kind != '{' || j->t[t].next == t + 1)
                 goto done;
             size_t used = 0;
@@ -166,9 +212,15 @@ int uc_controller_json_parse(const unsigned char *data, size_t size, uc_controll
         if (!e->has_name && !e->has_profile && !e->has_mapping && !e->has_ble)
             goto done;
         for (size_t i = 0; i < out->count; i++)
-            if (out->devices[i].transport == e->transport && out->devices[i].vid == e->vid &&
-                out->devices[i].pid == e->pid)
-                goto done;
+            if (out->devices[i].transport == e->transport) {
+                const uc_controller_override *r = &out->devices[i];
+                unsigned score = e->has_address * 4 + e->has_match_name * 2 + e->has_ids;
+                unsigned other = r->has_address * 4 + r->has_match_name * 2 + r->has_ids;
+                if (score == other && (!e->has_ids || (r->vid == e->vid && r->pid == e->pid)) &&
+                    (!e->has_address || !memcmp(r->address, e->address, 6)) &&
+                    (!e->has_match_name || !strcmp(r->match_name, e->match_name)))
+                    goto done;
+            }
         out->count++;
     }
     ok = 1;

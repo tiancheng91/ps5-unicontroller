@@ -91,6 +91,7 @@ static int suspend_event, rest_seen, power_status = -1;
 static uint64_t working_since;
 static uc_bt_autostart home_gate;
 static int home_waiting, home_owns_log, auto_mode;
+static int startup_fallback;
 static int32_t home_foreground = -1;
 static uint64_t home_connect_at;
 static uint64_t system_users_at;
@@ -178,8 +179,8 @@ static int user_live(int32_t user)
 int uc_backend_transport_ready(void)
 {
     uint64_t current = now_ms();
-    return ready && power_status == 0 && working_since && current >= working_since &&
-           current - working_since >= 5000;
+    return ready && !suspend_event && power_status == 0 && working_since &&
+           current >= working_since && current - working_since >= 5000;
 }
 int uc_backend_can_start(int32_t user)
 {
@@ -470,11 +471,25 @@ void uc_backend_auto_watch(int mode)
     home_waiting = mode != UC_AUTO_OFF;
     home_foreground = -1;
     uc_bt_auto_cancel(&home_gate);
-    uc_log_info("[input-auto] mode=%d (%s)", mode,
-                mode == UC_AUTO_RESUME
-                    ? "waiting for stable resume; system user-selection experiment"
-                : mode == UC_AUTO_DESKTOP ? "waiting for fresh desktop event"
-                                          : "disabled/cancelled");
+    const char *description = mode == UC_AUTO_RESUME    ? "waiting for stable resume"
+                              : mode == UC_AUTO_DESKTOP ? "waiting for fresh desktop event"
+                              : mode == UC_AUTO_SIGNED_IN_STARTUP
+                                  ? "signed-in foreground at startup"
+                                  : "disabled/cancelled";
+    uc_log_info("[input-auto] mode=%d (%s)", mode, description);
+}
+void uc_backend_auto_on_load(int trigger)
+{
+    int32_t foreground = -1;
+    startup_fallback = trigger == UC_AUTO_DESKTOP ? UC_AUTO_DESKTOP : UC_AUTO_OFF;
+    if (trigger != UC_AUTO_OFF && sceUserServiceGetForegroundUser(&foreground) == 0 &&
+        user_live(foreground)) {
+        uc_backend_auto_watch(UC_AUTO_SIGNED_IN_STARTUP);
+        home_foreground = foreground;
+        uc_log_info("[input-auto] payload loaded with signed-in foreground=%d", foreground);
+    } else {
+        uc_backend_auto_watch(startup_fallback);
+    }
 }
 static void poll_home(uint64_t now)
 {
@@ -491,12 +506,13 @@ static void poll_home(uint64_t now)
     /* Wait for any in-flight virtual-device identification to finish. */
     if (phase >= 1 && phase <= 3)
         return;
-    if (auto_mode == UC_AUTO_RESUME) {
+    if (auto_mode == UC_AUTO_RESUME || auto_mode == UC_AUTO_SIGNED_IN_STARTUP) {
         if (home_waiting) {
             home_waiting = 0;
             uc_bt_auto_arm(&home_gate, now);
             home_gate.fresh = home_gate.home = 1; /* Power event; no log dependency. */
-            uc_log_info("[input-auto] resume observed; waiting 15000ms; no user required");
+            uc_log_info("[input-auto] %s; waiting for configured startup delay",
+                        auto_mode == UC_AUTO_RESUME ? "resume observed" : "signed-in startup");
         }
         return;
     }
@@ -548,34 +564,45 @@ static void poll_home(uint64_t now)
         uc_log_info("[input-auto] history drained; awaiting new desktop focus");
     }
 }
-int uc_backend_auto_due(int32_t target_user, int idle)
+int uc_backend_auto_due(unsigned delay_ms, int idle)
 {
-    if (auto_mode == UC_AUTO_RESUME) {
+    if (auto_mode == UC_AUTO_SIGNED_IN_STARTUP || auto_mode == UC_AUTO_RESUME) {
+        if (auto_mode == UC_AUTO_SIGNED_IN_STARTUP) {
+            int32_t foreground = -1;
+            if (sceUserServiceGetForegroundUser(&foreground) != 0 ||
+                foreground != home_foreground || !user_live(foreground)) {
+                uc_log_info(
+                    "[input-auto] startup user no longer confirmed; cancelling startup delay");
+                uc_backend_auto_watch(startup_fallback);
+                return 0;
+            }
+        }
         /* The timer begins as soon as power is working; the final transport gate
          * independently enforces its minimum five-second power grace. */
         int eligible = idle && ready && power_status == 0 && !suspend_event;
-        int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+        int due = uc_bt_auto_due(&home_gate, now_ms(), eligible, delay_ms);
         if (due || (!home_waiting && !home_gate.armed)) {
-            uc_backend_auto_watch(UC_AUTO_OFF);
             if (due)
-                uc_log_info("[input-auto] resume delay complete; system-choice experimental start");
+                uc_log_info("[input-auto] %s delay complete; starting once",
+                            auto_mode == UC_AUTO_RESUME ? "resume" : "signed-in startup");
+            uc_backend_auto_watch(UC_AUTO_OFF);
         }
         return due && uc_backend_transport_ready();
     }
     int32_t foreground = -1;
     int eligible = idle && home_owns_log && power_status == 0 && !suspend_event &&
-                   sceUserServiceGetForegroundUser(&foreground) == 0 && user_live(foreground) &&
-                   uc_backend_can_start(target_user);
+                   sceUserServiceGetForegroundUser(&foreground) == 0 &&
+                   uc_backend_can_start(foreground);
     if (foreground != home_foreground) {
         home_gate.timing = 0;
         home_foreground = foreground;
     }
     int timing = home_gate.timing;
     int armed = home_gate.armed;
-    int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+    int due = uc_bt_auto_due(&home_gate, now_ms(), eligible, delay_ms);
     if (!timing && home_gate.timing)
-        uc_log_info("[input-auto] desktop and users ready; waiting 15000ms foreground=%d target=%d",
-                    foreground, target_user);
+        uc_log_info("[input-auto] desktop and users ready; waiting %ums foreground=%d", delay_ms,
+                    foreground);
     else if (timing && !home_gate.timing && !due && home_gate.armed)
         uc_log_warn("[input-auto] readiness lost; delay cancelled");
     if (due || (armed && !home_gate.armed)) {

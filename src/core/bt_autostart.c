@@ -23,7 +23,7 @@ void uc_bt_auto_line(uc_bt_autostart *s, const char *line)
     if (!s->home)
         s->timing = 0;
 }
-int uc_bt_auto_due(uc_bt_autostart *s, uint64_t now, int ready)
+int uc_bt_auto_due(uc_bt_autostart *s, uint64_t now, int ready, unsigned delay_ms)
 {
     if (!s->armed)
         return 0;
@@ -40,7 +40,7 @@ int uc_bt_auto_due(uc_bt_autostart *s, uint64_t now, int ready)
         s->since = now;
         s->timing = 1;
     }
-    if (now - s->since < UC_AUTO_BT_DELAY_MS)
+    if (now - s->since < delay_ms)
         return 0;
     uc_bt_auto_cancel(s);
     return 1;

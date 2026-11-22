@@ -73,6 +73,7 @@ select:hover,
 button:disabled,
 button[aria-disabled="true"],
 select:disabled,
+.switch:disabled,
 fieldset:disabled {
   opacity: 0.5;
   cursor: default;
@@ -228,6 +229,10 @@ input[type="checkbox"] {
   padding: 32px 14px 4px;
   color: var(--muted);
   font-size: 11px;
+}
+.build-id {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
 }
 main {
   min-width: 0;

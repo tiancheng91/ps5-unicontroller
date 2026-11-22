@@ -449,11 +449,11 @@ static void home_observation(void)
     assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
     poll_home(fake_ms);
     assert(home_gate.fresh && !home_gate.home); /* Discard historical focus. */
-    assert(!uc_backend_auto_due(42, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     assert(write(pipes[1], focus, strlen(focus)) == (ssize_t)strlen(focus));
     poll_home(fake_ms);
     assert(home_gate.home);
-    assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
+    assert(!uc_backend_auto_due(15000, 1) && home_gate.timing);
     /* Heavy klog traffic may exhaust diagnostic capture during the login delay.
      * The event reader and fresh focus must survive both the cap and later data. */
     FILE *capture = tmpfile();
@@ -470,14 +470,14 @@ static void home_observation(void)
     poll_home(fake_ms);
     assert(fd >= 0 && home_gate.armed && home_gate.home && home_gate.timing &&
            consumed == 256 * 1024);
-    assert(!uc_backend_auto_due(0, 1) && !home_gate.timing); /* No account/inputs busy. */
-    assert(!uc_backend_auto_due(42, 1) && home_gate.timing);
+    assert(!uc_backend_auto_due(15000, 0) && !home_gate.timing); /* No account/inputs busy. */
+    assert(!uc_backend_auto_due(15000, 1) && home_gate.timing);
     fake_ms = home_gate.since + 14997; /* can_start also samples the mock clock. */
-    assert(!uc_backend_auto_due(42, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     fake_ms = home_gate.since + 15000;
-    assert(uc_backend_auto_due(42, 1));
+    assert(uc_backend_auto_due(15000, 1));
     assert(fd == -1 && !home_gate.armed && !home_waiting && !home_owns_log);
-    assert(!uc_backend_auto_due(42, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     close(pipes[1]);
     uc_backend_auto_watch(1);
     power_status = 1;
@@ -486,6 +486,37 @@ static void home_observation(void)
     uc_backend_auto_watch(0);
     assert(!home_waiting);
     power_status = 0;
+}
+static void signed_in_startup(void)
+{
+    prepare();
+    suspend_event = 0;
+    for (int trigger = UC_AUTO_DESKTOP; trigger <= UC_AUTO_RESUME; ++trigger) {
+        logged_in = 1;
+        uc_backend_auto_on_load(trigger);
+        assert(auto_mode == UC_AUTO_SIGNED_IN_STARTUP);
+        poll_home(fake_ms);
+        assert(!home_owns_log && !uc_backend_auto_due(10000, 1));
+        fake_ms = home_gate.since + 9000;
+        assert(!uc_backend_auto_due(10000, 1));
+        fake_ms = home_gate.since + 10000;
+        assert(uc_backend_auto_due(10000, 1));
+        assert(!uc_backend_auto_due(10000, 1));
+
+        uc_backend_auto_on_load(trigger);
+        poll_home(fake_ms);
+        assert(!uc_backend_auto_due(10000, 1));
+        logged_in = 0;
+        fake_ms += 11000;
+        assert(!uc_backend_auto_due(10000, 1));
+        int fallback = trigger == UC_AUTO_DESKTOP ? UC_AUTO_DESKTOP : UC_AUTO_OFF;
+        assert(auto_mode == fallback);
+        uc_backend_auto_on_load(trigger);
+        assert(auto_mode == fallback);
+    }
+    logged_in = 1;
+    uc_backend_auto_on_load(UC_AUTO_OFF);
+    assert(auto_mode == UC_AUTO_OFF && !home_waiting);
 }
 static void resume_observation(void)
 {
@@ -496,27 +527,27 @@ static void resume_observation(void)
     power_status = 1;
     poll_home(fake_ms);
     assert(home_waiting && fd == -1);
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     power_status = 0;
     working_since = fake_ms;
     poll_home(fake_ms);
     assert(fd == -1 && !home_owns_log && home_gate.armed);
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     fake_ms += 3000;
-    assert(!uc_backend_auto_due(0, 0)); /* Cleanup/another input resets the timer. */
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 0)); /* Cleanup/another input resets the timer. */
+    assert(!uc_backend_auto_due(15000, 1));
     fake_ms = home_gate.since + 14999;
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     fake_ms = home_gate.since + 15000;
-    assert(uc_backend_auto_due(0, 1));
-    assert(!uc_backend_auto_due(0, 1));
+    assert(uc_backend_auto_due(15000, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     assert(!uc_backend_can_start(42) && uc_backend_transport_ready());
     uc_backend_auto_watch(UC_AUTO_RESUME);
     poll_home(fake_ms);
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     uc_backend_auto_watch(UC_AUTO_OFF);
     fake_ms += 6000;
-    assert(!uc_backend_auto_due(0, 1));
+    assert(!uc_backend_auto_due(15000, 1));
     logged_in = 1;
 }
 static void system_choice_output(void)
@@ -616,6 +647,7 @@ int main(void)
     isolation_and_rumble();
     power_guards();
     home_observation();
+    signed_in_startup();
     resume_observation();
     system_choice_output();
     return 0;

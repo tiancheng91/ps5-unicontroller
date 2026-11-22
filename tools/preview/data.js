@@ -100,6 +100,7 @@
     bluetooth_auto_trigger: "login",
     bluetooth_auto_user: 2,
     usb_auto_start: false,
+    auto_start_delay_seconds: 10,
     usb_auto_user: 1,
     button_mapping: Array.from({ length: 32 }, (_, i) => i),
   };
@@ -130,6 +131,15 @@
       address_type: 1,
       rssi: -55,
     },
+    {
+      address: "02:00:00:00:00:05",
+      name: "Nintendo Switch 2 Pro",
+      transport: "ble",
+      address_type: 0,
+      rssi: -58,
+      state: "unsupported",
+      reason: "switch2_ble_not_supported",
+    },
   ];
   window.fetch = async (resource, options = {}) => {
     const url = new URL(typeof resource === "string" ? resource : resource.url, location.href);
@@ -158,7 +168,12 @@
         ],
       };
     else if (path === "/system")
-      data = { mode: "DEMO PREVIEW", backend: "simulated", hardware: false };
+      data = {
+        mode: "DEMO PREVIEW",
+        backend: "simulated",
+        hardware: false,
+        build_id: "preview + local",
+      };
     else if (path === "/rumble-test" && method === "POST") {
       const found = [...bt.devices, ...usb.devices].find(
         (d) => d.settings_key === body.key && d.session_id === body.session_id,
@@ -208,8 +223,12 @@
         .map(([, line]) => line + "\n")
         .join("");
     } else if (path === "/test-controller") {
-      if (method === "DELETE") session = { enabled: false, session_id: null, pending: false };
-      else if (method === "POST") {
+      if (method === "DELETE") {
+        if (body.session_id && body.session_id !== session.session_id) {
+          status = 409;
+          data = { error: "session_changed" };
+        } else session = { enabled: false, session_id: null, pending: false };
+      } else if (method === "POST") {
         if (bt.state === "on" || usb.state === "on") {
           status = 409;
           data = { error: "stop_physical_sources_first" };
@@ -296,8 +315,8 @@
             .map((d) => ({
               ...d,
               id: nextDiscovery++,
-              state: "discovered",
-              reason: "",
+              state: d.state || "discovered",
+              reason: d.reason || "",
             }));
         }
       } else if (action === "pair") {

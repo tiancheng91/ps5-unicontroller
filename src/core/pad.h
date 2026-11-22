@@ -67,6 +67,7 @@ typedef struct {
     uint16_t vid, pid;
     const char *profile;
     unsigned char addr[6];
+    const char *display_name; /* Optional resolved alias, copied by the consumer. */
 } pad_info;
 
 static inline void pad_state_reset(pad_state *s)

@@ -100,6 +100,11 @@ with tempfile.TemporaryDirectory() as directory:
             assert response.read() == asset.read_bytes(), url
             connection.close()
         assert len(token) == 64
+        status, system = request("GET", "/api/v1/system")
+        assert status == 200 and system["build_id"]
+        assert " + " in system["build_id"]
+        assert len(system["commit"]) in (40, 64) or system["commit"] == "unknown"
+
         # The host mock exposes four distinct signed-in users, matching backend
         # capacity without pretending that native physical adapters exist.
         status, users = request("GET", "/api/v1/users")
@@ -130,7 +135,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert request("POST", "/api/v1/usb/start", {"user_id": 0})[0] == 202
         # Independent physical transports may start together. Host-native
         # adapters then fail explicitly; no synthetic device/input is invented.
-        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 2})[0] == 202
+        assert request("POST", "/api/v1/bluetooth/start", {"user_id": 0})[0] == 202
         assert request("POST", "/api/v1/test-controller", {"user_id": 1})[0] == 409
         time.sleep(0.15)
         assert request("GET", "/api/v1/usb")[1]["state"] == "failed"
@@ -248,7 +253,8 @@ with tempfile.TemporaryDirectory() as directory:
         assert settings["bluetooth_auto_user"] == 0
         assert settings["bluetooth_auto_trigger"] == "login"
         assert settings["usb_auto_start"] is False and settings["usb_auto_user"] == 0
-        usb_auto = dict(settings, usb_auto_start=True)
+        assert settings["auto_start_delay_seconds"] == 10
+        usb_auto = dict(settings, usb_auto_start=True, auto_start_delay_seconds=20)
         assert request("POST", "/api/v1/settings", usb_auto)[1] == usb_auto
         assert json.loads(path.read_text()) == usb_auto
         assert (
@@ -275,8 +281,17 @@ with tempfile.TemporaryDirectory() as directory:
                     usb_auto, bluetooth_auto_start=True, bluetooth_auto_trigger="resume"
                 ),
             )[0]
-            == 400
+            == 200
         )
+        for invalid in [4, 61, "10"]:
+            assert (
+                request(
+                    "POST",
+                    "/api/v1/settings",
+                    dict(settings, auto_start_delay_seconds=invalid),
+                )[0]
+                == 400
+            )
         for bad_usb in [1, "true", None]:
             assert (
                 request(
@@ -285,7 +300,9 @@ with tempfile.TemporaryDirectory() as directory:
                 == 400
             )
         old_schema = {
-            k: v for k, v in settings.items() if not k.startswith("usb_auto_")
+            k: v
+            for k, v in settings.items()
+            if not k.startswith("usb_auto_") and k != "auto_start_delay_seconds"
         }
         assert request("POST", "/api/v1/settings", old_schema)[1] == settings
 
@@ -393,7 +410,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert request("POST", "/api/v1/test-controller/input", frame)[0] == 400
         assert request("DELETE", "/api/v1/test-controller")[0] == 200
         previous_session = state["session_id"]
-        for user_id in (2, 3, 4):
+        for user_id in (0, 2, 3, 4):
             status, next_state = request(
                 "POST", "/api/v1/test-controller", {"user_id": user_id}
             )
@@ -407,7 +424,22 @@ with tempfile.TemporaryDirectory() as directory:
             )
             assert request("POST", "/api/v1/bluetooth/start", {"user_id": 1})[0] == 409
             assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 409
-            assert request("DELETE", "/api/v1/test-controller")[0] == 200
+            assert (
+                request(
+                    "DELETE",
+                    "/api/v1/test-controller",
+                    {"session_id": previous_session},
+                )[0]
+                == 409
+            )
+            assert (
+                request(
+                    "DELETE",
+                    "/api/v1/test-controller",
+                    {"session_id": next_state["session_id"]},
+                )[0]
+                == 200
+            )
             previous_session = next_state["session_id"]
         status, lines = request("GET", "/api/v1/logs?level=trace")
         assert status == 200 and isinstance(lines, str)

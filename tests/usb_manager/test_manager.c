@@ -152,10 +152,6 @@ int uc_core_read_rumble(uint64_t id, uint64_t now, uint8_t *strong, uint8_t *wea
     *weak = desired_weak;
     return feedback;
 }
-int profile_usb_xinput_activation(uint16_t vid, uint16_t pid)
-{
-    return vid == 0x045e && pid == 0x028e;
-}
 int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
 {
     (void)vid;

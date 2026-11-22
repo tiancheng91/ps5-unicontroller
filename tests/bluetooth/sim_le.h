@@ -28,6 +28,8 @@ typedef struct {
     int foreign_pending;  /* someone else's LE connection attempt is pending */
     int foreign_restarts; /* and is started again this many times once cancelled */
     unsigned seed;
+    uint8_t advert[31]; /* Optional raw AD fixture for discovery-only tests. */
+    int advert_len;
 } sim_le_pad;
 
 sim_le_t *sim_le_new(const sim_le_pad *pad);

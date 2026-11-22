@@ -43,17 +43,14 @@
         <section class="view touch-view">
           <div class="page-heading">
             <div>
-              <h1 x-label="test"></h1>
+              <h1 x-label="touchTitle"></h1>
               <p x-label="phoneHint"></p>
             </div>
           </div>
           <p class="group-hint" x-label="testIsolationHint"></p>
           <div class="touch-toolbar">
-            <label class="stacked"
-              ><span x-label="user"></span
-              ><select id="user" aria-label="Signed-in user"></select></label
-            ><button id="enable" class="primary" x-label="touchEnable"></button
-            ><button id="disable" disabled x-label="disable"></button
+            <button id="enable" class="primary" x-label="touchEnable"></button
+            ><button id="disable" disabled x-label="touchRemove"></button
             ><button id="release" class="danger" x-label="releaseAll"></button
             ><button id="focus" aria-pressed="false" x-label="focusMode"></button>
           </div>

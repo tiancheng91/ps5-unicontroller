@@ -77,7 +77,7 @@ function harness(relative) {
   vm.createContext(context);
   let source = fs.readFileSync(path.join(__dirname, "../../web", relative), "utf8");
   // Suppress startup networking; test real handlers and enableOutput against deferred requests.
-  source = source.replace(/\ninit\(\);\nrender\(\);/, "\nrender();");
+  source = source.replace(/\nsyncState\(\);\nrender\(\);/, "\nrender();");
   vm.runInContext(source, context);
   const queue = [];
   context.request = (route, method) => {
@@ -105,12 +105,12 @@ async function flush() {
     assert.equal(h.calls.filter((c) => c.method === "POST").length, 1);
     assert.equal(
       h.calls.filter((c) => c.method === "DELETE").length,
-      2,
+      1,
       "late success must trigger cleanup after initial DELETE",
     );
     h = harness(file);
     const waiting = h.element("enable").onclick();
-    h.queue.shift().resolve({ pending: true });
+    h.queue.shift().resolve({ pending: true, session_id: 12 });
     await flush();
     await h.element("disable").onclick();
     h.timers.shift()();
@@ -131,7 +131,7 @@ async function flush() {
   await waiting;
   assert.equal(
     h.calls.filter((c) => c.method === "DELETE").length,
-    2,
+    1,
     "hidden pending enable must clean late result",
   );
   assert.equal(vm.runInContext("active", h.context), false);
