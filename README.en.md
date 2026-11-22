@@ -91,7 +91,7 @@ Bluetooth and USB automatic-start switches share two triggers, Bluetooth delayed
 
 The experiment permits one input source, ignores the saved account and lets you press PS/Home to choose a user on PS5. **User selection and game input still require hardware validation.** “System binding unverified” is not a success indicator. This mode does not start immediately when settings are saved or the payload loads, and it cannot wake the console with a third-party controller. Use the console power button for this test and keep an original controller available.
 
-USB must first be started manually to remember its account, which must be signed in for automatic startup. Resume mode permits only Bluetooth or USB; after-login mode supports both.
+After-login USB startup requires its saved account. Resume mode can start USB before sign-in. Press PS/Home to choose a user on the console. Resume mode permits only Bluetooth or USB; after-login mode supports both.
 
 Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 
