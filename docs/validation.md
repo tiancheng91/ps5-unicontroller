@@ -2,7 +2,12 @@
 
 当前已通过：C11严格编译、核心/平台/协议/输入源管理单测、HTTP/UI回归、格式检查、PS5 SDK交叉编译及Actions完整ELF链接。USB与分层调整代码0f0db10的[构建记录](https://github.com/tiancheng91/ps5-unicontroller/actions/runs/42821929782)。
 
-未完成：PS5实机USB接口、实体手柄输入/回连/热插拔、原装DualSense共存与重复待机。不能据此声称已在PS5游戏中可用；完整ELF由Actions构建，不要求本地Docker。
+## USB 实机记录与遗留问题（2026-11-22）
+
+- **一代 Switch Pro**：维护者在 PS5 上安装 `d7c5647` 并反馈 USB 可用。该构建包含输入、游戏震动输出和网页震动测试。多手柄分别接收游戏震动及反复待机仍待专项验证。[构建记录](https://github.com/tiancheng91/ps5-unicontroller/actions/runs/45028076316)
+- **Switch 2 Pro**：测试者在 PS5 Pro 13.20、手柄固件 2.1.4 上确认系统菜单和模拟器可操作，首次会话约 45 分钟。接入可能使电视静音，需手动选回 HDMI 或耳机。USB 输入仍为实验性，震动和 BLE 尚未实现。[实机反馈](https://github.com/tiancheng91/ps5-unicontroller/pull/7#issuecomment-6931875649)
+- **Switch 2 Pro 待复测**：早期构建出现重插后初始化失败并耗尽四个槽、切换账号后虚拟输出未重建，以及双手柄难以分配到不同账号。本次已调整失败槽回收和账号重选。复测时应保持 USB 服务开启，反复拔插，再用 DualSense 和 Switch 2 Pro 分别登录两个账号，确认两者可独立操作原生游戏。
+- **PowerA**：反馈中的 USB 设备 `20d6:0002` 未上报输入；Classic 蓝牙连接后在认证阶段超时，尚未进入协议解析。继续由 [issue #6](https://github.com/tiancheng91/ps5-unicontroller/issues/6) 跟踪。
 
 HTTP集成覆盖鉴权、Origin、超限请求、设置保存与失败保留、手柄启停、旧序号拒绝、慢请求不阻塞服务。500ms释放及清理失败重试由核心测试验证。
 

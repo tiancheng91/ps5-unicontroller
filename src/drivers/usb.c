@@ -262,8 +262,8 @@ int uc_usb_start(int32_t user)
     usb.enabled = 1;
     usb.reason = NULL;
     usb.clock_valid = usb.presence_valid = 0;
-    uc_log_info("[usb] started slots=%u user=%d; XInput, verified Generic HID and experimental "
-                "Switch 1/2 Pro USB inputs",
+    uc_log_info("[usb] started slots=%u user=%d; XInput, verified Generic HID, Switch Pro and "
+                "experimental Switch 2 Pro USB inputs",
                 usb.count, user);
     return 0;
 }
@@ -935,10 +935,7 @@ size_t uc_usb_status_json(char *buffer, size_t capacity)
             s->options_key, s->options.rumble ? "true" : "false",
             s->options.swap_ab ? "true" : "false", s->known ? "true" : "false");
         ADD(",\"rumble_enabled\":%s", usb.rumble && s->options.rumble ? "true" : "false");
-        ADD(",\"experimental\":%s",
-            (s->device.kind == UC_USB_SWITCH2_PRO || s->device.kind == UC_USB_SWITCH_PRO)
-                ? "true"
-                : "false");
+        ADD(",\"experimental\":%s", s->device.kind == UC_USB_SWITCH2_PRO ? "true" : "false");
         if (diagnostic_fields(buffer, capacity, &used, &s->device, 0)) {
             buffer[0] = 0;
             return 0;

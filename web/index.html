@@ -563,6 +563,7 @@
               <dt x-label="batteryLabel"></dt>
               <dd x-text="detailDevice.batteryText"></dd>
             </dl>
+            <p x-show="detailDevice.switch2Usb" x-label="switch2AudioHint"></p>
             <p x-show="detailDevice.system_assignment" x-label="systemChoiceHint"></p>
             <p class="error" x-show="detailMissing" x-label="deviceGone"></p>
             <fieldset :disabled="deviceOptionsDisabled" class="settings-group">

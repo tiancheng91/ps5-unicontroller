@@ -290,6 +290,7 @@ document.addEventListener("alpine:init", () => {
         system_assignment: !!d.system_assignment,
         known_device: !!d.known_device,
         experimental: !!d.experimental,
+        switch2Usb: !wireless && d.profile === "switch2-pro-usb",
         rumble: !!d.rumble,
         rumble_available: !!d.rumble_available,
         rumble_enabled: !!d.rumble_enabled,

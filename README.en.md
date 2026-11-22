@@ -52,13 +52,13 @@ These are **implemented paths**, not a certified hardware list. A product can us
 
 | Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
 | --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Switch Pro-compatible | Classic                                     | Experimental input for 057e:2009                         | Switch BLE identities are rejected to avoid unusable device entries      |
-| Switch 2 Pro          | Not supported (BLE)                         | Experimental input for 057e:2069                         | Uses a different protocol from the original Switch Pro Controller        |
+| Switch Pro-compatible | Classic input and rumble                    | `057e:2009`, input and rumble                            | The original Switch Pro has the most complete support                    |
+| Switch 2 Pro          | BLE unsupported                             | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
 | Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
-Switch Pro (`057e:2009`) and Switch 2 Pro (`057e:2069`) have [experimental USB input](docs/usb.md) for buttons and sticks, pending hardware validation. First-generation Switch Pro controllers also have experimental USB rumble support. Third-party controllers must match the required interface layout and protocol; an emulated VID/PID alone does not establish compatibility.
+**Connecting a Switch 2 Pro over USB** may redirect PS5 audio to the controller. Under **Sound → Audio Output**, turn off automatic output device switching and select your TV or headset. Features on third-party Switch Pro-compatible controllers depend on their protocol and USB interface. [USB support details](docs/usb.md)
 
 BLE uses an allowlist; the only built-in enabled identity is currently Xbox `045e:0b13`. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 

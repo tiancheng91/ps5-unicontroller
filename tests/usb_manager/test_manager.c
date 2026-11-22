@@ -638,7 +638,7 @@ int main(void)
     char switch1_status[8192];
     assert(uc_usb_status_json(switch1_status, sizeof switch1_status) &&
            strstr(switch1_status, "switch-pro-usb") &&
-           strstr(switch1_status, "\"experimental\":true") &&
+           strstr(switch1_status, "\"experimental\":false") &&
            strstr(switch1_status, "\"rumble_available\":true"));
     int restore_before = switch1_restore_calls;
     switch1_restore_error = 1; /* Cleanup continues even if timeout restore cannot be sent. */

@@ -565,7 +565,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     log_line("usb %s: %s candidate %04x:%04x interface=%u index=%u IN=%#x OUT=%#x", selected.node,
              selected.kind == UC_USB_XINPUT        ? "XInput"
              : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
-             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro"
                                                    : "Generic HID",
              selected.vid, selected.pid, selected.iface, selected.iface_index, selected.ep_in,
              selected.ep_out);
@@ -644,7 +644,7 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     log_line("usb %s: input endpoint ready protocol=%s; output=%s", selected.node,
              selected.kind == UC_USB_XINPUT        ? "XInput"
              : selected.kind == UC_USB_SWITCH2_PRO ? "Switch 2 Pro (experimental)"
-             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro (experimental)"
+             : selected.kind == UC_USB_SWITCH_PRO  ? "Switch Pro"
                                                    : "Generic HID",
              n->out_fd >= 0 ? "available" : "disabled");
     *out = selected;

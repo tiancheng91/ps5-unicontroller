@@ -2,7 +2,7 @@
 window.UCMessages = {
   zh: {
     rumbleTest: "测试震动（0.5 秒）",
-    rumbleTestHint: "短震动 0.5 秒，试验性支持，请确认实际效果。",
+    rumbleTestHint: "让手柄震动 0.5 秒。",
     rumbleTestUnsupported: "当前连接没有可用的震动输出，可查看诊断日志。",
     rumbleTestEnableHint: "请先开启震动总开关和此手柄的震动选项。",
     rumbleTestQueued: "已请求 {name} 短震动，请确认手柄是否有反应。",
@@ -15,10 +15,11 @@ window.UCMessages = {
     usbAutoNeedsUser: "请先手动启用一次 USB，记住所用账号。",
     autoConflict: "恢复模式只能启用一种连接；同时启用请改选登录后启动。",
 
+    switch2AudioHint: "在 PS5 音频输出设置中关闭自动切换输出设备，并选回电视或耳机。",
     experimental: "试验性",
     experimentalRumbleHint: "试验性支持，部分手柄可能无效。未知设备默认关闭。",
-    deviceRumbleHint: "试验性支持，并非所有手柄都能正常震动。",
-    rumbleUnavailableHint: "试验性支持，当前手柄暂不支持震动。",
+    deviceRumbleHint: "接收游戏震动反馈，可通过下方按钮测试。",
+    rumbleUnavailableHint: "当前手柄连接无法使用震动。",
     deviceOptionsHint: "自动保存，仅对当前手柄生效。",
     deviceSettingsSaved: "手柄设置已保存。",
     rumbleMaster: "震动总开关",
@@ -56,7 +57,8 @@ window.UCMessages = {
     account: "账号 {id}",
     gate: "选择已登录账号后即可启动。",
     btHint: "Switch 模式使用 Classic；额外手柄需分别分配账号。",
-    usbHint: "支持 XInput、通用 HID，试验性支持 Switch Pro / Switch 2 Pro 有线输入。",
+    usbHint:
+      "支持 Switch Pro、XInput 和通用 HID。Switch 2 Pro 有线输入为实验性支持，需手动设置音频输出。",
     systemChoice: "系统用户选择实验 · 绑定未确认",
     outputActive: "虚拟输出已启用",
     outputWaiting: "等待虚拟输出",
@@ -203,7 +205,7 @@ window.UCMessages = {
   },
   en: {
     rumbleTest: "Test rumble (0.5 s)",
-    rumbleTestHint: "A 0.5-second experimental pulse. Check the actual controller response.",
+    rumbleTestHint: "Vibrate the controller for 0.5 seconds.",
     rumbleTestUnsupported:
       "No rumble output is available on this connection. Check diagnostic logs.",
     rumbleTestEnableHint:
@@ -220,11 +222,13 @@ window.UCMessages = {
     usbAutoNeedsUser: "Enable USB manually once to remember its account.",
     autoConflict: "Choose one connection for resume mode, or use after-login startup for both.",
 
+    switch2AudioHint:
+      "In PS5 audio output settings, turn off automatic output device switching and select your TV or headset.",
     experimental: "Experimental",
     experimentalRumbleHint:
       "Experimental; may not work on every controller. Off by default for unknown devices.",
-    deviceRumbleHint: "Experimental support. Rumble may not work on every controller.",
-    rumbleUnavailableHint: "Experimental support. Rumble is unavailable on this controller.",
+    deviceRumbleHint: "Receive rumble from games. Use the button below to test it.",
+    rumbleUnavailableHint: "Rumble is unavailable on this connection.",
     deviceOptionsHint: "Saved automatically for this controller only.",
     deviceSettingsSaved: "Controller settings saved.",
     rumbleMaster: "Rumble master switch",
@@ -262,7 +266,8 @@ window.UCMessages = {
     account: "User {id}",
     gate: "Select a signed-in account to start.",
     btHint: "Use Classic for Switch mode. Assign additional controllers to separate users.",
-    usbHint: "Supports XInput, generic HID and experimental wired Switch Pro / Switch 2 Pro input.",
+    usbHint:
+      "Supports Switch Pro, XInput and generic HID. Switch 2 Pro wired input is experimental and requires manual audio setup.",
     systemChoice: "System user-selection experiment · binding unverified",
     outputActive: "Virtual output active",
     outputWaiting: "Waiting for virtual output",

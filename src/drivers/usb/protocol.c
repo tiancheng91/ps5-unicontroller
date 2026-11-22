@@ -259,7 +259,7 @@ static int switch1_feed(uc_usb_protocol *p, const uint8_t *r, size_t n, pad_stat
     if (profile->parse(NULL, r, (int)n, s) != PARSE_FULL)
         return 0;
     if (!p->ready)
-        uc_log_info("[usb-switch1] first full input bytes=%zu; experimental input ready", n);
+        uc_log_info("[usb-switch1] first full input bytes=%zu; input ready", n);
     s->has_motion = 0; /* IMU was not enabled by this USB initialization. */
     p->ready = 1;
     p->switch1_step = 6;
