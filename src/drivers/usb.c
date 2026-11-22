@@ -1,5 +1,6 @@
 #include "../logging.h"
 #include "usb.h"
+#include "bt.h"
 #include "../core/device_options.h"
 #include "usb/protocol.h"
 #include "../core/uc_core.h"
@@ -25,7 +26,8 @@ typedef struct {
     uc_device_options options;
     int scanned, assigning, failed, recycle, first_input_warned;
     uint64_t opened_at;
-    int reselecting;
+    int reselecting, saw_login;
+    uint64_t next_login_check;
     int32_t user, next_user;
     uint64_t session, sequence, frames, submitted, latest_at, health_at, last_scan;
     const char *reason;
@@ -335,6 +337,8 @@ int uc_usb_reselect_user(unsigned slot, const char *node)
     if (!uc_core_system_assignment_available(s->session))
         return -3;
 
+    s->saw_login = 0;
+    s->next_login_check = 0;
     s->reselecting = 1;
     stop_motors(s, usb.clock);
     s->assigning = 1;
@@ -418,6 +422,17 @@ static void forget_rejection(const char *node)
             return;
         }
 }
+/* A user-list failure must never be interpreted as everyone signing out. */
+static int login_state(void)
+{
+    int32_t users[4];
+    if (uc_backend_users(users))
+        return -1;
+    for (unsigned i = 0; i < 4; ++i)
+        if (users[i] > 0)
+            return 1;
+    return 0;
+}
 static void poll_slot(unsigned index, uint64_t now)
 {
     usb_slot *s = &usb.slots[index];
@@ -458,6 +473,7 @@ static void poll_slot(unsigned index, uint64_t now)
         stop_motors(s, now);
         if (usb.preferred_user == s->user)
             usb.preferred_user = -1;
+        s->saw_login = 1; /* Its explicitly assigned account was previously live. */
         s->user = s->next_user = -1;
         s->assigning = s->valid = 0;
         s->reason = "user_unavailable";
@@ -530,6 +546,10 @@ static void poll_slot(unsigned index, uint64_t now)
         s->health_at = now;
         s->health_valid = 1;
     }
+    if (s->user == 0 && active(s) && !s->saw_login && now >= s->next_login_check) {
+        s->next_login_check = now + 1000;
+        s->saw_login = login_state() == 1;
+    }
     if (s->rumble_test_until && now >= s->rumble_test_until) {
         s->rumble_test_until = 0;
         (void)uc_usb_protocol_rumble(&s->protocol, 0, 0, now);
@@ -596,10 +616,19 @@ static void poll_slot(unsigned index, uint64_t now)
                 fail_slot(index, "input_counter_exhausted", 0, now);
                 return;
             }
+            int ps_pressed = (state.buttons & PAD_PS) && !(s->latest.buttons & PAD_PS);
             s->latest = state;
             s->latest_at = now;
             s->valid = 1;
             ++s->frames;
+            if (ps_pressed && s->saw_login && !uc_usb_reselection_pending() &&
+                !uc_bt_reselection_pending() && login_state() == 0 &&
+                uc_usb_reselect_user(index, s->device.node) >= 0) {
+                uc_log_info(
+                    "[usb] slot=%u PS pressed after logout; requesting system user selection",
+                    index);
+                return;
+            }
         }
     }
     if (waiting_for_hid_input(s) && !first_input_remaining(s, now)) {

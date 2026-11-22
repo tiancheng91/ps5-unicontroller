@@ -30,6 +30,19 @@ static int find(uint64_t id)
             return i;
     return -1;
 }
+static int logged_in;
+static uint32_t report_buttons = PAD_CROSS;
+int uc_bt_reselection_pending(void)
+{
+    return 0;
+}
+int uc_backend_users(int32_t ids[4])
+{
+    for (int i = 0; i < 4; i++)
+        ids[i] = -1;
+    ids[0] = logged_in ? 1 : -1;
+    return 0;
+}
 int uc_backend_can_start(int32_t user)
 {
     return gate && user >= 1 && user <= 4 && user != unavailable_user;
@@ -288,7 +301,7 @@ int uc_usb_protocol_feed(uc_usb_protocol *p, const uint8_t *b, size_t n, pad_sta
     if (invalid_report)
         return 0;
     pad_state_reset(out);
-    out->buttons = PAD_CROSS;
+    out->buttons = report_buttons;
     out->lx = 255;
     out->l2 = 255;
     return 1;
@@ -591,6 +604,22 @@ int main(void)
     ports[0].reports = 1;
     uc_usb_poll(0);
     assert(by_user(0) >= 0 && sessions[by_user(0)].submits == 1);
+    uint64_t old = sessions[by_user(0)].id;
+    logged_in = 1;
+    uc_usb_poll(1);
+    logged_in = 0;
+    report_buttons = expected_buttons[0] = PAD_PS;
+    ports[0].reports = 1;
+    uc_usb_poll(2);
+    assert(!uc_core_session_active(old));
+    ports[0].reports = 1;
+    uc_usb_poll(3);
+    assert(by_user(0) >= 0 && sessions[by_user(0)].id != old);
+    old = sessions[by_user(0)].id;
+    ports[0].reports = 1;
+    uc_usb_poll(4);
+    assert(uc_core_session_active(old));
+    report_buttons = expected_buttons[0] = PAD_CROSS;
     finish();
     test_system_user_reselection();
     test_account_follows_input_not_scanner();
