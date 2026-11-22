@@ -1,5 +1,7 @@
 # 更新日志
 
+**中文** · [English](CHANGELOG.en.md)
+
 ## [Unreleased]
 
 ## [0.2.0] - 2026-11-22

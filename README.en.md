@@ -12,7 +12,7 @@
 
 [Download test builds](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [Report an issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [Hardware test checklist](docs/test-checklist.md) (Chinese)
 
-[Download v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [Changelog](CHANGELOG.md)
+[Download v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [Changelog](CHANGELOG.en.md)
 
 ## Quick start
 
@@ -132,7 +132,7 @@ UniController is licensed under [GNU GPLv3](LICENSE). The inherited Bluetooth br
 
 ### Maintenance and releases
 
-Maintain user-facing changes in [CHANGELOG.md](CHANGELOG.md). Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)
+Record user-facing changes in both the [English](CHANGELOG.en.md) and [Chinese](CHANGELOG.md) changelogs. Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)
 
 ## Acknowledgments
 
