@@ -30,6 +30,7 @@ typedef struct {
     uint64_t last_input, frames, connected_at, rumble_test_last;
     int rumble_test_seen;
     int notice_pending, pending, closing, assigning, failed;
+    int reselecting;
     int32_t user, next_user;
     uint64_t session, sequence, submitted;
 } Slot;
@@ -179,7 +180,7 @@ static void on_state(void *unused, int slot, const pad_state *state)
         bt.selected = slot;
         s->user = 0;
         log_code("system_choice_source_selected");
-    } else if (!s->failed && !bt.system_assignment && bt.selected == -1 && s->user <= 0 &&
+    } else if (!s->failed && !bt.system_assignment && bt.selected == -1 && s->user < 0 &&
                uc_backend_can_start(bt.user)) {
         int taken = 0;
         for (int i = 0; i < HOST_MAX_PADS; i++)
@@ -195,7 +196,7 @@ static void on_state(void *unused, int slot, const pad_state *state)
         }
     }
     if (own_output(s) &&
-        (bt.system_assignment ? uc_backend_transport_ready() : uc_backend_can_start(s->user)))
+        (s->user == 0 ? uc_backend_transport_ready() : uc_backend_can_start(s->user)))
         (void)submit_latest(slot);
 }
 static void on_disconnect(void *unused, int slot)
@@ -417,9 +418,9 @@ void uc_bt_poll(uint64_t now)
             }
             continue;
         }
-        if (s->failed || !s->connected || s->user < 0 || (s->user == 0 && !bt.system_assignment))
+        if (s->failed || !s->connected || s->user < 0)
             continue;
-        if (bt.system_assignment ? !uc_backend_transport_ready() : !uc_backend_can_start(s->user)) {
+        if (s->user == 0 ? !uc_backend_transport_ready() : !uc_backend_can_start(s->user)) {
             s->valid = 0;
             if (cleanup_output(s))
                 s->closing = 1;
@@ -441,6 +442,7 @@ void uc_bt_poll(uint64_t now)
                 continue;
             uint64_t session = s->session;
             int rc = bt.system_assignment ? uc_core_enable_system_assigned(now, &session)
+                     : s->user == 0       ? uc_core_enable_reselected(now, &session)
                                           : uc_core_enable_physical(s->user, now, &session);
             if (session)
                 s->session = session;
@@ -459,18 +461,22 @@ void uc_bt_poll(uint64_t now)
                         "[bluetooth] virtual_create_failed slot=%d user=%d session=%llu rc=%d; "
                         "automatic retry disabled",
                         slot, s->user, (unsigned long long)s->session, rc);
+                if (s->reselecting) {
+                    s->reselecting = 0;
+                    continue;
+                }
                 /* A failed virtual output must not keep competing with the
                  * console for shared HCI packets. Stop all owned links and
                  * release HCI even when virtual cleanup needs later polls. */
                 (void)uc_bt_stop();
                 return;
             }
-            s->pending = 0;
             s->session = session;
+            s->pending = s->reselecting = 0;
             s->sequence = 0;
             s->submitted = 0;
-            log_code(bt.system_assignment ? "virtual_system_choice_ready_binding_unverified"
-                                          : "virtual_bound");
+            log_code(s->user == 0 ? "virtual_system_choice_ready_binding_unverified"
+                                  : "virtual_bound");
         } else if (!own_output(s)) {
             bt.error = "session_lost_manual_assignment_required";
             s->failed = 1;
@@ -585,6 +591,47 @@ int uc_bt_assign(int slot, const char *address, int32_t user)
     s->valid = 0;
     return 0;
 }
+int uc_bt_reselection_pending(void)
+{
+    for (unsigned i = 0; i < HOST_MAX_PADS; ++i) {
+        const Slot *s = &bt.slots[i];
+        if (s->connected && !s->failed && s->reselecting && !own_output(s))
+            return 1;
+    }
+    return 0;
+}
+int uc_bt_reselect_user(int slot, const char *address)
+{
+    if (!bt.host || bt.stopping || !valid_slot(slot) || !address || !uc_backend_transport_ready())
+        return -1;
+    Slot *s = &bt.slots[slot];
+    char current[18];
+    address_text(s->addr, current);
+    if (!s->connected || strcmp(address, current))
+        return -1;
+    if (bt.system_assignment && bt.selected != slot)
+        return -3;
+    if (s->assigning)
+        return s->next_user == 0 ? 2 : -1;
+    if (!uc_core_system_assignment_available(s->session))
+        return -3;
+
+    s->reselecting = 1;
+    s->failed = s->notice_pending = s->valid = 0;
+    (void)host_rumble_stop(bt.host, slot);
+
+    uc_log_info("[bt] slot=%d address=%s user reselection requested; PS5 chooses user, "
+                "final ownership unverified",
+                slot, address);
+    if (cleanup_output(s)) {
+        s->next_user = 0;
+        s->assigning = 1;
+        s->closing = 1;
+        return 2;
+    }
+    s->user = 0;
+    return 0;
+}
 static void safe_profile(const char *input, char out[64])
 {
     size_t at = 0;
@@ -660,8 +707,8 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             ADD("%u", s->latest.battery_pct <= 100 ? s->latest.battery_pct : 100);
         else
             ADD("-1");
-        ADD(",\"system_assignment\":%s,\"output_active\":%s",
-            bt.system_assignment ? "true" : "false", own_output(s) ? "true" : "false");
+        ADD(",\"system_assignment\":%s,\"output_active\":%s", s->user == 0 ? "true" : "false",
+            own_output(s) ? "true" : "false");
         ADD(",\"output_failed\":%s", s->failed ? "true" : "false");
         ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s,\"rumble_"
             "available\":%s,\"rumble_enabled\":%s",

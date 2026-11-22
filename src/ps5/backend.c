@@ -58,12 +58,13 @@ static remote_setting_fn remote_setting;
 typedef struct {
     int used, closing, input_logged, ps_logged;
     int32_t owner;
-    uint64_t device, token, feedback_at, input_frames, input_at;
+    uint64_t selection_session, device, token, feedback_at, input_frames, input_at;
     uint32_t last_buttons;
     unsigned input_changes;
     int feedback_polled, feedback_failed;
 } owned_output;
 static owned_output outputs[4];
+static uint64_t pending_selection;
 static int pending_slot = -1;
 static owned_output *find_output(uint64_t handle)
 {
@@ -184,7 +185,7 @@ int uc_backend_can_start(int32_t user)
 {
     return user_live(user) && uc_backend_transport_ready();
 }
-int uc_backend_init(void)
+static int backend_init_attempt(void)
 {
     if (ready)
         return 0;
@@ -208,7 +209,15 @@ int uc_backend_init(void)
         backend_error(2, "load_mbus", -1);
         goto fail;
     }
-    (void)sceUserServiceInitialize(NULL);
+    int32_t user_init = sceUserServiceInitialize(NULL);
+    int32_t users[4];
+    int user_query = uc_backend_users(users), count = 0;
+    if (!user_query)
+        for (unsigned i = 0; i < 4; i++)
+            count += users[i] > 0;
+    uc_log_info("[startup] user_service_rc=%#x user_query_rc=%d logged_in=%d; login gates physical "
+                "startup, not backend initialization",
+                (unsigned)user_init, user_query, count);
     int32_t rc = scePadInit();
     if (rc != 0) {
         backend_error(3, "scePadInit", rc);
@@ -233,6 +242,53 @@ int uc_backend_init(void)
 fail:
     if (credentials(old_auth, old_caps))
         raised = 0;
+    return -1;
+}
+/* Called before the runtime and physical sources exist. A failed attempt may
+ * retry only after credentials have been restored; never repeat device creation,
+ * pairing or interface ownership here. Loader process names/ports and kstuff
+ * markers are not reliable capability checks and are not prerequisites. */
+int uc_backend_init(void)
+{
+    if (ready)
+        return 0;
+    if (raised) {
+        uc_log_error("[startup] backend retry blocked: credentials restoration is unresolved");
+        return -1;
+    }
+    for (unsigned attempt = 1; attempt <= 2; attempt++) {
+        struct stat st;
+        errno = 0;
+        int present = stat("/dev/hid", &st) == 0;
+        int status_errno = present ? 0 : errno;
+        uc_log_info("[startup] backend attempt=%u/2 pid=%d euid=%u hid_present=%d hid_errno=%d; no "
+                    "OnionHEN/kstuff/loader-port prerequisite",
+                    attempt, (int)getpid(), (unsigned)geteuid(), present, status_errno);
+        int result = backend_init_attempt();
+        if (!result) {
+            uc_log_info(
+                "[startup] backend ready attempt=%u; Bluetooth/USB startup policy unchanged",
+                attempt);
+            return 0;
+        }
+        if (raised) {
+            uc_log_error("[startup] credential rollback failed; exiting without automatic retry");
+            return -1;
+        }
+        if (attempt == 2) {
+            uc_log_error("[startup] backend initialization failed twice; explicit reload required");
+            return -1;
+        }
+        uc_log_warn("[startup] backend initialization failed rc=%d; one retry after 5000ms, no "
+                    "physical devices opened",
+                    result);
+        struct timespec remaining = {.tv_sec = 5, .tv_nsec = 0};
+        while (nanosleep(&remaining, &remaining) != 0)
+            if (errno != EINTR) {
+                uc_log_error("[startup] retry delay failed errno=%d; exiting", errno);
+                return -1;
+            }
+    }
     return -1;
 }
 static int raw_log_open(void)
@@ -533,13 +589,14 @@ static void clear_pending(void)
 {
     close_log();
     phase = 0;
+    pending_selection = 0;
     owner = -1;
     device = 0;
     identified = 0;
     cancelled = 0;
     pending_slot = -1;
 }
-int uc_backend_create(int32_t user, uint64_t *handle)
+static int create_output(int32_t user, uint64_t selection, uint64_t *handle)
 {
     if (home_waiting || home_gate.armed || home_owns_log)
         uc_backend_auto_watch(0);
@@ -555,11 +612,16 @@ int uc_backend_create(int32_t user, uint64_t *handle)
     uint64_t current = now_ms();
     if (!working_since || current < working_since || current - working_since < 5000)
         return 2;
-    for (unsigned i = 0; i < 4; i++)
-        if (outputs[i].used && outputs[i].owner != user && (user == 0 || outputs[i].owner == 0))
+    /* Only the pre-login resume path reserves the whole output backend. */
+    int exclusive = user == 0 && selection == 0;
+    for (unsigned i = 0; i < 4; i++) {
+        int existing_exclusive = outputs[i].owner == 0 && outputs[i].selection_session == 0;
+        if (outputs[i].used && existing_exclusive != exclusive)
             return -2;
+    }
     for (unsigned i = 0; i < 4; i++)
-        if (outputs[i].used && outputs[i].owner == user) {
+        if (outputs[i].used && outputs[i].owner == user &&
+            outputs[i].selection_session == selection) {
             if (outputs[i].closing)
                 return -1;
             *handle = outputs[i].token;
@@ -567,7 +629,7 @@ int uc_backend_create(int32_t user, uint64_t *handle)
                 clear_pending(); /* Core has adopted this completed creation. */
             return 0;
         }
-    if (phase && owner != user)
+    if (phase && (owner != user || pending_selection != selection))
         return -2;
     if (phase == 5)
         return -1;
@@ -582,6 +644,7 @@ int uc_backend_create(int32_t user, uint64_t *handle)
             return -2;
         identified = 0;
         owner = user;
+        pending_selection = selection;
         cancelled = 0;
         matches = 0;
         device = 0;
@@ -595,6 +658,14 @@ int uc_backend_create(int32_t user, uint64_t *handle)
         phase = 1;
     }
     return 2;
+}
+int uc_backend_create(int32_t user, uint64_t *handle)
+{
+    return create_output(user, 0, handle);
+}
+int uc_backend_create_reselected(uint64_t session, uint64_t *handle)
+{
+    return session ? create_output(0, session, handle) : -1;
 }
 static int neutral(uint64_t handle)
 {
@@ -904,6 +975,7 @@ void uc_backend_poll(void)
         memset(output, 0, sizeof(*output));
         output->used = 1;
         output->owner = owner;
+        output->selection_session = pending_selection;
         output->device = device;
         output->token = serial++;
         uint64_t handle = output->token;

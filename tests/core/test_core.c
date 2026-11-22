@@ -23,6 +23,11 @@ int uc_backend_create(int32_t user, uint64_t *handle)
     *handle = user == 0 ? 99 : 98 + (uint64_t)user;
     return 0;
 }
+int uc_backend_create_reselected(uint64_t session, uint64_t *handle)
+{
+    (void)session;
+    return uc_backend_create(0, handle);
+}
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2])
 {
@@ -184,10 +189,20 @@ int main(void)
     assert(uc_core_suspend() == 0);
     assert(uc_core_refresh_source(next, 5005) < 0);
     test_multiple_sessions();
+    uint64_t peer = 0, chosen = 0;
+    assert(!uc_core_enable_physical(2, 8190, &peer));
+    assert(uc_core_system_assignment_available(0));
+    assert(!uc_core_enable_reselected(8191, &chosen));
+    assert(peer != chosen && uc_core_session_active(peer));
+    assert(!uc_core_disable_session(chosen) && uc_core_session_active(peer));
+    assert(!uc_core_disable_session(peer));
     uint64_t system_session = 0, other = 0;
     assert(uc_core_enable(0, 8200, &other) < 0);
     assert(uc_core_enable_physical(0, 8200, &other) < 0);
+    assert(uc_core_system_assignment_available(0));
     assert(uc_core_enable_system_assigned(8201, &system_session) == 0);
+    assert(!uc_core_system_assignment_available(0));
+    assert(uc_core_system_assignment_available(system_session));
     assert(uc_core_enable_physical(2, 8202, &other) == 2 && other == 0);
     assert(uc_core_enable(2, 8202, &other) == 2);
     assert(uc_core_enable_system_assigned(8202, &other) == 2 && other == 0);
@@ -203,6 +218,8 @@ int main(void)
     assert(uc_core_disable() == 0);
     create_pending = 1;
     assert(uc_core_enable_system_assigned(8900, &system_session) == 2 && system_session);
+    assert(!uc_core_system_assignment_available(0));
+    assert(uc_core_system_assignment_available(system_session));
     other = 0;
     assert(uc_core_enable_system_assigned(8901, &other) == 2 && !other);
     create_pending = 0;

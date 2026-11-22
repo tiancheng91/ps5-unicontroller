@@ -8,15 +8,17 @@
 #include <string.h>
 typedef struct {
     unsigned id;
-    int scans, reads, closes, health, available, alive, reports, read_error, reject;
+    int scans, opens, reads, closes, health, available, alive, reports, read_error, reject;
 } transport_mock;
 static transport_mock ports[4];
+static int blocked[32], quarantine_calls;
 static struct {
     uint64_t id, sequence;
     int user, active, pending, submits, refreshes, disable_error;
 } sessions[4];
 static uint64_t next_session = 1;
-static int create_error, hid_kind, hid_configured, known_device = 1;
+static int create_error, hid_kind, switch1_kind, switch2_kind, hid_configured, known_device = 1;
+static int unavailable_user, switch1_restore_calls, switch1_restore_error;
 static int gate = 1, wait_creation, init_error, invalid_report, lease_error, feedback, rumble_calls,
            stops;
 static uint8_t desired_strong, desired_weak;
@@ -28,9 +30,34 @@ static int find(uint64_t id)
             return i;
     return -1;
 }
+static int logged_in;
+static uint32_t report_buttons = PAD_CROSS;
+int uc_bt_reselection_pending(void)
+{
+    return 0;
+}
+int uc_backend_users(int32_t ids[4])
+{
+    for (int i = 0; i < 4; i++)
+        ids[i] = -1;
+    ids[0] = logged_in ? 1 : -1;
+    return 0;
+}
 int uc_backend_can_start(int32_t user)
 {
-    return gate && user >= 1 && user <= 4;
+    return gate && user >= 1 && user <= 4 && user != unavailable_user;
+}
+int uc_backend_transport_ready(void)
+{
+    return gate;
+}
+int uc_core_system_assignment_available(uint64_t replacing_session)
+{
+    for (int i = 0; i < 4; ++i)
+        if (sessions[i].id && sessions[i].id != replacing_session &&
+            (sessions[i].pending || sessions[i].disable_error))
+            return 0;
+    return 1;
 }
 int uc_core_session_active(uint64_t session)
 {
@@ -76,6 +103,14 @@ int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *out)
         return -1; /* A closing partially created output still belongs to this token. */
     }
     return wait_creation ? 2 : 0;
+}
+int uc_core_enable_system_assigned(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
+}
+int uc_core_enable_reselected(uint64_t now, uint64_t *out)
+{
+    return uc_core_enable_physical(0, now, out);
 }
 int uc_core_disable_session(uint64_t id)
 {
@@ -146,10 +181,14 @@ static int scan(void *ctx, uc_usb_device *out)
 {
     transport_mock *m = ctx;
     m->scans++;
-    if (!m->available)
+    if (!m->available || blocked[m->id])
         return 0;
-    *out = (uc_usb_device){
-        .kind = hid_kind ? UC_USB_GENERIC_HID : UC_USB_XINPUT, .vid = 0x045e, .pid = 0x028e};
+    *out = (uc_usb_device){.kind = switch1_kind   ? UC_USB_SWITCH_PRO
+                                   : switch2_kind ? UC_USB_SWITCH2_PRO
+                                   : hid_kind     ? UC_USB_GENERIC_HID
+                                                  : UC_USB_XINPUT,
+                           .vid = 0x045e,
+                           .pid = 0x028e};
     snprintf(out->node, sizeof(out->node), "/dev/ugen1.%u", m->id + 1);
     if (m->reject) {
         out->kind = UC_USB_NONE;
@@ -157,6 +196,7 @@ static int scan(void *ctx, uc_usb_device *out)
         out->error_number = 16;
         return 2;
     }
+    ++m->opens;
     return 1;
 }
 static int read_packet(void *ctx, uint8_t *out, size_t cap)
@@ -175,7 +215,11 @@ static int read_packet(void *ctx, uint8_t *out, size_t cap)
 static int write_packet(void *ctx, const uint8_t *p, size_t n)
 {
     (void)ctx;
-    (void)p;
+    if (n == 2 && p[0] == 0x80 && p[1] == 5) {
+        ++switch1_restore_calls;
+        if (switch1_restore_error)
+            return -1;
+    }
     return (int)n;
 }
 static int alive(void *ctx)
@@ -190,12 +234,20 @@ static void close_device(void *ctx)
 }
 static const uc_usb_ops ops = {scan, read_packet, write_packet, alive, close_device};
 static int hid_removed;
+int uc_usb_transport_quarantine(const uc_usb_transport *t)
+{
+    transport_mock *m = t->context;
+    blocked[m->id] = 1;
+    ++quarantine_calls;
+    return 1;
+}
 int uc_usb_transport_take_removed(char *node, size_t capacity)
 {
     if (!hid_removed)
         return 0;
     snprintf(node, capacity, "/dev/ugen1.1");
     hid_removed = 0;
+    blocked[0] = 0;
     return 1;
 }
 int uc_usb_transport_open(uc_usb_transport *out)
@@ -213,6 +265,7 @@ void uc_usb_protocol_begin(uc_usb_protocol *p, uc_usb_kind kind, uint64_t now)
     p->kind = kind;
     p->started = now;
     p->ready = 1;
+    p->switch1_timeout_disabled = kind == UC_USB_SWITCH_PRO; /* Simulate completed init. */
 }
 int uc_usb_protocol_hid_descriptor(uc_usb_protocol *p, const uc_usb_device *d)
 {
@@ -248,7 +301,7 @@ int uc_usb_protocol_feed(uc_usb_protocol *p, const uint8_t *b, size_t n, pad_sta
     if (invalid_report)
         return 0;
     pad_state_reset(out);
-    out->buttons = PAD_CROSS;
+    out->buttons = report_buttons;
     out->lx = 255;
     out->l2 = 255;
     return 1;
@@ -257,6 +310,8 @@ static void setup(unsigned count)
 {
     assert(!uc_usb_running());
     memset(ports, 0, sizeof(ports));
+    memset(blocked, 0, sizeof blocked);
+    quarantine_calls = 0;
     uc_usb_transport ts[4];
     for (unsigned i = 0; i < count; i++) {
         ports[i].id = i;
@@ -265,7 +320,9 @@ static void setup(unsigned count)
     }
     assert(uc_usb_set_transports(ts, count) == 0);
     gate = 1;
-    hid_kind = 0;
+    unavailable_user = 0;
+    hid_kind = switch1_kind = switch2_kind = 0;
+    switch1_restore_error = 0;
     wait_creation = init_error = invalid_report = lease_error = feedback = 0;
     uc_usb_set_rumble_enabled(1);
 }
@@ -283,9 +340,354 @@ static int by_user(int user)
             return i;
     return -1;
 }
+static void test_failed_connection_recycles_slots(void)
+{
+    char json[32768];
+    setup(4);
+    /* Four scanners see the same physical node; one init failure is sufficient. */
+    for (unsigned i = 0; i < 4; i++)
+        ports[i].id = 0;
+    assert(!uc_usb_start(1));
+    init_error = 1;
+    uc_usb_poll(10000);
+    assert(quarantine_calls == 1 && ports[0].opens == 1);
+    int scans = ports[0].scans;
+    for (uint64_t now = 10100; now <= 11000; now += 100)
+        uc_usb_poll(now);
+    assert(quarantine_calls == 1 && ports[0].opens == 1 && ports[0].scans > scans);
+    for (unsigned i = 1; i < 4; i++)
+        assert(!ports[i].opens);
+    assert(uc_usb_status_json(json, sizeof json));
+    assert(strstr(json, "initialization_or_output_failed") && strstr(json, "\"devices\":[]"));
+    /* Another device with the same VID/PID still works in the recycled slot. */
+    init_error = 0;
+    ports[0].id = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(11100);
+    assert(uc_core_active_session() && ports[0].opens == 2);
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    init_error = 1;
+    for (unsigned attempt = 0; attempt < 8; attempt++) {
+        hid_removed = attempt != 0;
+        uc_usb_poll(20000 + attempt * 100);
+        assert(blocked[0] && ports[0].opens == (int)attempt + 1);
+    }
+    assert(quarantine_calls == 8); /* More failures than workers cannot exhaust slots. */
+    init_error = 0;
+    /* Observed removal clears isolation without Stop/Start. */
+    hid_removed = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(20800);
+    assert(!blocked[0] && ports[0].opens == 9 && uc_core_active_session());
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    create_error = 1;
+    ports[0].reports = 1;
+    uc_usb_poll(30000);
+    assert(quarantine_calls == 1 && sessions[0].id && sessions[0].disable_error);
+    scans = ports[0].scans;
+    ports[0].id = 1;
+    for (uint64_t now = 30100; now <= 30400; now += 100)
+        uc_usb_poll(now);
+    assert(ports[0].scans == scans && sessions[0].id); /* Still owns failed output. */
+    create_error = sessions[0].disable_error = 0;
+    uc_usb_poll(30500);
+    assert(!sessions[0].id);
+    ports[0].reports = 1;
+    uc_usb_poll(30600);
+    assert(uc_core_active_session() && ports[0].opens == 2);
+    finish();
+}
+
+static void test_hid_first_input_deadline(void)
+{
+    for (unsigned scenario = 0; scenario < 3; scenario++) {
+        char json[32768];
+        setup(1);
+        hid_kind = 1;
+        invalid_report = scenario == 1;
+        assert(!uc_usb_start(1));
+        uc_usb_poll(1000);
+        assert(uc_usb_status_json(json, sizeof json));
+        assert(strstr(json, "\"waiting_for_input\":true") &&
+               strstr(json, "\"first_input_remaining_ms\":30000"));
+        for (uint64_t now = 1100; now <= 30900; now += 100) {
+            ports[0].reports = scenario == 1; /* Noise does not reset the valid-input deadline. */
+            uc_usb_poll(now);
+        }
+        ports[0].reports = scenario == 2;
+        uc_usb_poll(30999);
+        assert(!quarantine_calls);
+        assert(uc_usb_status_json(json, sizeof json));
+        if (scenario == 2) {
+            assert(uc_core_active_session() && strstr(json, "\"waiting_for_input\":false"));
+        } else {
+            assert(!uc_core_active_session() && strstr(json, "\"first_input_remaining_ms\":1"));
+        }
+        uc_usb_poll(31000);
+        if (scenario == 2) {
+            for (uint64_t now = 31100; now <= 32000; now += 100)
+                uc_usb_poll(now);
+            assert(!quarantine_calls && uc_core_active_session());
+        } else {
+            assert(quarantine_calls == 1 && blocked[0] && !uc_core_active_session());
+            assert(uc_usb_status_json(json, sizeof json) &&
+                   strstr(json, "hid_first_input_timeout"));
+            uc_usb_poll(31100);
+            assert(quarantine_calls == 1 && ports[0].opens == 1);
+            hid_removed = 1;
+            invalid_report = 0;
+            ports[0].reports = 1;
+            uc_usb_poll(31200);
+            assert(ports[0].opens == 2 && uc_core_active_session());
+        }
+        finish();
+    }
+}
+
+static void test_account_follows_input_not_scanner(void)
+{
+    char json[32768];
+    setup(3);
+    for (unsigned i = 0; i < 3; i++)
+        ports[i].available = 0;
+    assert(!uc_usb_start(1));
+    /* Even the first device may be found by a scanner other than slot zero. */
+    unsigned previous = 2;
+    ports[previous].available = ports[previous].reports = 1;
+    uc_usb_poll(1000);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].active);
+    uint64_t old_session = sessions[by_user(1)].id;
+    for (unsigned attempt = 0; attempt < 9; attempt++) {
+        unsigned target = attempt % 3;
+        if (target == previous)
+            target = (target + 1) % 3;
+        ports[previous].alive = ports[previous].available = 0;
+        ports[target].alive = ports[target].available = ports[target].reports = 1;
+        uint64_t now = 1100 + attempt * 100;
+        uc_usb_poll(now);
+        uc_usb_poll(now + 1); /* A lower-index scanner may run before old output cleanup. */
+        int u = by_user(1);
+        assert(u >= 0 && sessions[u].active && sessions[u].id != old_session);
+        old_session = sessions[u].id;
+        assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"bound\":true"));
+        previous = target;
+    }
+    finish();
+
+    setup(2);
+    ports[1].available = 0;
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(3000);
+    int old = by_user(1);
+    sessions[old].disable_error = 1;
+    ports[0].available = ports[0].alive = 0;
+    ports[1].available = ports[1].reports = 1;
+    uc_usb_poll(3100);
+    assert(sessions[old].id && !sessions[old].active);
+    assert(uc_usb_assign(1, "/dev/ugen1.2", 1) < 0); /* Cleanup still reserves the account. */
+    for (uint64_t now = 3200; now <= 3700; now += 100)
+        uc_usb_poll(now);
+    sessions[old].disable_error = 0;
+    uc_usb_poll(3800);
+    assert(by_user(1) < 0); /* Stale input cannot reserve the now-free account. */
+    ports[1].reports = 1;
+    uc_usb_poll(3810);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].active);
+    /* Empty slot zero no longer prevents explicit reassignment on slot one. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 1));
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 2));
+    ports[1].reports = 1;
+    uc_usb_poll(3820);
+    assert(by_user(1) < 0 && by_user(2) >= 0);
+    ports[1].available = ports[1].alive = 0;
+    ports[0].available = ports[0].alive = ports[0].reports = 1;
+    uc_usb_poll(3920);
+    uc_usb_poll(3921);
+    assert(by_user(2) >= 0 && sessions[by_user(2)].active && by_user(1) < 0);
+    finish();
+
+    setup(3);
+    assert(!uc_usb_start(1));
+    ports[0].reports = ports[1].reports = ports[2].reports = 1;
+    uc_usb_poll(5000);
+    assert(by_user(1) >= 0 && sessions[by_user(1)].submits == 1);
+    assert(uc_usb_assign(1, "/dev/ugen1.2", 1) < 0); /* Never steal a live account. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 2));
+    ports[1].reports = 1;
+    uc_usb_poll(5010);
+    assert(by_user(1) >= 0 && by_user(2) >= 0 && by_user(3) < 0);
+    assert(sessions[by_user(1)].active && sessions[by_user(2)].active);
+    finish();
+
+    setup(1);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(6000);
+    unavailable_user = 1;
+    uc_usb_poll(6100);
+    assert(by_user(1) < 0);
+    unavailable_user = 0;
+    ports[0].reports = 1;
+    uc_usb_poll(6110);
+    assert(by_user(1) < 0); /* Logging in again does not bypass explicit reassignment. */
+    assert(!uc_usb_assign(0, "/dev/ugen1.1", 1));
+    ports[0].reports = 1;
+    uc_usb_poll(6120);
+    assert(by_user(1) >= 0);
+    finish();
+
+    setup(2);
+    ports[0].available = ports[1].available = 0;
+    assert(!uc_usb_start(1));
+    uc_usb_poll(7000);
+    unavailable_user = 1;
+    uc_usb_poll(7100);
+    unavailable_user = 0;
+    ports[1].available = ports[1].reports = 1;
+    uc_usb_poll(7200);
+    assert(by_user(1) < 0); /* Account loss while no device is attached also clears preference. */
+    assert(!uc_usb_assign(1, "/dev/ugen1.2", 1));
+    ports[1].reports = 1;
+    uc_usb_poll(7210);
+    assert(by_user(1) >= 0);
+    finish();
+}
+
+static void test_system_user_reselection(void)
+{
+    setup(1);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    int original = by_user(1);
+    assert(original >= 0);
+    uint64_t old = sessions[original].id;
+    assert(uc_usb_reselect_user(0, "stale-node") < 0);
+    uint64_t other = 0;
+    assert(!uc_core_enable_physical(2, 1, &other));
+
+    assert(uc_core_session_active(old) && uc_core_session_active(other));
+    int closes = ports[0].closes;
+    sessions[original].disable_error = 1;
+    assert(uc_usb_reselect_user(0, "/dev/ugen1.1") == 2);
+    assert(uc_usb_reselect_user(0, "/dev/ugen1.1") == 2);
+    uc_usb_poll(1);
+    assert(by_user(0) < 0 && ports[0].closes == closes);
+    sessions[original].disable_error = 0;
+    uc_usb_poll(2);
+    assert(by_user(0) < 0 && by_user(1) < 0); /* No stale report replay. */
+    ports[0].reports = 1;
+    uc_usb_poll(3);
+    assert(by_user(0) >= 0 && by_user(1) < 0);
+    assert(uc_core_session_active(other) && !uc_usb_reselection_pending());
+    assert(!uc_core_disable_session(other));
+    assert(sessions[by_user(0)].id != old && sessions[by_user(0)].submits == 1);
+    char json[8192];
+    assert(uc_usb_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true") &&
+           strstr(json, "\"output_active\":true") &&
+           strstr(json, "\"user_id\":0,\"connected\":true"));
+    /* The service preference remains 1, never overwritten by a guessed final owner. */
+    assert(strstr(json, "\"user_id\":1,\"pending\":"));
+    finish();
+}
 int main(void)
 {
+    setup(1);
+    assert(!uc_usb_start(0));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    assert(by_user(0) >= 0 && sessions[by_user(0)].submits == 1);
+    uint64_t old = sessions[by_user(0)].id;
+    logged_in = 1;
+    uc_usb_poll(1);
+    logged_in = 0;
+    report_buttons = expected_buttons[0] = PAD_PS;
+    ports[0].reports = 1;
+    uc_usb_poll(2);
+    assert(!uc_core_session_active(old));
+    ports[0].reports = 1;
+    uc_usb_poll(3);
+    assert(by_user(0) >= 0 && sessions[by_user(0)].id != old);
+    old = sessions[by_user(0)].id;
+    ports[0].reports = 1;
+    uc_usb_poll(4);
+    assert(uc_core_session_active(old));
+    report_buttons = expected_buttons[0] = PAD_CROSS;
+    finish();
+    test_system_user_reselection();
+    test_account_follows_input_not_scanner();
+    test_hid_first_input_deadline();
+    test_failed_connection_recycles_slots();
     uc_usb_set_log_level(0);
+    setup(1);
+    switch1_kind = 1;
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    assert(by_user(1) >= 0);
+    int before_refresh = sessions[by_user(1)].refreshes;
+    uc_usb_poll(100);
+    assert(sessions[by_user(1)].refreshes == before_refresh);
+    char switch1_status[8192];
+    assert(uc_usb_status_json(switch1_status, sizeof switch1_status) &&
+           strstr(switch1_status, "switch-pro-usb") &&
+           strstr(switch1_status, "\"experimental\":false") &&
+           strstr(switch1_status, "\"rumble_available\":true"));
+    int restore_before = switch1_restore_calls;
+    switch1_restore_error = 1; /* Cleanup continues even if timeout restore cannot be sent. */
+    finish();
+    assert(switch1_restore_calls == restore_before + 1 && ports[0].closes == 1 && by_user(1) < 0);
+    assert(!uc_usb_stop() && switch1_restore_calls == restore_before + 1);
+    setup(1);
+    assert(!uc_usb_start(1));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    assert(by_user(1) >= 0);
+    int closes_before_account_loss = ports[0].closes;
+    unavailable_user = 1;
+    uc_usb_poll(1);
+    assert(by_user(1) < 0 && ports[0].closes == closes_before_account_loss);
+    char account_status[8192];
+    assert(uc_usb_status_json(account_status, sizeof account_status) &&
+           strstr(account_status, "user_unavailable") &&
+           strstr(account_status, "\"connected\":true"));
+    assert(uc_usb_assign(0, "/dev/ugen1.1", 1) < 0);
+    assert(!uc_usb_assign(0, "/dev/ugen1.1", 2));
+    uc_usb_poll(2);
+    assert(by_user(2) < 0); /* An old held input must not transfer accounts. */
+    ports[0].reports = 1;
+    uc_usb_poll(3);
+    assert(by_user(2) >= 0 && by_user(1) < 0);
+    finish();
+    setup(1);
+    switch2_kind = 1;
+    assert(!uc_usb_start(1));
+    uc_usb_poll(0);
+    assert(by_user(1) < 0);
+    ports[0].reports = 1;
+    uc_usb_poll(1);
+    assert(by_user(1) >= 0);
+    int refresh_before = sessions[by_user(1)].refreshes;
+    uc_usb_poll(100);
+    assert(sessions[by_user(1)].refreshes ==
+           refresh_before); /* Presence cannot keep Switch 2 buttons held. */
+    char switch2_status[8192];
+    assert(uc_usb_status_json(switch2_status, sizeof switch2_status) &&
+           strstr(switch2_status, "switch2-pro-usb") &&
+           strstr(switch2_status, "\"experimental\":true") &&
+           strstr(switch2_status, "\"rumble_available\":false") &&
+           strstr(switch2_status, "\"read_attempts\":"));
+    ports[0].alive = 0;
+    uc_usb_poll(201);
+    assert(by_user(1) < 0);
+    finish();
     setup(1);
     hid_kind = 1;
     known_device = 0;

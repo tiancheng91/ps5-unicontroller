@@ -70,6 +70,7 @@ int profile_device_known(pad_transport transport, uint16_t vid, uint16_t pid);
 int profile_system_bluetooth(uint16_t vid, uint16_t pid);
 int profile_ble_allowed(uint16_t vid, uint16_t pid);
 /* Builtin resolver is separate so override validation cannot recursively query itself. */
+void switch_encode_rumble(uint8_t *report, uint8_t counter, uint8_t strong, uint8_t weak);
 const pad_profile *profile_builtin_named(const char *key);
 const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);
 profile_family profile_classify_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);

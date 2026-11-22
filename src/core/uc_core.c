@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdarg.h>
 
+extern int uc_backend_create_reselected(uint64_t, uint64_t *);
 extern int uc_backend_create(int32_t, uint64_t *);
 extern int uc_backend_submit(uint64_t, uint32_t, const int16_t[4], const uint16_t[2]);
 extern int uc_backend_delete(uint64_t);
@@ -106,7 +107,7 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
     *session = 0;
     if (observe(now))
         return -1;
-    if (user <= 0 && !(physical == 2 && user == 0))
+    if (user <= 0 && !(physical >= 2 && user == 0))
         return fail("invalid_user");
     struct core_session *candidate = NULL, *free_slot = NULL;
     for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i) {
@@ -120,7 +121,7 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
             (!physical || retry_token == s->id))
             candidate = s;
         else if (!physical || !s->physical || physical == 2 || s->physical == 2 ||
-                 s->user == user || s->pending || state.suspended) {
+                 (s->user == user && physical != 3) || s->pending || state.suspended) {
             log_event(UC_LOG_TRACE, "enable_busy", s->id);
             return 2;
         }
@@ -137,7 +138,8 @@ static int enable(int32_t user, uint64_t now, uint64_t *session, int physical)
             .id = state.serial++, .user = user, .physical = physical, .pending = 1};
     }
     uint64_t handle = 0;
-    int result = uc_backend_create(user, &handle);
+    int result = physical == 3 ? uc_backend_create_reselected(candidate->id, &handle)
+                               : uc_backend_create(user, &handle);
     if (result == 2) {
         if (physical)
             *session = candidate->id;
@@ -176,6 +178,10 @@ int uc_core_enable(int32_t user, uint64_t now, uint64_t *session)
 int uc_core_enable_physical(int32_t user, uint64_t now, uint64_t *session)
 {
     return enable(user, now, session, 1);
+}
+int uc_core_enable_reselected(uint64_t now, uint64_t *session)
+{
+    return enable(0, now, session, 3);
 }
 int uc_core_enable_system_assigned(uint64_t now, uint64_t *session)
 {
@@ -288,6 +294,15 @@ uint64_t uc_core_active_session(void)
         if (state.sessions[i].id && !state.sessions[i].pending)
             return state.sessions[i].id;
     return 0;
+}
+int uc_core_system_assignment_available(uint64_t replacing_session)
+{
+    for (unsigned i = 0; i < UC_CORE_MAX_SESSIONS; ++i)
+        if (state.sessions[i].id && state.sessions[i].id != replacing_session &&
+            (state.sessions[i].physical == 0 || state.sessions[i].physical == 2 ||
+             state.sessions[i].pending || state.sessions[i].closing))
+            return 0;
+    return 1;
 }
 int uc_core_session_active(uint64_t session)
 {

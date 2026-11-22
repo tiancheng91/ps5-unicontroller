@@ -156,6 +156,8 @@ const char *uc_usb_diagnostic_hint(uint16_t vid, uint16_t pid, const uc_usb_diag
 {
     if (vid == 0x057e && pid == 0x2009)
         return "switch-pro";
+    if (vid == 0x057e && pid == 0x2069)
+        return "switch2-pro";
     if (vid == 0x054c)
         return "system-sony";
     if (d->config_valid)

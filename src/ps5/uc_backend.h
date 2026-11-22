@@ -5,6 +5,8 @@
  * 0=ready/success, 2=pending, negative=failure. create is idempotent for same user.
  * Up to four independently owned outputs, one per signed-in user.
  * Identification is serialized. Delete(0) cancels pending creation only. */
+/* Initial load only: two attempts at most, 5s delay after a fully rolled-back failure.
+ * This can block before HTTP starts; never call from the runtime loop. */
 int uc_backend_init(void);
 /* Boolean gate; remains true for a healthy owned output. No hardware is opened. */
 int uc_backend_can_start(int32_t user);
@@ -12,6 +14,7 @@ int uc_backend_can_start(int32_t user);
 int uc_backend_transport_ready(void);
 /* user=0 is reserved for core's exclusive system-assigned experiment. It is
  * never passed to BindDeviceWithUserId, nor inferred from foreground users. */
+int uc_backend_create_reselected(uint64_t session, uint64_t *handle);
 int uc_backend_create(int32_t user, uint64_t *handle);
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2]);

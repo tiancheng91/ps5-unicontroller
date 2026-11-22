@@ -9,6 +9,15 @@ typedef struct {
     uc_usb_kind kind;
     uc_usb_generic_hid hid;
     int ready, failed;
+    unsigned switch1_step, switch1_writes, switch1_write_attempts;
+    int switch1_waiting, switch1_timeout_disabled;
+    uint8_t switch1_counter;
+    int switch1_enable_pending, switch1_vibration_enabled;
+    uint64_t switch1_next_at;
+    unsigned switch2_step, switch2_attempts, switch2_writes;
+    int switch2_waiting;
+    uint64_t switch2_next_at;
+    uint16_t switch2_calibration[4][3]; /* center, negative range, positive range */
     uint64_t started;
     int led_sent, led_failed;
     unsigned led_attempts;
@@ -19,6 +28,11 @@ typedef struct {
     int rumble_seen, rumble_sample, rumble_dirty, rumble_sent, rumble_failed;
     uint64_t rumble_sample_at, rumble_sent_at, rumble_retry_at, rumble_queued_at;
 } uc_usb_protocol;
+static inline int uc_usb_rumble_available(const uc_usb_protocol *p)
+{
+    return p && p->ready && !p->failed && !p->rumble_failed &&
+           (p->kind == UC_USB_XINPUT || p->kind == UC_USB_SWITCH_PRO);
+}
 int uc_usb_protocol_hid_descriptor(uc_usb_protocol *, const uc_usb_device *);
 void uc_usb_protocol_begin(uc_usb_protocol *, uc_usb_kind, uint64_t now);
 /* Advances at most one initialization command per call; 0 progress/ready, -1 failed. */

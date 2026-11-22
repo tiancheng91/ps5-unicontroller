@@ -33,6 +33,11 @@ int uc_backend_create(int32_t user, uint64_t *handle)
     }
     return -1;
 }
+int uc_backend_create_reselected(uint64_t session, uint64_t *handle)
+{
+    (void)session;
+    return uc_backend_create(0, handle);
+}
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2])
 {
