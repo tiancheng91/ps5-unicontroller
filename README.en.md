@@ -34,7 +34,7 @@ Sign into PS5 with an original controller. Normal mode uses the recommended sign
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bluetooth  | Choose Add Bluetooth device, put the controller in pairing mode, and start a **60-second search**. Click Pair on a discovered device to connect. Use Classic for Switch mode. Stored devices reconnect normally. |
 | USB        | Enable USB in Settings and connect a supported controller mode using a data cable.                                                                                                                               |
-| Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                                 |
+| Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                           |
 
 Check input and binding status on the device card, then test in a game. In normal mode, the first valid input device uses the user selected at startup; assign additional devices on their cards. Bluetooth and USB can run together. The phone test controller is exclusive.
 
@@ -128,8 +128,16 @@ GitHub Actions uses a pinned PS5 SDK; local Docker is not required. Optional loc
 
 ## License
 
-Licensed under [GNU GPLv3](LICENSE). Third-party sources and licensing requirements are documented in [NOTICE](NOTICE).
+UniController is licensed under [GNU GPLv3](LICENSE). The inherited Bluetooth bridge code retains its upstream GPL-3.0-or-later license. Bundled third-party components retain their own licenses and copyright notices. See [NOTICE](NOTICE).
 
 ### Maintenance and releases
 
 Maintain user-facing changes in [CHANGELOG.md](CHANGELOG.md). Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)
+
+## Acknowledgments
+
+Thank you to StonedModder and seregonwar for [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher) and its early research on creating a virtual DualSense on PS5 and assigning it to a user.
+
+UniController’s Bluetooth bridge, pairing, and controller protocol code derive from [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads) by AngelLopezTorres. We also thank X-F1REBALL-X for its upstream project, [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5), and sinfiltros for AnyPad-PS5, the original Bluetooth bridge in this lineage.
+
+Thank you to SDL and Valve for the controller identification table. UniController uses its VID/PID entries, controller types, and model names to help identify devices. UniController’s drivers handle connections and decode input. [SDL sources and zlib license](vendor/sdl/README.md)

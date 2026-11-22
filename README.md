@@ -32,7 +32,7 @@
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | 蓝牙     | 点击“新增蓝牙设备”，让手柄进入配对模式并开始 **60 秒搜索**；在已发现列表点选“配对”才连接。Switch 模式选择 Classic。已配对设备通常只需回连。 |
 | USB      | 在设置中启用 USB 服务，使用数据线接入受支持的手柄模式。                                                                                     |
-| 手机测试 | 打开 `/controller`，创建手柄后在 PS5 上选择使用者。休眠后需手动重新创建。                                                                          |
+| 手机测试 | 打开 `/controller`，创建手柄后在 PS5 上选择使用者。休眠后需手动重新创建。                                                                   |
 
 检查设备的输入和详情中的虚拟输出状态，再进入游戏测试；输入已解析不等于游戏已接收。停止搜索不会断开已连接手柄。常规模式下，首台有效输入设备使用默认用户，额外设备在详情中分配独立用户。蓝牙和 USB 可以同时使用；手机测试手柄需要单独使用。
 
@@ -126,8 +126,16 @@ PS5 构建由 GitHub Actions 使用固定版本 SDK 完成，无需本地 Docker
 
 ## 许可
 
-项目采用 [GNU GPLv3](LICENSE)。第三方代码来源与许可要求见 [NOTICE](NOTICE)。
+UniController 采用 [GNU GPLv3](LICENSE)。继承的蓝牙桥接代码保留上游的 GPL-3.0-or-later 许可。随附的第三方组件各自保留其许可和版权声明，详见 [NOTICE](NOTICE)。
 
 ### 维护与发布
 
 变更记录维护在 [CHANGELOG.md](CHANGELOG.md)。发布时推送 `v0.1.0` 这类版本标签；`v0.1.0-beta.1` 会标记为预览版。测试与交叉构建全部通过后自动发布，安装文件仍为 `unicontroller.elf`。[发布流程与重试说明](docs/releasing.md)
+
+## 致谢
+
+感谢 StonedModder 和 seregonwar 的 [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher) 项目，为在 PS5 上创建虚拟 DualSense 并将其分配给使用者提供了早期研究基础。
+
+UniController 的蓝牙桥接、配对和手柄协议代码衍生自 AngelLopezTorres 的 [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads)。感谢 X-F1REBALL-X 维护其上游 [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5)，也感谢 sinfiltros 开发这条代码线最初的蓝牙桥接项目 AnyPad-PS5。
+
+感谢 SDL 和 Valve 提供手柄识别表。UniController 使用其中的 VID/PID、手柄类型和型号名称辅助识别设备，连接和输入解析由本项目的驱动完成。[SDL 数据来源与 zlib 许可](vendor/sdl/README.md)
