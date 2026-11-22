@@ -1,141 +1,90 @@
-![UniController for PS5 — Make Any Controller Work on PS5.](assets/branding/banner.png)
+![UniController for PS5](assets/branding/banner.png)
 
 **中文** · [English](README.en.md)
 
-**UniController for PS5** 让第三方手柄通过蓝牙或 USB 接入 PS5。通过手机、电脑或 PS5 上的网页管理手柄，无需在游戏中安装插件。
+# UniController for PS5
 
-- 接入 Switch Pro 兼容协议、部分 Xbox 和通用蓝牙 HID 手柄。
-- 常规模式支持最多 4 个实体输入源，分别绑定 PS5 本地用户。
-- 提供游戏震动回传、按键映射、ABXY 翻转及手机触控测试手柄。
+用第三方手柄玩 PS5 游戏。UniController 在主机上运行，把蓝牙或 USB 手柄的输入转给虚拟 DualSense。你可以在手机上配对手柄、查看按键输入和测试震动，也可以直接把手机当作测试手柄。
 
-> **开发测试阶段**：协议适配与自动化构建已接入，具体型号、固件、游戏及休眠共存仍需实机验证。“Make Any Controller Work on PS5”是项目目标，不是全设备兼容承诺。首次使用请保留原装手柄备用，并关闭自动启动。
+**使用条件**：一台能通过 Payload Manager 或兼容加载器运行自制 ELF 的 PS5。首次设置建议备好原装 DualSense，并将手机或电脑接入与 PS5 相同的可信局域网。
 
-[下载 v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [更新日志](CHANGELOG.md) · [下载测试构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
+[下载正式版](https://github.com/tiancheng91/ps5-unicontroller/releases/latest) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/tiancheng91/ps5-unicontroller/issues)
 
-## 快速开始
+## 第一次连接
 
-### 1. 加载程序
+1. 从正式版的 **Assets** 下载 `unicontroller.elf`，上传到 PS5，用加载器运行。
+2. 在手机或电脑浏览器打开 **`http://<PS5-IP>:7456/`**。把 `<PS5-IP>` 换成主机的局域网地址。
+3. 按连接方式操作：
+   - **蓝牙**：让手柄进入配对模式。在「手柄 → 新增蓝牙设备」开始搜索，找到设备后点「配对」。Switch 模式优先选有名称的 **Bluetooth Classic** 条目。以后使用同一模式，通常只需打开手柄即可回连。
+   - **USB**：在「设置 → 连接服务」点「启动 USB」，用数据线接入手柄或插入兼容接收器。若提示等待输入，按一下按键或推动摇杆。
+4. PS5 弹出使用者选择画面时，用这只手柄选择账号。在网页「设备详情」确认输入帧随操作增加，再进入游戏。**本地双人游戏请为两个手柄选择不同的 PS5 用户。** 要换玩家，点「重新选择使用者」。
 
-你需要一台**可以加载自制 ELF payload 的 PS5**、Payload Manager 或其他兼容加载器，以及同一局域网的手机或电脑。目前没有完整的固件兼容矩阵，也不适用于未修改的零售系统。
+也可以在设置中安装 PS5 桌面图标。它打开同一配置页，使用前仍需加载 ELF。升级时先点「停止 UniController」，再替换并运行新 ELF。保留 `/data/unicontroller/` 即可沿用设置和配对记录。[图标安装说明](docs/launcher.md)
 
-1. 优先从 [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases) 下载版本文件；需要测试尚未发布的修改时，在 [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) 中选择目标提交的成功构建，下载并解压 **UniController-PS5** 产物。下载可能需要登录 GitHub。
-2. 用加载器运行其中的 `unicontroller.elf`；`build-info.txt` 记录构建版本，SHA256 文件用于校验。
-3. 在浏览器访问 `http://<PS5-IP>:7456/`。端口监听失败时程序会退出，请排除占用后重新加载。
+## 我的手柄该选什么模式？
 
-网页资源随程序提供，无需联网下载。请仅在可信局域网使用，不向公网开放服务端口。
+多模式手柄会随模式改变设备身份和功能。一代 **Switch Pro 模式**对输入和游戏震动的支持最完整；有线手柄也可优先尝试 **Xbox 360 / XInput 模式**。
 
-### 2. 连接手柄
+| 手柄模式              | 蓝牙                                              | USB                                                                         |
+| --------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| 一代 Switch Pro       | Classic 输入与震动                                | `057e:2009` 输入与震动，已有实机反馈                                        |
+| Switch 2 Pro          | BLE 可发现，配对未开放                            | `057e:2069` 实验性按键与摇杆输入；暂无震动                                  |
+| 一代 Joy-Con          | 左右手柄分别使用                                  | —                                                                           |
+| Xbox                  | 部分 Xbox HID 型号；内置 BLE 白名单含 `045e:0b13` | Xbox 360 / XInput；不支持 Xbox One/Series 的 USB GIP 和专用 Xbox 无线接收器 |
+| Android / Generic HID | 按 HID 描述符解析输入                             | 支持可解析的 HID 手柄接口；暂无通用震动输出                                 |
 
-首次测试建议用原装手柄登录 PS5。蓝牙和 USB 也支持在登录前手动启动。需要更换玩家时，在手柄详情点击“重新选择使用者”，然后在 PS5 上选择账号。
+**Switch 2 Pro 有线模式**已在 PS5 Pro 13.20 上验证基础输入。接入后如果电视突然没声音，请到 PS5「声音 → 音频输出」选回电视或耳机，并关闭输出设备自动切换。
 
-| 输入方式 | 操作                                                                                                                                        |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 蓝牙     | 点击“新增蓝牙设备”，让手柄进入配对模式并开始 **60 秒搜索**；在已发现列表点选“配对”才连接。Switch 模式选择 Classic。已配对设备通常只需回连。 |
-| USB      | 在设置中启用 USB 服务，使用数据线接入受支持的手柄模式。                                                                                     |
-| 手机测试 | 打开 `/controller`，创建手柄后在 PS5 上选择使用者。休眠后需手动重新创建。                                                                   |
+例如，GameSir Nova Lite 在 Classic 的 Switch Pro 模式下可使用震动，切到上报 `3537:1041` 的 Generic HID 模式后仍可操作按键，但当前没有震动输出。型号相同也要看实际连接模式。[GameSir 模式说明](docs/gamesir-nova.md) · [蓝牙兼容性](docs/bluetooth.md) · [USB 兼容性](docs/usb.md)
 
-检查设备的输入和详情中的虚拟输出状态，再进入游戏测试；输入已解析不等于游戏已接收。停止搜索不会断开已连接手柄。蓝牙和 USB 可以同时使用；手机测试手柄需要单独使用。
+**找不到你的型号，或按键识别不对？** UniController 会用设备的 VID/PID 查询 SDL 手柄表，辅助识别型号，并根据设备类别为蓝牙 Classic 选择候选协议。USB 则结合实际接口和报告描述符识别协议。[查看本版本使用的 SDL 设备表](https://github.com/libsdl-org/SDL/blob/b2de7a19ad3c0d5063a5fb8e4cf5deeeb9ce4560/src/joystick/controller_list.h)
 
-**双人游戏请给两个手柄分配不同用户。** 菜单能操作但游戏无响应时，先核对账号归属。同账号辅助控制器是 PS5 的另一项功能，程序不会自动开启它。
+如果手柄使用项目已支持的协议，可以参考示例，按实际连接方式和设备标识填写规则，通过 FTP 上传到 PS5 的 `/data/unicontroller/controllers.json`，再重启 UniController 测试。配置可指定已有协议，也可调整通用 HID 的按键映射。**Switch 2 Pro 的 BLE 模式目前不支持，通过配置也无法启用配对**；可改用 USB 测试基础输入。[配置指南](docs/controller-config.md) · [示例文件](examples/controllers.json)
 
-### 3. 在 PS5 上打开配置页
+## 常用设置
 
-程序启动后会在系统已登录、所有输入源停止并稳定一段时间时尝试注册 **UniController** 图标。也可在设置页手动安装、更新或移除。
+- **按键布局**：Switch 默认按位置映射，下 B → ×、右 A → ○、左 Y → □、上 X → △。Home 对应 PS，截图键对应触摸板点击。要同时交换 A/B 和 X/Y，在该手柄详情中开启「翻转 ABXY 按键」。
+- **震动**：在设备详情中允许震动并点「测试震动」。测试还受设置中的震动总开关控制。当前模式没有可用输出时，页面会说明原因。游戏反馈支持传统马达震动。
+- **休眠与启动**：休眠时释放虚拟手柄、停止实体连接服务，保留蓝牙配对。首次安装默认只开启蓝牙自动启动。勾选「自动启用 USB」并保存后，USB 也会按所选时机自动启动；升级会沿用已保存的选择。基础延迟默认 10 秒，范围 5–60 秒；USB 按该延迟启动，蓝牙再晚 3 秒。加载 ELF 时前台账号已登录，也按此配置启动。需要测试登录前连接时，可手动启动服务，或选用实验性的「休眠恢复后」。
+- **手机模拟**：先停止蓝牙和 USB 服务，再打开「模拟」创建手柄，在 PS5 上选人。横屏点「专注操控」可同时操作双摇杆和按键。休眠后需手动重新创建。
 
-**图标是网页快捷入口，不会加载 payload。** 每次使用仍需先运行 ELF；没有图标不影响局域网访问。[图标安装说明](docs/launcher.md)
+## 出现问题时
 
-## 适配范围
+| 现象                                 | 检查方法                                                                                                                                     |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 网页打不开                           | 在加载器确认 ELF 已运行，核对 PS5 地址和端口 7456。端口被占用会导致程序退出。                                                                |
+| 配对成功但按键没反应                 | 打开设备详情按几下方向键。若输入帧不增加，检查连接模式；Switch 模式请选择 Classic。USB 通用 HID 等待首份输入超时后，可重新插入并按键。       |
+| 输入帧在增加，但当前玩家的操作没反应 | 手柄可能分给了另一个 PS5 本地用户。在这只手柄的「设备详情」点「重新选择使用者」，然后在 PS5 上选择当前要操作的用户，再试一次。无需重新配对。 |
+| 能操作系统菜单，进游戏没反应         | 先检查两只手柄是否选了同一个本地用户。这种情况下，游戏可能仍由原手柄控制。按下方说明切换主手柄或加入第二位玩家。                             |
+| 原装 DualSense 也失去响应            | 用手机停止连接服务并导出日志。需要时停止 UniController，通过 PS5 正常电源操作恢复。                                                          |
 
-以下是**已实现的协议路径**，不是实机认证设备清单。相同商品名在不同连接模式、固件下也可能使用不同协议。
+### PS5 如何分配手柄和玩家？
 
-| 设备 / 协议         | 蓝牙                          | USB                                | 当前限制                                              |
-| ------------------- | ----------------------------- | ---------------------------------- | ----------------------------------------------------- |
-| Switch Pro 兼容手柄 | Classic，输入与震动           | `057e:2009`，输入与震动            | 一代 Switch Pro 是目前支持最完整的手柄                |
-| Switch 2 Pro        | BLE 仅识别型号                | `057e:2069`，实验性基础输入        | 支持按键和摇杆，暂无震动；需手动调整音频输出          |
-| Joy-Con             | 左、右独立解析                | —                                  | 不支持左右合并                                        |
-| Xbox                | 已登记的 Xbox HID 型号        | Xbox 360 / XInput 兼容接口及报告   | 不支持 Xbox One/Series USB GIP 或专用 Xbox 无线接收器 |
-| Android / 通用 HID  | 可解析的 HID 描述符及已知布局 | 非 Boot HID 手柄输入（待实机验证） | 不保证任意 Android 模式或 USB HID 可用                |
+网页的输入帧说明 UniController 收到了按键。PS5 上的使用者选择决定这只手柄分给谁，游戏还可能要求玩家按键加入。例如，原装手柄正在为用户 A 玩游戏，第三方手柄也选了 A，这时即使能用它操作系统菜单，游戏也不会因此多出一位独立玩家。
 
-**Switch 2 Pro 有线连接**可能让 PS5 将声音切到手柄。请在 PS5「声音 → 音频输出」中关闭自动切换输出设备，并选回电视或耳机。第三方 Switch Pro 兼容手柄的功能取决于实际协议和 USB 接口。[USB 支持详情](docs/usb.md)
+- **单人换手柄**：关闭原装手柄，按第三方手柄的 PS/Home 键，选择正在玩游戏的用户 A。
+- **本地双人，各自控制**：原装手柄留给 A。在第三方手柄详情点「重新选择使用者」，在 PS5 上选另一个本地用户 B，再按游戏提示加入。
+- **两人合控同一玩家**：对支持的手柄，在 PS5「设定 → 协助工具 → 控制器」开启「使用第二控制器进行辅助」，然后两只手柄都选 A。PS5 会把两只手柄的输入用于同一位玩家。[PlayStation 辅助控制器说明](https://www.playstation.com/zh-hans-cn/support/hardware/second-controller-assistance/)
 
-BLE 默认采用白名单，内置仅开放 Xbox `045e:0b13`。Switch 2 BLE 仅识别型号、显示不支持并禁止配对。第三方手柄建议先用已知的 **Switch Classic 模式**验证；不能仅凭 VID/PID、设备名称或“支持 XInput”的商品描述认定兼容。
-
-震动与电量取决于设备协议和固件。游戏震动回传已接入部分协议；不代表支持自适应扳机或完整 DualSense 触觉反馈。电量显示“未知”不一定影响按键使用。
-
-[蓝牙范围与限制](docs/bluetooth.md) · [USB 范围与限制](docs/usb.md) · [GameSir Nova 系列说明](docs/gamesir-nova.md)
-
-## 日常使用
-
-### 按键与设置
-
-Switch 协议默认按位置映射：B（下）→×、A（右）→○、Y（左）→□、X（上）→△；Home→PS，截图键→Touchpad **点击**。这描述的是 Switch 协议键值，第三方手柄印字和手柄自身的翻转设置可能不同。
-
-设置中的 **“翻转 ABXY 按键”** 同时交换 A↔B、X↔Y，默认关闭，之后再应用自定义按键映射。它影响本应用所有输入源。若手柄端也开启交换，两次交换会抵消；根据你希望的实际输出选择组合，并在网页检查结果。
-
-首页统一展示蓝牙/USB已连接手柄，通过“新增蓝牙设备”搜索配对；USB服务在设置中启用。管理页支持中文/English切换，首次按浏览器语言选择；默认黑白与品牌红，另可选择橙、蓝、绿强调色及电视大字模式。外观立即生效并保存在当前浏览器，不影响连接。方向键/标准Gamepad导航是可选实验功能，PS5 WebView仍待验证。
-
-设置还包括震动开关和日志级别。连接期间也可保存。一般无需手动编辑文件；高级适配见[自定义设备配置](docs/controller-config.md)。
-
-### 休眠与回连
-
-休眠时会停止蓝牙/USB、释放本应用的虚拟手柄，**保留蓝牙配对记录**。恢复后重新连接即可，通常不必重新配对。默认仅开启蓝牙自动启动，USB 自动启动关闭；已有保存的选择保持不变。
-
-蓝牙和 USB 可分别开启，也可同时开启。设置中的启动延迟默认为 **10 秒**（可选 5–60 秒）：USB 在触发后第 10 秒启动，蓝牙在第 13 秒启动。只开启一种服务时也沿用该服务的时间。手动启动无需等待这段延迟。
-
-- **登录进入桌面后（推荐）**：等待新的桌面焦点和已登录的前台用户。有可用的已保存账号时沿用它，否则在 PS5 上选择使用者。
-- **休眠恢复后（实验）**：系统恢复后即可计时，无需登录。可在账号选择页启用服务，连接手柄后按 PS/Home 选择使用者。第三方手柄不能通过此功能唤醒主机。
-
-首次安装或重新加载程序时，如果前台账号已登录，已开启自动启动的服务也按上述延迟启动，无需重新登录。每轮自动启动只尝试一次。没有触发、超时或失败时可改用手动启动。[完整恢复逻辑](docs/bluetooth.md#可选自动启动) · [实验验证步骤](docs/test-checklist.md)
-
-### 更新与数据
-
-先从网页停止旧程序，再部署并运行新 ELF。保留 `/data/unicontroller/` 即可保留设置和配对信息；“忘记设备”会删除该设备的配对记录。请勿公开上传包含密钥的 `bonds.db`。
-
-[设置与存储说明](docs/settings-storage.md)
-
-## 常见问题与反馈
-
-| 现象                 | 先检查                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------ |
-| 网页打不开           | ELF 是否运行、PS5 IP 是否正确；检查 7456 端口和启动日志。                            |
-| 已连接但没有按键     | 手柄模式、输入帧数及错误日志；Switch 使用 Classic。                                  |
-| 菜单可用，游戏无响应 | 常规模式核对绑定用户；实验模式分别记录用户选择和游戏输入结果。                       |
-| 长按提前释放或卡键   | 记录型号、固件和操作；不同设备的报文频率需要分别适配。                               |
-| 原装手柄也失效       | 停止本轮测试，通过网页停止蓝牙或程序并保存诊断；仍未恢复时通过主机正常电源操作恢复。 |
-
-请在 [Issues](https://github.com/tiancheng91/ps5-unicontroller/issues) 提供：**构建 commit、PS5 固件、手柄型号/固件/模式、连接方式、账号使用方式、复现步骤和诊断日志**。控制面可导出日志，运行日志位于 `/data/unicontroller/runtime.log`；分享前检查个人信息。
-
-按[实机测试清单](docs/test-checklist.md)反馈“通过 / 失败 / 未测”，能帮助我们区分配对、输入解析、账号和游戏输出问题。
+反馈时请附上网页显示的版本和提交编号、PS5 型号与固件、手柄型号与连接模式、复现步骤，以及「日志 → 导出日志」的结果。请勿上传含配对密钥的 `bonds.db`。[提交 Issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [实机测试清单](docs/test-checklist.md)
 
 ## 开发与贡献
 
-项目使用 C11 和 HTML/CSS/JavaScript。欢迎提交可复现的问题、实机结果及带测试的修复。新增设备适配请说明型号、固件、连接模式及测试范围；主机测试或构建成功不能替代实机兼容性结论。
+后端使用 C11，网页资源随 ELF 离线提供。在仓库根目录运行：
 
 ```sh
-make host
-./build/unicontroller-host 7456 /tmp/unicontroller-settings.json
-make test
-make preview # 带演示数据的独立预览，不操作硬件
+make preview        # 在浏览器查看演示数据
+make test           # 主机端回归测试
+npm ci
+make test-browser   # 需要 Chrome 或 Chromium
 ```
 
-页面使用离线固定版本Alpine CSP，管理页合并控制面和设置，触控输入保留原生JS。`make test`运行主机回归；浏览器测试先 `npm ci`，再 `make test-browser`（需Chrome/Chromium，可设 `CHROME_PATH`）。运行时无需Node、NPM或外部CDN。
+PS5 交叉构建使用固定版本的 SDK，可直接使用 GitHub Actions。新增手柄适配或报告测试结果时，请注明具体连接模式，以及已验证的按键、摇杆和震动功能。[开发文档](docs/README.md) · [自定义设备配置](docs/controller-config.md) · [Actions 构建](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml)
 
-PS5 构建由 GitHub Actions 使用固定版本 SDK 完成，无需本地 Docker。本地交叉构建可用 `PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make ps5`；主机模拟程序不可当作 PS5 payload 加载。
+## 许可与致谢
 
-[系统架构](docs/architecture.md) · [代码风格](docs/code-style.md) · [开发验证](docs/validation.md) · [文档索引](docs/README.md)
+UniController 采用 GNU GPLv3。继承的蓝牙桥接代码保留 GPL-3.0-or-later 许可；随附组件保留各自的许可和版权声明。[LICENSE](LICENSE) · [NOTICE](NOTICE)
 
-## 许可
+感谢 StonedModder 和 seregonwar 的 Ghostcontrol 项目，为在 PS5 上创建虚拟 DualSense 并分配给使用者提供了早期研究基础。[Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher)
 
-UniController 采用 [GNU GPLv3](LICENSE)。继承的蓝牙桥接代码保留上游的 GPL-3.0-or-later 许可。随附的第三方组件各自保留其许可和版权声明，详见 [NOTICE](NOTICE)。
-
-### 维护与发布
-
-变更记录维护在 [CHANGELOG.md](CHANGELOG.md)。发布时推送 `v0.1.0` 这类版本标签；`v0.1.0-beta.1` 会标记为预览版。测试与交叉构建全部通过后自动发布，安装文件仍为 `unicontroller.elf`。[发布流程与重试说明](docs/releasing.md)
-
-## 致谢
-
-感谢 StonedModder 和 seregonwar 的 [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher) 项目，为在 PS5 上创建虚拟 DualSense 并将其分配给使用者提供了早期研究基础。
-
-UniController 的蓝牙桥接、配对和手柄协议代码衍生自 AngelLopezTorres 的 [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads)。感谢 X-F1REBALL-X 维护其上游 [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5)，也感谢 sinfiltros 开发这条代码线最初的蓝牙桥接项目 AnyPad-PS5。
-
-感谢 SDL 和 Valve 提供手柄识别表。UniController 使用其中的 VID/PID、手柄类型和型号名称辅助识别设备，连接和输入解析由本项目的驱动完成。[SDL 数据来源与 zlib 许可](vendor/sdl/README.md)
+蓝牙桥接、配对和手柄协议代码衍生自 AngelLopezTorres 的 ps5-wireless-pads，其上游是 X-F1REBALL-X 的 PadBridge PS5 和 sinfiltros 的 AnyPad-PS5。感谢这些项目的作者，也感谢 SDL 和 Valve 提供用于识别手柄型号与类型的设备表。[ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads) · [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5) · [SDL 数据来源](vendor/sdl/README.md)

@@ -1,143 +1,90 @@
-![UniController for PS5 — Make Any Controller Work on PS5.](assets/branding/banner.png)
+![UniController for PS5](assets/branding/banner.png)
 
 [中文](README.md) · **English**
 
-**UniController for PS5** connects third-party controllers to PS5 over Bluetooth or USB. Manage them from a phone, computer or the console's web interface, without installing plugins into games.
+# UniController for PS5
 
-- Protocol support for Switch Pro-compatible controllers, selected Xbox models and generic Bluetooth HID devices.
-- Up to four physical input sources in normal mode, assigned to separate PS5 local users.
-- Game rumble feedback, button mapping, ABXY swapping and a touchscreen test controller.
+Play PS5 games with a third-party controller. UniController runs on the console and passes Bluetooth or USB controller input to a virtual DualSense. Use a phone to pair devices, inspect input and test rumble. The phone can also act as a test controller.
 
-> **Development build:** protocol implementations and automated builds are available, but controller, firmware, game and rest-mode compatibility still require hardware validation. “Make Any Controller Work on PS5” is the goal, not a guarantee. Keep an original controller available and leave automatic startup off for your first test.
+**Requirements:** A PS5 that can run homebrew ELF payloads through Payload Manager or a compatible loader. For initial setup, keep an original DualSense handy and connect your phone or computer to the same trusted LAN as the console.
 
-[Download test builds](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml) · [Report an issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [Hardware test checklist](docs/test-checklist.md) (Chinese)
+[Download the latest release](https://github.com/tiancheng91/ps5-unicontroller/releases/latest) · [Changelog](CHANGELOG.en.md) · [Report an issue](https://github.com/tiancheng91/ps5-unicontroller/issues)
 
-[Download v0.2.0](https://github.com/tiancheng91/ps5-unicontroller/releases/tag/v0.2.0) · [Changelog](CHANGELOG.en.md)
+## Connect your first controller
 
-## Quick start
+1. Download `unicontroller.elf` from the release **Assets**, upload it to the PS5, and run it with your loader.
+2. Open **`http://<PS5-IP>:7456/`** on your phone or computer. Replace `<PS5-IP>` with the console’s LAN address.
+3. Choose your connection:
+   - **Bluetooth:** Put the controller in pairing mode. Under **Controllers → Add Bluetooth device**, start a search, find the device and select **Pair**. In Switch mode, choose the named **Bluetooth Classic** entry if available. On subsequent connections in the same mode, turning the controller on is usually enough.
+   - **USB:** Start USB under **Settings → Connection services**, then plug in the controller with a data cable or insert its compatible receiver. If prompted for input, press a button or move a stick.
+4. When PS5 asks who is using the controller, select the player using that controller. In device details, check that the input frame count increases when you press buttons, then try a game. **For independent local multiplayer, assign each controller to a different PS5 user.** To change players, choose **Choose user again** in device details.
 
-### 1. Load the payload
+Settings can install a PS5 home-screen shortcut to the same web interface. Load the ELF before opening the shortcut. To upgrade, stop UniController from the web interface, replace the ELF and run the new version. Keep `/data/unicontroller/` to preserve your settings and pairing records. [Shortcut installation](docs/launcher.md)
 
-You need a **PS5 capable of loading homebrew ELF payloads**, Payload Manager or another compatible loader, and a phone or computer on the same LAN. A complete firmware compatibility matrix is not available. Unmodified retail systems are not supported.
+## Which controller mode should I use?
 
-1. Download versioned files from [Releases](https://github.com/tiancheng91/ps5-unicontroller/releases). To test unreleased changes, choose a successful build for the desired commit in [Actions](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml), then download and extract **UniController-PS5**. GitHub sign-in may be required.
-2. Run `unicontroller.elf` using your loader. The artifact includes `build-info.txt` and a SHA256 checksum.
-3. Open `http://<PS5-IP>:7456/`. If the port cannot be opened, the payload exits; resolve the conflict and reload it.
+A multi-mode controller can report a different identity and offer different features in each mode. **First-generation Switch Pro mode** has the most complete input and rumble support. **Xbox 360 / XInput mode** is also a good starting point for wired controllers.
 
-Web assets are included in the payload. Use the interface on a trusted LAN and do not expose its ports to the internet.
+| Controller mode             | Bluetooth                                                                 | USB                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| First-generation Switch Pro | Classic input and rumble                                                  | `057e:2009` input and rumble, confirmed on hardware                                              |
+| Switch 2 Pro                | Visible over BLE, pairing disabled                                        | `057e:2069` experimental button and stick input, no rumble                                       |
+| First-generation Joy-Con    | Left and right controllers operate separately                             | —                                                                                                |
+| Xbox                        | Selected Xbox HID models. The built-in BLE allowlist includes `045e:0b13` | Xbox 360 / XInput. Xbox One/Series USB GIP and dedicated Xbox wireless receivers are unsupported |
+| Android / Generic HID       | Input decoded from the HID descriptor                                     | Input for compatible HID gamepad interfaces. No generic rumble output                            |
 
-### 2. Connect a controller
+**Switch 2 Pro over USB** has been tested for basic input on PS5 Pro firmware 13.20. If plugging it in silences your TV, open the PS5 audio output settings, select your TV or headphones again, and disable automatic output device switching.
 
-For your first test, sign in with an original PS5 controller. You can also start Bluetooth or USB manually before signing in. To change players, use the user selection button in device details, then choose the account on your PS5.
+For example, the GameSir Nova Lite supports rumble in Classic Switch Pro mode. Its `3537:1041` Generic HID mode provides button input but currently has no rumble output. The connection mode matters even on the same physical controller. [GameSir modes](docs/gamesir-nova.md) · [Bluetooth support](docs/bluetooth.md) · [USB support](docs/usb.md)
 
-| Input      | Steps                                                                                                                                                                                                            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bluetooth  | Choose Add Bluetooth device, put the controller in pairing mode, and start a **60-second search**. Click Pair on a discovered device to connect. Use Classic for Switch mode. Stored devices reconnect normally. |
-| USB        | Enable USB in Settings and connect a supported controller mode using a data cable.                                                                                                                               |
-| Phone test | Open `/controller`, create a controller, then select its user on PS5. Create it again after rest mode.                                                                                                           |
+**Model missing or buttons mapped incorrectly?** UniController looks up the device’s VID/PID in SDL’s controller table to help identify the model. For Bluetooth Classic, the listed controller family also helps select a candidate protocol. USB protocol detection uses the device’s interfaces and report descriptors. [View the SDL table used by this version](https://github.com/libsdl-org/SDL/blob/b2de7a19ad3c0d5063a5fb8e4cf5deeeb9ce4560/src/joystick/controller_list.h)
 
-Check input and binding status on the device card, then test in a game. Bluetooth and USB can run together. The phone test controller is exclusive.
-
-**Use separate users for two independent players.** If menus work but games do not, check account assignment first. PS5's same-user assist-controller feature is separate and is not enabled automatically.
-
-### 3. Open the configuration page on PS5
-
-After startup, the application attempts to register a **UniController** icon when the system is signed in, all input sources are stopped and conditions remain stable. Settings also offers manual installation, updates and removal.
-
-**The icon is a web shortcut, not a payload loader.** Run the ELF before using it. A missing icon does not prevent LAN access. [Launcher details](docs/launcher.md) (Chinese)
-
-## Protocol support
-
-These are **implemented paths**, not a certified hardware list. A product can use different protocols across modes and firmware versions.
-
-| Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
-| --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Switch Pro-compatible | Classic input and rumble                    | `057e:2009`, input and rumble                            | The original Switch Pro has the most complete support                    |
-| Switch 2 Pro          | BLE identification only                     | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
-| Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
-| Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
-| Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
-
-**Connecting a Switch 2 Pro over USB** may redirect PS5 audio to the controller. Under **Sound → Audio Output**, turn off automatic output device switching and select your TV or headset. Features on third-party Switch Pro-compatible controllers depend on their protocol and USB interface. [USB support details](docs/usb.md)
-
-BLE uses an allowlist; only Xbox `045e:0b13` is enabled by default. Switch 2 BLE models are identified but shown as unsupported, with pairing disabled. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
-
-Rumble and battery reporting depend on the device protocol and firmware. Game rumble feedback is implemented for selected protocols; adaptive triggers and full DualSense haptics are not implied. An unknown battery reading does not necessarily prevent input.
-
-[Bluetooth scope](docs/bluetooth.md) · [USB scope](docs/usb.md) · [GameSir Nova notes](docs/gamesir-nova.md) (Chinese)
+If your controller uses a supported protocol, adapt the example to its connection type and device identity. Upload it to `/data/unicontroller/controllers.json` on the PS5 via FTP, then restart UniController to test. An override can select an existing protocol or adjust generic HID button mappings. **Switch 2 Pro over BLE is unsupported, and an override cannot enable pairing.** Use USB to test basic input instead. [Configuration guide](docs/controller-config.md) · [Example file](examples/controllers.json)
 
 ## Everyday use
 
-### Buttons and settings
+- **Button layout:** Switch face buttons map by position: bottom B → ×, right A → ○, left Y → □, top X → △. Home maps to PS and Capture to a touchpad click. To swap both A/B and X/Y, enable the ABXY swap in that controller’s details.
+- **Rumble:** Allow rumble in device details and select **Test rumble**. The master rumble switch in Settings must also be on. The page explains when the connection mode has no available rumble output. Game feedback supports traditional motor rumble.
+- **Rest mode and startup:** Rest mode releases virtual controllers and stops the physical input services. Bluetooth pairing records are retained. On a fresh install, only Bluetooth auto-start is enabled. Enable USB auto-start in Settings to start USB on the selected trigger as well. Upgrades retain your saved preferences. The base delay is 10 seconds, adjustable from 5 to 60. USB uses the base delay and Bluetooth starts three seconds later. These settings also apply if the payload loads after the foreground user has signed in. For pre-login testing, start the services manually or select the experimental resume trigger.
+- **Phone simulator:** Stop the Bluetooth and USB services, open **Simulator**, create a controller and select its user on PS5. Landscape focus mode puts both sticks and the buttons on one screen. Create the controller again after rest mode.
 
-Switch protocol defaults follow physical positions: B (bottom)→×, A (right)→○, Y (left)→□, X (top)→△; Home→PS, Capture→touchpad **click**. These are protocol button names. Third-party button labels and controller-side swapping may differ.
+## Troubleshooting
 
-**Swap A/B and X/Y** exchanges both pairs, is off by default, and runs before custom button mapping. It affects all application input sources. If the controller also swaps these pairs, the two swaps cancel out; choose the combination that produces your intended output and check it in the web interface.
+| Symptom                                                         | What to check                                                                                                                                                                                                                  |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The web interface won’t open                                    | Check that the ELF is running and the console address and port 7456 are correct. The payload exits if the port is occupied.                                                                                                    |
+| The controller pairs but buttons do nothing                     | Press the D-pad while watching the input frame count in device details. If it stays still, check the mode. Use Classic for Switch mode. If a generic USB HID device times out waiting for input, replug it and press a button. |
+| Input frames increase, but the intended player does not respond | The controller may be assigned to another local PS5 user. Open its **Device details**, select **Choose user again**, then choose the intended user on PS5 and retry. Pairing is retained.                                      |
+| Menus work but the game ignores the controller                  | Check whether both controllers selected the same local user. The original controller may still control the game. See the player assignment steps below.                                                                        |
+| The original DualSense also stops responding                    | Use your phone to stop the connection services and export logs. If needed, stop UniController and use the console’s normal power controls to recover.                                                                          |
 
-Connected Bluetooth and USB controllers share one list; “Add Bluetooth device” opens discovery and pairing, while USB is enabled in Settings. The management page supports Chinese/English, initially chosen from the browser language, a black-and-white default with red accents, optional orange/blue/green accents, and a large-text TV mode. Appearance is stored in this browser and does not affect connections. Optional arrow-key/standard Gamepad navigation is experimental and still needs PS5 WebView validation.
+### How does PS5 assign controllers to players?
 
-Settings also includes rumble and log levels. Settings can also be saved while connected. File editing is generally unnecessary; advanced adaptation is described in [custom controller configuration](docs/controller-config.md) (Chinese).
+The input frame count shows that UniController received your button presses. The PS5 user selection screen assigns the controller to a user, and the game may then ask that player to join. For example, if the original controller is playing as user A and the third-party controller also selects A, navigating system menus with the second controller does not add an independent player to the game.
 
-### Rest mode and reconnection
+- **Switch controllers in single-player:** Turn off the original controller, press PS/Home on the third-party controller, and select user A to continue the same game.
+- **Play local multiplayer independently:** Leave the original controller with A. In the third-party controller’s device details, select **Choose user again**, select a different local user B on PS5, then follow the game’s prompt to join.
+- **Share control of one player:** For compatible controllers, enable **Use Second Controller for Assistance** in PS5 accessibility settings under **Controllers**, then assign both controllers to A. Both provide input for the same player. [PlayStation assist controller guide](https://www.playstation.com/en-us/support/hardware/second-controller-assistance/)
 
-Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. By default, only Bluetooth automatic start is enabled; USB automatic start is disabled. Existing saved choices are preserved.
-
-Enable USB and Bluetooth independently or together. The startup delay defaults to **10 seconds** (adjustable from 5 to 60). USB starts at 10 seconds and Bluetooth at 13 seconds after the trigger. Each service keeps its scheduled time when enabled alone. Manual starts bypass this delay.
-
-- **After login (recommended):** Wait for a fresh home-screen focus event and a signed-in foreground user. Reuse an available saved account, or choose a user on the console.
-- **After resume (experimental):** Start the timer when the console resumes, even before sign-in. Press PS/Home on the connected controller to choose a user. This feature cannot wake the console.
-
-When the payload loads with a signed-in foreground user, services with auto-start enabled follow the same delays. Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
-
-### Updates and data
-
-Stop the old process from the web interface, then deploy and run the new ELF. Keep `/data/unicontroller/` to retain settings and bonds. “Forget device” removes that device's pairing record. Do not publish `bonds.db`, which contains keys.
-
-[Settings and storage](docs/settings-storage.md) (Chinese)
-
-## Troubleshooting and reports
-
-| Symptom                                | Check first                                                                                                                                                                |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Web page unavailable                   | Payload running, correct PS5 IP, port 7456 and startup logs.                                                                                                               |
-| Connected but no buttons               | Controller mode, input counts and errors; use Classic for Switch.                                                                                                          |
-| Menus work but games do not            | Account assignment in normal mode; record user-selection and game-input results separately in experimental mode.                                                           |
-| Held inputs release early or stick     | Report model, firmware and actions; report frequency needs per-device adaptation.                                                                                          |
-| Original controller also stops working | Stop the test, stop Bluetooth or the payload through the web interface, and save diagnostics. If control remains unavailable, recover using normal console power controls. |
-
-In [Issues](https://github.com/tiancheng91/ps5-unicontroller/issues), include the **build commit, PS5 firmware, controller model/firmware/mode, transport, account setup, reproduction steps and diagnostic logs**. Export logs from the control panel; runtime logs are stored at `/data/unicontroller/runtime.log`. Check for personal information before sharing.
-
-Use the [hardware checklist](docs/test-checklist.md) (Chinese) to mark each item as passed, failed or not tested. This helps distinguish pairing, parsing, account and game-output issues.
+When reporting an issue, include the version and commit shown in the web interface, PS5 model and firmware, controller model and mode, steps to reproduce, and the export from **Logs → Export logs**. Keep `bonds.db` private because it contains pairing keys. [Open an issue](https://github.com/tiancheng91/ps5-unicontroller/issues) · [Hardware test checklist](docs/test-checklist.md)
 
 ## Development and contributions
 
-Built with C11 and HTML/CSS/JavaScript. Reproducible issues, hardware results and fixes with tests are welcome. Device adaptations should identify the model, firmware, connection mode and tested behavior. Host tests and successful builds do not establish hardware compatibility.
+The backend is C11. Web assets are bundled in the ELF and work offline. From the repository root:
 
 ```sh
-make host
-./build/unicontroller-host 7456 /tmp/unicontroller-settings.json
-make test
-make preview # Isolated demo preview, no hardware operations
+make preview        # Browse the interface with demo data
+make test           # Run host regressions
+npm ci
+make test-browser   # Requires Chrome or Chromium
 ```
 
-The management shell uses a pinned offline Alpine CSP build; the touch input loop stays native JavaScript. Run host regressions with `make test`. For real-browser tests, run `npm ci` then `make test-browser` with Chrome/Chromium (`CHROME_PATH` can override its path). Runtime needs no Node, NPM or CDN.
+GitHub Actions cross-compiles the PS5 payload with a pinned SDK. When contributing controller support or hardware results, include the connection mode and which buttons, sticks and rumble functions you tested. [Developer documentation](docs/README.md) · [Custom controller profiles](docs/controller-config.md) · [Actions builds](https://github.com/tiancheng91/ps5-unicontroller/actions/workflows/build.yml)
 
-GitHub Actions uses a pinned PS5 SDK; local Docker is not required. Optional local cross-build: `PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make ps5`. The host mock must not be loaded as a PS5 payload.
+## License and acknowledgments
 
-[Architecture](docs/architecture.md) · [Code style](docs/code-style.md) · [Developer validation](docs/validation.md) · [Documentation index](docs/README.md) (Chinese)
+UniController is licensed under GNU GPLv3. The inherited Bluetooth bridge code retains its GPL-3.0-or-later license. Bundled components retain their own licenses and copyright notices. [LICENSE](LICENSE) · [NOTICE](NOTICE)
 
-## License
+Thank you to StonedModder and seregonwar for Ghostcontrol and its early research on creating a virtual DualSense on PS5 and assigning it to a user. [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher)
 
-UniController is licensed under [GNU GPLv3](LICENSE). The inherited Bluetooth bridge code retains its upstream GPL-3.0-or-later license. Bundled third-party components retain their own licenses and copyright notices. See [NOTICE](NOTICE).
-
-### Maintenance and releases
-
-Record user-facing changes in both the [English](CHANGELOG.en.md) and [Chinese](CHANGELOG.md) changelogs. Push a version tag such as `v0.1.0` to publish after tests and cross-compilation pass. Tags such as `v0.1.0-beta.1` produce prereleases. The payload remains named `unicontroller.elf`. [Release procedure](docs/releasing.md) (Chinese)
-
-## Acknowledgments
-
-Thank you to StonedModder and seregonwar for [Ghostcontrol](https://github.com/StonedModder/Ghostcontrol-PS5-USB-Controller-Patcher) and its early research on creating a virtual DualSense on PS5 and assigning it to a user.
-
-UniController’s Bluetooth bridge, pairing, and controller protocol code derive from [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads) by AngelLopezTorres. We also thank X-F1REBALL-X for its upstream project, [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5), and sinfiltros for AnyPad-PS5, the original Bluetooth bridge in this lineage.
-
-Thank you to SDL and Valve for the controller identification table. UniController uses its VID/PID entries, controller types, and model names to help identify devices. UniController’s drivers handle connections and decode input. [SDL sources and zlib license](vendor/sdl/README.md)
+The Bluetooth bridge, pairing and controller protocol code derive from AngelLopezTorres’s ps5-wireless-pads, through X-F1REBALL-X’s PadBridge PS5 and sinfiltros’s original AnyPad-PS5. We thank their authors, and SDL and Valve for the data used to identify controller models and types. [ps5-wireless-pads](https://github.com/AngelLopezTorres/ps5-wireless-pads) · [PadBridge PS5](https://github.com/X-F1REBALL-X/PadBridge-PS5) · [SDL data source](vendor/sdl/README.md)
