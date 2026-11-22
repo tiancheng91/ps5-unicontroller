@@ -214,8 +214,53 @@ static void reset(void)
     plugtime_generation = 1;
     inode_generation = 1;
 }
+static void test_failed_connection_quarantine(void)
+{
+    reset();
+    vendor = 0x057e;
+    product = 0x2069;
+    cfg_length = sizeof(switch2_config);
+    memcpy(cfg, switch2_config, cfg_length);
+    uc_usb_transport t, other;
+    uc_usb_device d;
+    assert(uc_usb_transport_open(&t));
+    assert(uc_usb_transport_open(&other));
+    native_transport *n = t.context, *second = other.context;
+    assert(open_candidate(n, 2, 7, &d) == 1);
+    assert(uc_usb_transport_quarantine(&t));
+    native_close(n);
+    int detached = detach_count, claimed = claim_count;
+    for (int i = 0; i < 8; i++) {
+        assert(!open_candidate(second, 2, 7, &d));
+        assert(!open_candidate(n, 2, 7, &d));
+    }
+    assert(detach_count == detached && claim_count == claimed);
+    char removed[24];
+    control_error = EACCES;
+    assert(!uc_usb_transport_take_removed(removed, sizeof removed) && quarantine_count == 1);
+    control_error = ENXIO;
+    assert(uc_usb_transport_take_removed(removed, sizeof removed) && !quarantine_count);
+    control_error = 0;
+    assert(open_candidate(n, 2, 7, &d) == 1);
+    assert(uc_usb_transport_quarantine(&t));
+    native_close(n);
+    ++plugtime_generation; /* Fast replug: same pathname and inode. */
+    assert(open_candidate(second, 2, 7, &d) == 1 && !quarantine_count);
+    assert(uc_usb_transport_quarantine(&other));
+    native_close(second);
+    plugtime_error = ENOTTY;
+    ++inode_generation;
+    assert(uc_usb_transport_take_removed(removed, sizeof removed) && !quarantine_count);
+    assert(open_candidate(n, 2, 7, &d) == 1);
+    ++inode_generation;
+    assert(!native_alive(n)); /* Same VID/PID alone cannot prove the old link survived. */
+    uc_usb_transport_release(&t);
+    uc_usb_transport_release(&other);
+}
+
 int main(void)
 {
+    test_failed_connection_quarantine();
     uc_usb_transport t;
     uc_usb_device d;
     uint8_t buffer[64];

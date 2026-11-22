@@ -180,6 +180,14 @@ static void switch_motor(uint8_t strength, uint8_t b[4])
     b[3] = (uint8_t)(0x40 + (i >> 1));
 }
 
+void switch_encode_rumble(uint8_t *b, uint8_t counter, uint8_t strong, uint8_t weak)
+{
+    b[0] = 0x10;
+    b[1] = counter & 0x0F;
+    switch_motor(strong, b + 2); /* left actuator */
+    switch_motor(weak, b + 6);   /* right actuator */
+}
+
 int switch_output(void *ctx, const pad_output *o, uint8_t *b, int max)
 {
     switch_ctx *c = ctx;
@@ -187,10 +195,7 @@ int switch_output(void *ctx, const pad_output *o, uint8_t *b, int max)
     unsigned type = controller_type(c);
     if (!c || !o || !b || max < 10 || type == 9 || type == 10 || type == 11 || type == 13)
         return 0;
-    b[0] = 0x10;
-    b[1] = c->counter++ & 0x0F;
-    switch_motor(o->strong, b + 2); /* left actuator */
-    switch_motor(o->weak, b + 6);   /* right actuator */
+    switch_encode_rumble(b, c->counter++, o->strong, o->weak);
     return 10;
 }
 

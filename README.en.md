@@ -52,13 +52,13 @@ These are **implemented paths**, not a certified hardware list. A product can us
 
 | Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
 | --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Switch Pro-compatible | Classic                                     | Experimental input for 057e:2009                         | Switch BLE identities are rejected to avoid unusable device entries      |
-| Switch 2 Pro          | Unsupported (BLE model identification only) | Experimental input for 057e:2069                         | Uses a different protocol from the original Switch Pro Controller        |
+| Switch Pro-compatible | Classic input and rumble                    | `057e:2009`, input and rumble                            | The original Switch Pro has the most complete support                    |
+| Switch 2 Pro          | BLE identification only                             | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
 | Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
 
-Switch Pro (`057e:2009`) and Switch 2 Pro (`057e:2069`) have [experimental USB input](docs/usb.md) for buttons and sticks, pending hardware validation. USB rumble is not implemented. Third-party controllers must match the required interface layout and protocol; an emulated VID/PID alone does not establish compatibility.
+**Connecting a Switch 2 Pro over USB** may redirect PS5 audio to the controller. Under **Sound → Audio Output**, turn off automatic output device switching and select your TV or headset. Features on third-party Switch Pro-compatible controllers depend on their protocol and USB interface. [USB support details](docs/usb.md)
 
 BLE uses an allowlist; only Xbox `045e:0b13` is enabled by default. Switch 2 BLE models are identified but shown as unsupported, with pairing disabled. For third-party devices, start with a known **Switch Classic mode**. A VID/PID, name or “XInput-compatible” label alone does not establish compatibility.
 
@@ -91,7 +91,7 @@ Bluetooth and USB automatic-start switches share two triggers, Bluetooth delayed
 
 The experiment permits one input source, ignores the saved account and lets you press PS/Home to choose a user on PS5. **User selection and game input still require hardware validation.** “System binding unverified” is not a success indicator. This mode does not start immediately when settings are saved or the payload loads, and it cannot wake the console with a third-party controller. Use the console power button for this test and keep an original controller available.
 
-USB must first be started manually to remember its account, which must be signed in for automatic startup. Resume mode permits only Bluetooth or USB; after-login mode supports both.
+After-login USB startup requires its saved account. Resume mode can start USB before sign-in. Press PS/Home to choose a user on the console. Resume mode permits only Bluetooth or USB; after-login mode supports both.
 
 Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 

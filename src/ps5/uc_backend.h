@@ -14,6 +14,7 @@ int uc_backend_can_start(int32_t user);
 int uc_backend_transport_ready(void);
 /* user=0 is reserved for core's exclusive system-assigned experiment. It is
  * never passed to BindDeviceWithUserId, nor inferred from foreground users. */
+int uc_backend_create_reselected(uint64_t session, uint64_t *handle);
 int uc_backend_create(int32_t user, uint64_t *handle);
 int uc_backend_submit(uint64_t handle, uint32_t buttons, const int16_t axes[4],
                       const uint16_t triggers[2]);

@@ -235,7 +235,9 @@ static uint64_t finish_identification(int writer, int32_t user)
     assert(phase == 4);
     close(writer);
     uint64_t handle = 0;
-    assert(uc_backend_create(user, &handle) == 0 && handle);
+    assert((pending_selection ? uc_backend_create_reselected(pending_selection, &handle)
+                              : uc_backend_create(user, &handle)) == 0 &&
+           handle);
     return handle;
 }
 /* Exercise the actual AddDevice phase: a status error can arrive after the
@@ -519,6 +521,16 @@ static void resume_observation(void)
 }
 static void system_choice_output(void)
 {
+    prepare();
+    uint64_t handles[2];
+    for (unsigned i = 0; i < 2; i++) {
+        int writer = start_identification(0, 160 + i);
+        pending_selection = i + 1;
+        handles[i] = finish_identification(writer, 0);
+    }
+    assert(handles[0] != handles[1]);
+    assert(!uc_backend_delete(handles[0]) && find_output(handles[1]));
+    assert(!uc_backend_delete(handles[1]));
     prepare();
     suspend_event = 0;
     logged_in = 0;

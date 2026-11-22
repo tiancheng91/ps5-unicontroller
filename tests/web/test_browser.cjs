@@ -169,12 +169,13 @@ const root = path.resolve(__dirname, "../..");
     );
     await details.click();
     await page.locator('summary[x-label="advancedAssignment"]').click();
-    await page.locator("#user").selectOption("2");
-    await page.waitForTimeout(5200);
+    assert.equal(await page.locator("#user").count(), 0);
     await page.locator("#assign-device").click();
     assert(
       await page.evaluate(() =>
-        window.commands.some((c) => c[0] === "/bluetooth/assign" && c[2].user_id === 2),
+        window.commands.some(
+          (c) => c[0] === "/bluetooth/reselect-user" && !Object.hasOwn(c[2], "user_id"),
+        ),
       ),
     );
     await page.keyboard.press("Escape");
@@ -491,6 +492,14 @@ const root = path.resolve(__dirname, "../..");
         if (args[0] === "/usb")
           data.rejected = [
             {
+              node: "/dev/ugen0.1",
+              vid: "0000",
+              pid: "0000",
+              reason: "control_open",
+              device_descriptor_ok: false,
+              errno: 6,
+            },
+            {
               node: "/dev/ugen2.7",
               vid: "3537",
               pid: "1040",
@@ -507,6 +516,7 @@ const root = path.resolve(__dirname, "../..");
     });
     await np.getByText("3537:1040 · claim_interface · errno=16", { exact: true }).waitFor();
     assert(await np.getByText("/dev/ugen2.7", { exact: true }).isVisible());
+    assert.equal(await np.getByText("/dev/ugen0.1", { exact: true }).count(), 0);
     assert(
       await np
         .getByText("generic-hid-gamepad · IF0 alt0 03/00/00 · HID 7/7", { exact: true })

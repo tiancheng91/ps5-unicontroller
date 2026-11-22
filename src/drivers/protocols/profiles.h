@@ -69,6 +69,7 @@ int profile_ble_allowed(uint16_t vid, uint16_t pid);
 /* Known SDL family without a Classic codec; local rules/layouts take precedence. */
 int profile_classic_unsupported(uint16_t vid, uint16_t pid);
 /* Builtin resolver is separate so override validation cannot recursively query itself. */
+void switch_encode_rumble(uint8_t *report, uint8_t counter, uint8_t strong, uint8_t weak);
 const pad_profile *profile_builtin_named(const char *key);
 const pad_profile *profile_find_for_transport(pad_transport transport, uint16_t vid, uint16_t pid);
 /* Builtin Classic selection only; shared with override validation. NULL may

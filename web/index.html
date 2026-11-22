@@ -62,6 +62,12 @@
                 <div>USB <span id="usb-status" x-text="usbStatus"></span></div>
                 <a href="/#settings" x-label="serviceSettings"></a>
               </div>
+              <p
+                class="error"
+                role="status"
+                x-show="usbInputTimedOut"
+                x-label="usbHidInputTimeout"
+              ></p>
               <div class="section-heading" x-show="hasDevices">
                 <h2 x-label="connectedControllers"></h2>
                 <span class="muted" x-text="deviceCount"></span>
@@ -560,6 +566,7 @@
               <dt x-label="batteryLabel"></dt>
               <dd x-text="detailDevice.batteryText"></dd>
             </dl>
+            <p x-show="detailDevice.switch2Usb" x-label="switch2AudioHint"></p>
             <p x-show="detailDevice.system_assignment" x-label="systemChoiceHint"></p>
             <p class="error" x-show="detailMissing" x-label="deviceGone"></p>
             <fieldset :disabled="deviceOptionsDisabled" class="settings-group">
@@ -607,19 +614,12 @@
             <details class="advanced" x-show="detailDevice.assignable">
               <summary x-label="advancedAssignment"></summary>
               <p x-label="assignmentHint"></p>
-              <label class="stacked"
-                ><span x-label="user"></span
-                ><select id="user" :value="selectedUser" @change="userChanged">
-                  <option value="" x-label="noUsers"></option>
-                  <template x-for="user in users" :key="user.id"
-                    ><option :value="user.id" x-text="user.name"></option
-                  ></template></select></label
-              ><button
+              <button
                 id="assign-device"
                 :data-source="detailDevice.source"
                 :data-slot="detailDevice.slot"
                 :data-identity="detailDevice.identity"
-                @click="assignDevice"
+                @click="reselectDevice"
                 :disabled="detailAssignmentDisabled"
                 x-label="assign"
               ></button>

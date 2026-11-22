@@ -436,7 +436,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         int64_t user;
         const char *keys[] = {"user_id"};
         if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 1) ||
-            jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user)) {
+            jint(&j, jget(&j, "user_id"), 0, INT32_MAX, &user)) {
             error_response(c, 400, "invalid_user");
             return;
         }
@@ -444,7 +444,7 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
             error_response(c, 409, "disable_existing_source_first");
             return;
         }
-        if (!uc_backend_can_start((int32_t)user)) {
+        if (user == 0 ? !uc_backend_transport_ready() : !uc_backend_can_start((int32_t)user)) {
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
@@ -547,15 +547,18 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         return;
     }
     if (!strcmp(method, "POST") &&
-        (!strcmp(path, "/api/v1/bluetooth/assign") || !strcmp(path, "/api/v1/usb/assign"))) {
-        int wireless = !strcmp(path, "/api/v1/bluetooth/assign");
+        (!strcmp(path, "/api/v1/bluetooth/assign") || !strcmp(path, "/api/v1/usb/assign") ||
+         !strcmp(path, "/api/v1/bluetooth/reselect-user") ||
+         !strcmp(path, "/api/v1/usb/reselect-user"))) {
+        int wireless = !strncmp(path, "/api/v1/bluetooth/", 18);
+        int reselect = strstr(path, "/reselect-user") != NULL;
         Json j;
-        int64_t slot, user;
+        int64_t slot, user = 0;
         const char *identity = wireless ? "address" : "node";
         const char *keys[] = {"slot", identity, "user_id"};
-        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, 3) ||
+        if (jparse(&j, body, strlen(body)) || jobject(&j, keys, reselect ? 2 : 3) ||
             jint(&j, jget(&j, "slot"), 0, 3, &slot) ||
-            jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user)) {
+            (!reselect && jint(&j, jget(&j, "user_id"), 1, INT32_MAX, &user))) {
             error_response(c, 400, "invalid_assignment");
             return;
         }
@@ -569,17 +572,28 @@ static void handle(Client *c, char *method, char *path, char *host, char *reques
         memcpy(device, j.s + j.t[n].start + 1, (size_t)len);
         device[len] = 0;
         /* Device identities are literal ASCII, never escaped JSON strings. */
-        if (strchr(device, '\\') || !uc_backend_can_start((int32_t)user)) {
+        if (strchr(device, '\\') ||
+            (reselect ? !uc_backend_transport_ready() : !uc_backend_can_start((int32_t)user))) {
             error_response(c, 409, "signed_in_user_and_stable_awake_required");
             return;
         }
-        int rc = wireless ? uc_bt_assign((int)slot, device, (int32_t)user)
-                          : uc_usb_assign((unsigned)slot, device, (int32_t)user);
-        if (rc < 0)
+        if (reselect && (uc_usb_reselection_pending() || uc_bt_reselection_pending())) {
+            error_response(c, 409, "reselection_busy");
+            return;
+        }
+        int rc = reselect ? (wireless ? uc_bt_reselect_user((int)slot, device)
+                                      : uc_usb_reselect_user((unsigned)slot, device))
+                          : (wireless ? uc_bt_assign((int)slot, device, (int32_t)user)
+                                      : uc_usb_assign((unsigned)slot, device, (int32_t)user));
+        if (rc == -3)
+            error_response(c, 409, "reselection_busy");
+        else if (rc < 0)
             error_response(c, 409, "device_or_user_unavailable");
         else
             response(c, rc == 2 ? 202 : 200, "application/json",
-                     rc == 2 ? "{\"pending\":true}" : "{\"assigned\":true}");
+                     rc == 2    ? "{\"pending\":true}"
+                     : reselect ? "{\"system_choice_requested\":true}"
+                                : "{\"assigned\":true}");
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(path, "/api/v1/bluetooth/forget")) {
@@ -1218,12 +1232,14 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
             int idle = !uc_bt_running() && !bt_start_queued && !uc_usb_running() &&
                        !usb_start_queued && !uc_core_active_session() && !enable_pending;
             int bt_ready = settings.bt_auto && uc_backend_can_start(settings.bt_auto_user);
-            int usb_ready = settings.usb_auto && uc_backend_can_start(settings.usb_auto_user);
+            int usb_user_ready = uc_backend_can_start(settings.usb_auto_user);
+            int usb_ready =
+                settings.usb_auto &&
+                (usb_user_ready || (settings.bt_auto_resume && uc_backend_transport_ready()));
             int32_t target = bt_ready    ? settings.bt_auto_user
                              : usb_ready ? settings.usb_auto_user
                                          : -1;
-            /* USB always needs its saved account; only the explicit Bluetooth
-             * resume experiment may start without one. */
+            /* Login mode needs its saved account. Resume can register for system choice. */
             int eligible = idle && (!settings.bt_auto_resume || settings.bt_auto || usb_ready);
             if (uc_backend_auto_due(target, eligible)) {
                 if (settings.bt_auto && (settings.bt_auto_resume || bt_ready)) {
@@ -1235,7 +1251,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                 if (usb_ready) {
                     /* The shared event gate waits 15s. USB waits another 10s,
                      * also when Bluetooth auto-start is disabled. */
-                    usb_start_user = settings.usb_auto_user;
+                    usb_start_user = usb_user_ready ? settings.usb_auto_user : 0;
                     usb_start_at = millis() + UC_AUTO_USB_DELAY_MS - UC_AUTO_BT_DELAY_MS;
                     usb_start_queued = usb_start_automatic = 1;
                     uc_log_info("[usb-auto] queued remaining_ms=%u total_delay_ms=%u user=%d",
@@ -1259,13 +1275,14 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                 }
             }
         }
-        if (usb_start_automatic && !uc_backend_can_start(usb_start_user))
+        if (usb_start_automatic && (usb_start_user == 0 ? !uc_backend_transport_ready()
+                                                        : !uc_backend_can_start(usb_start_user)))
             cancel_auto_start();
         if (usb_start_queued && millis() >= usb_start_at) {
             usb_start_queued = usb_start_automatic = 0;
             int rc = uc_usb_start(usb_start_user);
             uc_log_info("[usb] queued start result=%d user=%d", rc, usb_start_user);
-            if (rc == 0 && settings.usb_auto_user != usb_start_user) {
+            if (rc == 0 && usb_start_user > 0 && settings.usb_auto_user != usb_start_user) {
                 Settings next = settings;
                 next.usb_auto_user = usb_start_user;
                 if (!save_settings(&next)) {

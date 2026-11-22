@@ -99,7 +99,7 @@ document.addEventListener("alpine:init", () => {
       return (
         !!this.bt.system_assignment ||
         !this.ready ||
-        !this.userReady ||
+        (this.users.length > 0 && !this.userReady) ||
         this.busy ||
         this.usbRunning ||
         this.virtualRunning
@@ -229,27 +229,46 @@ document.addEventListener("alpine:init", () => {
     get noDevices() {
       return !this.devices.length;
     },
-    assignDevice(event) {
-      return event.currentTarget.dataset.source === "bluetooth"
-        ? this.assignBT(event)
-        : this.assignUSB(event);
+    reselectDevice(event) {
+      if (this.detailAssignmentDisabled) return;
+      const { source, slot, identity } = event.currentTarget.dataset;
+      const body = { slot: Number(slot) };
+      body[source === "bluetooth" ? "address" : "node"] = identity;
+      return this.physical(source, "reselect-user", body);
     },
     get btDevices() {
       return this.bt.devices.map((d) => this.deviceView(d, true));
     },
     get usbRejected() {
-      return (this.usb.rejected || []).map((d) => ({
-        ...d,
-        detail: d.vid + ":" + d.pid + " · " + d.reason + " · errno=" + d.errno,
-        diagnostic:
-          (d.protocol_hint || "unknown") +
-          " · " +
-          (d.interface_summary || "-") +
-          " · HID " +
-          (d.hid_report_captured || 0) +
-          "/" +
-          (d.hid_report_declared || 0),
-      }));
+      return (this.usb.rejected || [])
+        .filter((d) => {
+          if (this.usb.devices.some((live) => live.connected === true && live.node === d.node))
+            return false;
+          if (d.reason === "system_device_excluded") return false;
+          return !(d.vid === "0000" && d.pid === "0000" && d.device_descriptor_ok !== true);
+        })
+        .map((d) => ({
+          ...d,
+          detail:
+            d.vid +
+            ":" +
+            d.pid +
+            " · " +
+            (d.reason === "hid_first_input_timeout"
+              ? this.t("usbHidInputTimeout")
+              : d.reason + " · errno=" + d.errno),
+          diagnostic:
+            (d.protocol_hint || "unknown") +
+            " · " +
+            (d.interface_summary || "-") +
+            " · HID " +
+            (d.hid_report_captured || 0) +
+            "/" +
+            (d.hid_report_declared || 0),
+        }));
+    },
+    get usbInputTimedOut() {
+      return (this.usb.rejected || []).some((d) => d.reason === "hid_first_input_timeout");
     },
     get usbDevices() {
       // Status retains disconnected slots for diagnostics; these are not devices
@@ -278,11 +297,12 @@ document.addEventListener("alpine:init", () => {
         key: (wireless ? "bt:" : "usb:") + (wireless ? d.address : d.node) + ":" + d.slot,
         source: wireless ? "bluetooth" : "usb",
         transport: wireless ? (d.transport === "ble" ? "Bluetooth LE" : "Bluetooth") : "USB",
-        assignable: !wireless || !this.bt.system_assignment,
+        assignable: d.connected === true,
         wireless,
         system_assignment: !!d.system_assignment,
         known_device: !!d.known_device,
         experimental: !!d.experimental,
+        switch2Usb: !wireless && d.profile === "switch2-pro-usb",
         rumble: !!d.rumble,
         rumble_available: !!d.rumble_available,
         rumble_enabled: !!d.rumble_enabled,
@@ -292,11 +312,15 @@ document.addEventListener("alpine:init", () => {
         identity: wireless ? d.address : d.node,
         detail: d.vid + ":" + d.pid + " · " + (d.profile || "HID"),
         input: this.t("frames", { count: d.input_frames }),
-        inputStatus: this.t(Number(d.input_frames) > 0 ? "inputParsed" : "inputWaiting"),
-        accountText: d.user_id > 0 ? this.t("account", { id: d.user_id }) : this.t("unbound"),
-        stateText: d.system_assignment
-          ? this.t(d.output_active ? "outputActive" : "outputWaiting")
-          : this.t(d.bound ? "bound" : "unbound"),
+        inputStatus:
+          !wireless && d.waiting_for_input === true
+            ? this.t("usbHidWaiting", {
+                seconds: Number.isFinite(d.first_input_remaining_ms)
+                  ? Math.max(0, Math.ceil(d.first_input_remaining_ms / 1000))
+                  : 30,
+              })
+            : this.t(Number(d.input_frames) > 0 ? "inputParsed" : "inputWaiting"),
+        stateText: this.t(d.output_active || d.bound ? "outputActive" : "outputWaiting"),
         batteryText:
           Number(d.battery) >= 0
             ? this.t("battery", { percent: d.battery })
@@ -358,6 +382,7 @@ document.addEventListener("alpine:init", () => {
           input: "—",
           stateText: "—",
           batteryText: "—",
+          switch2Usb: false,
           assignable: false,
           system_assignment: false,
           known_device: false,
@@ -455,7 +480,15 @@ document.addEventListener("alpine:init", () => {
       }
     },
     get detailAssignmentDisabled() {
-      return this.assignmentDisabled || this.detailMissing;
+      return (
+        !this.ready ||
+        this.stopping ||
+        this.btBusy ||
+        this.usbBusy ||
+        this.detailMissing ||
+        !this.detailDevice.connected ||
+        !!this.detailDevice.pending
+      );
     },
     openAdd(event) {
       this.openDrawer("add", event);
@@ -653,11 +686,15 @@ document.addEventListener("alpine:init", () => {
           if (wireless) this.acceptBluetooth(latest);
           else this.usb = latest;
         }
-        this.notice("ready");
+        this.notice(action === "reselect-user" ? "reselectRequested" : "ready");
         return true;
       } catch (e) {
         this.ready = false;
-        this.notice("operationFailed", { error: e.message }, true);
+        this.notice(
+          e.message === "reselection_busy" ? "reselectConflict" : "operationFailed",
+          { error: e.message },
+          true,
+        );
       } finally {
         if (operation === this[epoch]) this[busy] = false;
       }

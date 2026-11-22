@@ -263,7 +263,9 @@
         generation: 0,
         session_id: 0,
       });
-    } else if (/^\/(bluetooth|usb)\/(start|stop|scan|pair|assign|forget)$/.test(path)) {
+    } else if (
+      /^\/(bluetooth|usb)\/(start|stop|scan|pair|assign|reselect-user|forget)$/.test(path)
+    ) {
       const [, source, action] = path.split("/"),
         state = source === "bluetooth" ? bt : usb;
       if (method !== "POST") {
@@ -343,15 +345,17 @@
             });
           }, 400);
         }
-      } else if (action === "assign") {
+      } else if (action === "assign" || action === "reselect-user") {
         const target = state.devices.find(
           (d) =>
             d.slot === body.slot &&
             (source === "bluetooth" ? d.address === body.address : d.node === body.node),
         );
         if (target) {
-          target.user_id = body.user_id;
-          target.bound = true;
+          target.user_id = action === "reselect-user" ? 0 : body.user_id;
+          target.bound = action !== "reselect-user";
+          target.system_assignment = action === "reselect-user";
+          target.output_active = true;
         } else {
           status = 409;
           data = { error: "device_not_available" };
