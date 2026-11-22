@@ -227,7 +227,7 @@ int uc_usb_start(int32_t user)
 {
     if (uc_usb_running())
         return 2;
-    if (user <= 0 || !uc_backend_can_start(user)) {
+    if (user < 0 || (user == 0 ? !uc_backend_transport_ready() : !uc_backend_can_start(user))) {
         usb.reason = "start_not_ready";
         return -1;
     }
@@ -624,8 +624,12 @@ static void poll_slot(unsigned index, uint64_t now)
     }
     if (!s->assigning && s->user < 0 && s->protocol.ready && s->valid && now >= s->latest_at &&
         now - s->latest_at <= 500 && (!s->reason || strcmp(s->reason, "user_unavailable")) &&
-        usb.preferred_user > 0) {
-        if (!uc_backend_can_start(usb.preferred_user)) {
+        usb.preferred_user >= 0) {
+        if (usb.preferred_user == 0 && uc_backend_transport_ready()) {
+            s->user = 0;
+            uc_log_info("[usb] slot=%u node=%s registering for PS5 user selection", index,
+                        s->device.node);
+        } else if (!uc_backend_can_start(usb.preferred_user)) {
             uc_log_info("[usb] preferred user=%d unavailable; explicit selection required",
                         usb.preferred_user);
             usb.preferred_user = -1;

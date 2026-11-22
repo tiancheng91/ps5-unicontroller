@@ -586,6 +586,12 @@ static void test_system_user_reselection(void)
 }
 int main(void)
 {
+    setup(1);
+    assert(!uc_usb_start(0));
+    ports[0].reports = 1;
+    uc_usb_poll(0);
+    assert(by_user(0) >= 0 && sessions[by_user(0)].submits == 1);
+    finish();
     test_system_user_reselection();
     test_account_follows_input_not_scanner();
     test_hid_first_input_deadline();

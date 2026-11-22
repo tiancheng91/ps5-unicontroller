@@ -159,7 +159,7 @@ window.UCMessages = {
     usbDiagnosticsHint: "仅显示已识别设备的接入异常，完整扫描记录请在日志页导出诊断。",
     usbHidWaiting: "请按键或移动摇杆（剩余 {seconds} 秒）",
     usbHidInputTimeout: "30 秒未收到有效输入，请重新插入手柄后按键重试。",
-    serviceGate: "登录 PS5 账号后即可启用服务。",
+    serviceGate: "蓝牙需登录账号。USB 可在账号选择页启用。",
     rumbleHint: "试验性支持，并非所有手柄都能正常震动。",
     stopHint: "关闭本应用的连接服务与虚拟输入，重新使用需要加载 payload。",
     close: "关闭",
@@ -373,7 +373,7 @@ window.UCMessages = {
     usbHidWaiting: "Press a button or move a stick ({seconds}s remaining).",
     usbHidInputTimeout:
       "No valid input within 30 seconds. Reconnect the controller, then press a button to retry.",
-    serviceGate: "Sign in to PS5 to enable services.",
+    serviceGate: "Sign in to start Bluetooth. USB can start at the user selection screen.",
     rumbleHint: "Experimental support. Rumble may not work on every controller.",
     stopHint: "Close owned connections and virtual inputs. Reload the payload to use it again.",
     close: "Close",

@@ -122,12 +122,12 @@ with tempfile.TemporaryDirectory() as directory:
             request("POST", "/api/v1/usb/start", {"user_id": 1}, auth=False)[0] == 403
         )
         assert request("POST", "/api/v1/usb/start", {"user_id": 5})[0] == 409
-        assert request("POST", "/api/v1/usb/start", {"user_id": 0})[0] == 400
+        assert request("POST", "/api/v1/usb/start", {"user_id": -1})[0] == 400
         assert (
             request("POST", "/api/v1/usb/start", {"user_id": 1, "extra": True})[0]
             == 400
         )
-        assert request("POST", "/api/v1/usb/start", {"user_id": 1})[0] == 202
+        assert request("POST", "/api/v1/usb/start", {"user_id": 0})[0] == 202
         # Independent physical transports may start together. Host-native
         # adapters then fail explicitly; no synthetic device/input is invented.
         assert request("POST", "/api/v1/bluetooth/start", {"user_id": 2})[0] == 202

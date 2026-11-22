@@ -96,7 +96,7 @@ document.addEventListener("alpine:init", () => {
       return (
         !!this.bt.system_assignment ||
         !this.ready ||
-        !this.userReady ||
+        (this.users.length > 0 && !this.userReady) ||
         this.busy ||
         this.usbRunning ||
         this.virtualRunning

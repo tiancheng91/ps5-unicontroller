@@ -79,7 +79,11 @@ document.addEventListener("alpine:init", () => {
       );
     },
     get usbAutoNeedsUser() {
-      return this.form.usb_auto_start && !(this.current?.usb_auto_user > 0);
+      return (
+        this.form.bluetooth_auto_trigger === "login" &&
+        this.form.usb_auto_start &&
+        !(this.current?.usb_auto_user > 0)
+      );
     },
     get savedUser() {
       return this.current?.bluetooth_auto_user > 0
