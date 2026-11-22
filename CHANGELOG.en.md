@@ -9,6 +9,7 @@
 ### Controller compatibility
 
 - First-generation Switch Pro controllers (`057e:2009`) now support buttons, sticks, game rumble, and the web rumble test over USB. Wired operation has been confirmed on hardware.
+- The PowerA Enhanced Wireless Controller (`20d6:0002`) now tries the first-generation Switch Pro handshake over USB. Wired input on this model still needs hardware verification.
 - Switch 2 Pro controllers (`057e:2069`) have experimental USB input. Buttons and sticks have been tested on a PS5 Pro running firmware 13.20. Rumble is unavailable. If audio moves to the controller, select your TV or headphones again in PS5 audio output settings. Switch 2 BLE devices appear in discovery with pairing disabled.
 - Bluetooth Classic identification uses SDL device data to select candidate protocols. You can override the protocol by exact address or name. First-generation Nintendo controller calibration and input identification have improved. Known unsupported BLE devices are marked in discovery.
 - Fixed USB initialization failures and repeated reconnects exhausting controller slots. Fixed controllers being detected after reconnection but sending no usable input. Generic HID devices have 30 seconds to send their first valid input. Replug the device to retry after a timeout.

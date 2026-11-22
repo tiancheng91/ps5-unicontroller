@@ -193,11 +193,11 @@ $(BUILD)/test-usb-native: tests/usb_protocol/switch2_fixture.h tests/usb_protoco
 	src/drivers/usb/transport.c \
 	src/drivers/usb/diagnostics.c \
 	tests/usb_native/include/dev/usb/usb.h tests/usb_native/include/dev/usb/usb_ioctl.h \
-	$(C_HEADERS) $(LOG_SOURCES)
+	$(C_HEADERS) $(DRIVER_SHARED) $(CONFIG_SOURCES) $(CONTROLLER_DATA)
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Itests/usb_native/include tests/usb_native/test_native.c \
 		src/drivers/usb/diagnostics.c \
-		$(LOG_SOURCES) -o $@
+		$(DRIVER_SHARED) $(CONFIG_SOURCES) -o $@
 
 test-usb-manager: $(BUILD)/test-usb-manager
 	./$(BUILD)/test-usb-manager

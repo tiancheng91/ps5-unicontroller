@@ -133,7 +133,9 @@ class ControllerRegistryTests(unittest.TestCase):
         self.invalid(lambda c: c["devices"][0].update(usb={"reset_device": True}))
         config = example()
         config["devices"][0]["usb"] = {"input_watchdog": True}
-        self.assertIn("1, 0}", registry.generate(config)[1])
+        self.assertIn("1, 0, 0}", registry.generate(config)[1])
+        config["devices"][0]["usb"]["protocol"] = "switch-pro"
+        self.assertIn("1, 0, 1}", registry.generate(config)[1])
 
     def test_layout_grammar_and_bounds(self):
         for bindings in (
@@ -212,7 +214,7 @@ class ControllerRegistryTests(unittest.TestCase):
             '"Custom model using Xbox", uc_profile_ids_1, 1, xbox_parse, xbox_output, NULL, 0, 0, xbox_setup',
             profiles,
         )
-        self.assertIn("{0xbeef, 0x0001, NULL, uc_hid_map_0, 1, 0}", models)
+        self.assertIn("{0xbeef, 0x0001, NULL, uc_hid_map_0, 1, 0, 0}", models)
         config["profiles"]["unused"] = custom
         self.assertIn(
             '"Custom model using Xbox", NULL, 0, xbox_parse',

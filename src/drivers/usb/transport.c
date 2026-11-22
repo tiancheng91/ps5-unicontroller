@@ -1,3 +1,4 @@
+#include "../protocols/profiles.h"
 #include "transport.h"
 #include <string.h>
 static unsigned le16(const uint8_t *p)
@@ -84,8 +85,9 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
 {
     if (cfg && out && vid == 0x057e && pid == 0x2069)
         return select_switch2(cfg, length, out);
+    int switch_pro = profile_usb_switch_pro(vid, pid);
     if (!cfg || !out || length < 9 || cfg[0] < 9 || cfg[1] != 2 || le16(cfg + 2) != length ||
-        vid == 0x054c || vid == 0x0e8d || (vid == 0x057e && pid != 0x2009) || cfg[4] == 0)
+        vid == 0x054c || vid == 0x0e8d || (vid == 0x057e && !switch_pro) || cfg[4] == 0)
         return 0;
     uc_usb_device candidate = {0}, current = {0};
     unsigned count = 0, declared = 0, endpoints = 0, seen_interfaces = 0,
@@ -126,10 +128,11 @@ int uc_usb_select(uint16_t vid, uint16_t pid, const uint8_t *cfg, size_t length,
                 current.iface_index = (uint8_t)seen_interfaces++;
             }
             current.iface = d[2];
-            if (vid != 0x057e && active && d[5] == 0xff && d[6] == 0x5d && d[7] == 1) {
+            if (!switch_pro && vid != 0x057e && active && d[5] == 0xff && d[6] == 0x5d &&
+                d[7] == 1) {
                 current.kind = UC_USB_XINPUT;
                 wanted = 1;
-            } else if (vid == 0x057e && pid == 0x2009 && active && d[5] == 3 && !d[6] && !d[7]) {
+            } else if (switch_pro && active && d[5] == 3 && !d[6] && !d[7]) {
                 current.kind = UC_USB_SWITCH_PRO;
                 wanted = 1;
             }
@@ -532,7 +535,8 @@ static int open_candidate(native_transport *n, unsigned bus, unsigned address, u
     selected.diagnostic.info_errno = info_errno;
     selected.diagnostic.device_class = descriptor.bDeviceClass;
     selected.diagnostic.config_index = (uint8_t)config_index;
-    if (selected.vid != 0x057e || (selected.pid != 0x2069 && selected.pid != 0x2009))
+    if (!(selected.vid == 0x057e && selected.pid == 0x2069) &&
+        !profile_usb_switch_pro(selected.vid, selected.pid))
         diagnose_hid(n, &selected);
     uc_usb_device matched = {0};
     stage = "not_supported_xinput";

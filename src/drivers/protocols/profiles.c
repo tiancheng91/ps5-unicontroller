@@ -444,6 +444,14 @@ profile_family profile_classify(uint16_t vid, uint16_t pid)
     return PROFILE_KNOWN_OTHER;
 }
 
+int profile_usb_switch_pro(uint16_t vid, uint16_t pid)
+{
+    for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)
+        if (k_models[i].vid == vid && k_models[i].pid == pid)
+            return k_models[i].usb_switch_pro;
+    return 0;
+}
+
 int profile_usb_input_watchdog(uint16_t vid, uint16_t pid)
 {
     for (size_t i = 0; i < sizeof k_models / sizeof k_models[0]; i++)

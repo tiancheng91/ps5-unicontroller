@@ -285,6 +285,9 @@
       "vid": "057e",
       "pid": "2009",
       "name": "Switch Pro Controller",
+      "usb": {
+        "protocol": "switch-pro"
+      },
       "bluetooth_profile": "switch"
     },
     {
@@ -475,6 +478,14 @@
       "pid": "0900",
       "name": "Razer Serval",
       "hid_layout": "razer-serval"
+    },
+    {
+      "vid": "20d6",
+      "pid": "0002",
+      "name": "PowerA Enhanced Wireless Controller for Nintendo Switch",
+      "usb": {
+        "protocol": "switch-pro"
+      }
     },
     {
       "vid": "20d6",

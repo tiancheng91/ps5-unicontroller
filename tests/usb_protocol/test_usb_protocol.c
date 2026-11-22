@@ -124,8 +124,15 @@ static void switch1_selection(void)
         assert(!uc_usb_select(0x057e, 0x2009, cfg, n, &d));
     assert(!uc_usb_select(0x057e, 0x2069, cfg, sizeof cfg, &d));
     assert(!uc_usb_select(0x057e, 0x2006, cfg, sizeof cfg, &d));
-    assert(!uc_usb_select(0x20d6, 2, cfg, sizeof cfg,
+    assert(!uc_usb_select(0x20d6, 3, cfg, sizeof cfg,
                           &d)); /* Similar layout is not protocol evidence. */
+    /* PowerA configuration descriptor captured in issue #6. */
+    const uint8_t powera[] = {
+        9, 2, 41, 0,    1,  1, 0, 0x80, 250, 9, 4,  0, 0, 2, 3, 0,    0, 0,  9, 0x21, 0x11,
+        1, 0, 1,  0x22, 80, 0, 7, 5,    2,   3, 64, 0, 8, 7, 5, 0x81, 3, 64, 0, 8,
+    };
+    assert(uc_usb_select(0x20d6, 2, powera, sizeof powera, &d));
+    assert(d.kind == UC_USB_SWITCH_PRO && d.ep_in == 0x81 && d.ep_out == 2);
     cfg[31] = 32;
     assert(!uc_usb_select(0x057e, 0x2009, cfg, sizeof cfg, &d));
     memcpy(cfg, switch1_config, sizeof cfg);

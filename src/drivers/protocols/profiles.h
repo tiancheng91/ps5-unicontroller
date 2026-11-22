@@ -60,6 +60,7 @@ typedef enum {
 /* VID/PID classification; Classic name candidates require a protocol probe. */
 profile_family profile_classify(uint16_t vid, uint16_t pid);
 /* Receiver-backed modes require real reports; USB presence cannot renew held input. */
+int profile_usb_switch_pro(uint16_t vid, uint16_t pid);
 int profile_usb_input_watchdog(uint16_t vid, uint16_t pid);
 const pad_profile *profile_find(uint16_t vid, uint16_t pid);
 /* Native PS5 controllers belong to the system Bluetooth stack. */

@@ -252,7 +252,11 @@ def generate(config):
         watchdog = False
         if "usb" in device:
             usb = device["usb"]
-            object_fields(usb, {"input_watchdog"}, set(), f"{where} USB")
+            object_fields(usb, {"input_watchdog", "protocol"}, set(), f"{where} USB")
+            if "protocol" in usb:
+                require(
+                    usb["protocol"] == "switch-pro", f"{where}: unknown USB protocol"
+                )
             if "input_watchdog" in usb:
                 require(
                     type(usb["input_watchdog"]) is bool,
@@ -322,13 +326,14 @@ def generate(config):
                 f"static const char {map_symbols[key]}[] = {c_string(text)};\n"
             )
     model_text.append(
-        "static const struct { uint16_t vid, pid; const char *name; const char *map; int usb_input_watchdog; int ble; } k_models[] = {\n"
+        "static const struct { uint16_t vid, pid; const char *name; const char *map; int usb_input_watchdog; int ble; int usb_switch_pro; } k_models[] = {\n"
     )
     for device, (vid, pid), watchdog in models:
         display = c_string(device["name"]) if "name" in device else "NULL"
         layout = map_symbols[device["hid_layout"]] if "hid_layout" in device else "NULL"
+        switch_pro = device.get("usb", {}).get("protocol") == "switch-pro"
         model_text.append(
-            f"    {{0x{vid:04x}, 0x{pid:04x}, {display}, {layout}, {int(watchdog)}, {int(device.get('ble', False))}}},\n"
+            f"    {{0x{vid:04x}, 0x{pid:04x}, {display}, {layout}, {int(watchdog)}, {int(device.get('ble', False))}, {int(switch_pro)}}},\n"
         )
     model_text.append("};\n")
     # Immutable capability views reuse the same decoder and initialization.
