@@ -12,8 +12,6 @@ window.UCMessages = {
     autoBluetoothHint: "自动回连已配对的手柄。",
     autoUsbEnabled: "自动启用 USB",
     autoUsbHint: "自动识别有线手柄或接收器；可能引发异常，不推荐启用。",
-    usbAutoNeedsUser: "请先手动启用一次 USB，记住所用账号。",
-    autoConflict: "恢复模式只能启用一种连接；同时启用请改选登录后启动。",
 
     switch2AudioHint: "在 PS5 音频输出设置中关闭自动切换输出设备，并选回电视或耳机。",
     experimental: "试验性",
@@ -97,7 +95,8 @@ window.UCMessages = {
     autoTrigger: "启动时机",
     login: "登录进入桌面后（推荐）",
     resume: "休眠恢复后（实验）",
-    autoHint: "到达所选时机后，蓝牙等待 15 秒、USB 等待 25 秒启动。",
+    autoDelay: "启动延迟（秒）",
+    autoHint: "USB 按设定延迟启动，蓝牙再晚 3 秒。手动启动可立即操作。",
     noSavedUser: "请先手动启用一次蓝牙，记住所用账号。",
     defaults: "默认手柄设置",
     rumble: "允许震动",
@@ -161,7 +160,7 @@ window.UCMessages = {
     usbDiagnosticsHint: "仅显示已识别设备的接入异常，完整扫描记录请在日志页导出诊断。",
     usbHidWaiting: "请按键或移动摇杆（剩余 {seconds} 秒）",
     usbHidInputTimeout: "30 秒未收到有效输入，请重新插入手柄后按键重试。",
-    serviceGate: "蓝牙需登录账号。USB 可在账号选择页启用。",
+    serviceGate: "可在账号选择页启用蓝牙或 USB，再按手柄 PS/Home 键选择使用者。",
     rumbleHint: "试验性支持，并非所有手柄都能正常震动。",
     stopHint: "关闭本应用的连接服务与虚拟输入，重新使用需要加载 payload。",
     close: "关闭",
@@ -225,8 +224,6 @@ window.UCMessages = {
     autoUsbEnabled: "Enable USB automatically",
     autoUsbHint:
       "Detect wired controllers and receivers. May cause issues; enabling is not recommended.",
-    usbAutoNeedsUser: "Enable USB manually once to remember its account.",
-    autoConflict: "Choose one connection for resume mode, or use after-login startup for both.",
 
     switch2AudioHint:
       "In PS5 audio output settings, turn off automatic output device switching and select your TV or headset.",
@@ -315,7 +312,9 @@ window.UCMessages = {
     autoTrigger: "Startup trigger",
     login: "After login and home focus (recommended)",
     resume: "After resume (experimental)",
-    autoHint: "After the selected event: Bluetooth starts in 15 seconds, USB in 25 seconds.",
+    autoDelay: "Startup delay (seconds)",
+    autoHint:
+      "USB starts after the delay. Bluetooth starts 3 seconds later. Manual starts are immediate.",
     noSavedUser: "Enable Bluetooth manually once to remember its account.",
     defaults: "Controller defaults",
     rumble: "Allow rumble",
@@ -384,7 +383,7 @@ window.UCMessages = {
     usbHidWaiting: "Press a button or move a stick ({seconds}s remaining).",
     usbHidInputTimeout:
       "No valid input within 30 seconds. Reconnect the controller, then press a button to retry.",
-    serviceGate: "Sign in to start Bluetooth. USB can start at the user selection screen.",
+    serviceGate: "Start Bluetooth or USB before sign-in, then press PS/Home to choose a user.",
     rumbleHint: "Experimental support. Rumble may not work on every controller.",
     stopHint: "Close owned connections and virtual inputs. Reload the payload to use it again.",
     close: "Close",

@@ -552,7 +552,7 @@ int main(void)
     assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true"));
     assert(!uc_bt_stop());
     unavailable_user = 1;
-    assert(uc_bt_start_system_assigned() == 0);
+    assert(uc_bt_start(0) == 0);
     enabled = enable_calls;
     event(1, 0, 26000);
     event(2, 0, 26001);
@@ -579,14 +579,14 @@ int main(void)
     assert(uc_bt_status_json(status_json, sizeof status_json));
     assert(strstr(status_json, "\"state\":\"off\"") &&
            !strstr(status_json, "suspended_manual_restart_required"));
-    assert(uc_bt_start_system_assigned() == 0);
+    assert(uc_bt_start(0) == 0);
     event(1, 0, 27000);
     event(2, 0, 27001);
     assert(ready[0]);
     gate = 0;
     uc_bt_poll(27002);
     assert(!uc_bt_running() && !sessions[0]);
-    assert(uc_bt_start_system_assigned() == -1);
+    assert(uc_bt_start(0) == -1);
     gate = 1;
     char options_path[128];
     snprintf(options_path, sizeof options_path, "/tmp/uc-bt-options-%ld.json", (long)getpid());

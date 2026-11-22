@@ -100,6 +100,7 @@
     bluetooth_auto_trigger: "login",
     bluetooth_auto_user: 2,
     usb_auto_start: false,
+    auto_start_delay_seconds: 10,
     usb_auto_user: 1,
     button_mapping: Array.from({ length: 32 }, (_, i) => i),
   };

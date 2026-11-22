@@ -30,6 +30,13 @@ static int fault_power(void)
     const char *path = getenv("UC_TEST_REST");
     return path && !access(path, F_OK) ? 1 : uc_backend_power_state();
 }
+/* Deliver one synthetic event after the platform gate has elapsed. */
+static int fault_auto_due(unsigned delay_ms, int idle)
+{
+    const char *path = getenv("UC_TEST_AUTO_DUE");
+    return idle && path && delay_ms == 7000 && unlink(path) == 0;
+}
+#define uc_backend_auto_due fault_auto_due
 #define uc_backend_power_state fault_power
 #define accept fault_accept
 #define bind fault_bind

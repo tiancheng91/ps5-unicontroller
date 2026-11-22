@@ -496,7 +496,7 @@ static void poll_home(uint64_t now)
             home_waiting = 0;
             uc_bt_auto_arm(&home_gate, now);
             home_gate.fresh = home_gate.home = 1; /* Power event; no log dependency. */
-            uc_log_info("[input-auto] resume observed; waiting 15000ms; no user required");
+            uc_log_info("[input-auto] resume observed; waiting for configured startup delay");
         }
         return;
     }
@@ -548,13 +548,13 @@ static void poll_home(uint64_t now)
         uc_log_info("[input-auto] history drained; awaiting new desktop focus");
     }
 }
-int uc_backend_auto_due(int32_t target_user, int idle)
+int uc_backend_auto_due(unsigned delay_ms, int idle)
 {
     if (auto_mode == UC_AUTO_RESUME) {
         /* The timer begins as soon as power is working; the final transport gate
          * independently enforces its minimum five-second power grace. */
         int eligible = idle && ready && power_status == 0 && !suspend_event;
-        int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+        int due = uc_bt_auto_due(&home_gate, now_ms(), eligible, delay_ms);
         if (due || (!home_waiting && !home_gate.armed)) {
             uc_backend_auto_watch(UC_AUTO_OFF);
             if (due)
@@ -564,18 +564,18 @@ int uc_backend_auto_due(int32_t target_user, int idle)
     }
     int32_t foreground = -1;
     int eligible = idle && home_owns_log && power_status == 0 && !suspend_event &&
-                   sceUserServiceGetForegroundUser(&foreground) == 0 && user_live(foreground) &&
-                   uc_backend_can_start(target_user);
+                   sceUserServiceGetForegroundUser(&foreground) == 0 &&
+                   uc_backend_can_start(foreground);
     if (foreground != home_foreground) {
         home_gate.timing = 0;
         home_foreground = foreground;
     }
     int timing = home_gate.timing;
     int armed = home_gate.armed;
-    int due = uc_bt_auto_due(&home_gate, now_ms(), eligible);
+    int due = uc_bt_auto_due(&home_gate, now_ms(), eligible, delay_ms);
     if (!timing && home_gate.timing)
-        uc_log_info("[input-auto] desktop and users ready; waiting 15000ms foreground=%d target=%d",
-                    foreground, target_user);
+        uc_log_info("[input-auto] desktop and users ready; waiting %ums foreground=%d", delay_ms,
+                    foreground);
     else if (timing && !home_gate.timing && !due && home_gate.armed)
         uc_log_warn("[input-auto] readiness lost; delay cancelled");
     if (due || (armed && !home_gate.armed)) {

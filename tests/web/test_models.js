@@ -125,6 +125,7 @@ const assert = require("assert"),
       bluetooth_auto_trigger: "login",
       bluetooth_auto_user: 2,
       usb_auto_start: false,
+      auto_start_delay_seconds: 10,
       usb_auto_user: 1,
       button_mapping: Array.from({ length: 32 }, (_, i) => i),
     };
@@ -141,13 +142,10 @@ const assert = require("assert"),
   s.model.form.usb_auto_start = true;
   s.model.form.bluetooth_auto_start = true;
   s.model.form.bluetooth_auto_trigger = "resume";
-  assert(s.model.autoConflict && s.model.saveDisabled);
-  const saveCount = s.calls.filter((c) => c.method === "POST").length;
+  s.model.form.auto_start_delay_seconds = 20;
+  assert(!s.model.saveDisabled);
   await s.model.save();
-  assert.equal(s.calls.filter((c) => c.method === "POST").length, saveCount);
-  s.model.form.bluetooth_auto_trigger = "login";
-  assert(!s.model.autoConflict && !s.model.saveDisabled);
-  await s.model.save();
+  assert.equal(s.calls.filter((c) => c.method === "POST").at(-1).body.auto_start_delay_seconds, 20);
   assert(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_start);
   assert.equal(s.calls.filter((c) => c.method === "POST").at(-1).body.usb_auto_user, 1);
 

@@ -304,11 +304,7 @@ static int start_transport(int32_t user, int system_assignment)
 }
 int uc_bt_start(int32_t user)
 {
-    return start_transport(user, 0);
-}
-int uc_bt_start_system_assigned(void)
-{
-    return start_transport(0, 1);
+    return start_transport(user, user == 0);
 }
 int uc_bt_stop(void)
 {
@@ -443,9 +439,8 @@ void uc_bt_poll(uint64_t now)
             if (!s->session && now - s->last_input >= 500)
                 continue;
             uint64_t session = s->session;
-            int rc = bt.system_assignment ? uc_core_enable_system_assigned(now, &session)
-                     : s->user == 0       ? uc_core_enable_reselected(now, &session)
-                                          : uc_core_enable_physical(s->user, now, &session);
+            int rc = s->user == 0 ? uc_core_enable_reselected(now, &session)
+                                  : uc_core_enable_physical(s->user, now, &session);
             if (session)
                 s->session = session;
             if (rc == 2) {

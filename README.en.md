@@ -53,7 +53,7 @@ These are **implemented paths**, not a certified hardware list. A product can us
 | Device / protocol     | Bluetooth                                   | USB                                                      | Current limits                                                           |
 | --------------------- | ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Switch Pro-compatible | Classic input and rumble                    | `057e:2009`, input and rumble                            | The original Switch Pro has the most complete support                    |
-| Switch 2 Pro          | BLE identification only                             | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
+| Switch 2 Pro          | BLE identification only                     | `057e:2069`, experimental basic input                    | Buttons and sticks only. Audio output requires manual setup.             |
 | Joy-Con               | Separate left/right profiles                | —                                                        | No paired Joy-Con combination                                            |
 | Xbox                  | Registered Xbox HID models                  | Xbox 360 / XInput-compatible interfaces and reports      | No Xbox One/Series USB GIP or proprietary Xbox wireless receiver support |
 | Android / generic HID | Supported HID descriptors and known layouts | Non-boot HID gamepad input (hardware validation pending) | Arbitrary Android modes and USB HID are not guaranteed                   |
@@ -82,16 +82,10 @@ Settings also includes rumble and log levels. Settings can also be saved while c
 
 Rest mode stops Bluetooth/USB and releases application-owned virtual controllers, **preserving Bluetooth bonds**. Reconnect after resume; pairing again is normally unnecessary. By default, only Bluetooth automatic start is enabled; USB automatic start is disabled. Existing saved choices are preserved.
 
-Bluetooth and USB automatic-start switches share two triggers, Bluetooth delayed by **15 seconds** and USB by **25 seconds**:
+Enable USB and Bluetooth independently or together. The startup delay defaults to **10 seconds** (adjustable from 5 to 60). USB starts at 10 seconds and Bluetooth at 13 seconds after the trigger. Each service keeps its scheduled time when enabled alone. Manual starts bypass this delay.
 
-| Trigger                                  | Behavior                                                                                                                                                                   |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| After login and home focus (recommended) | Wait for a fresh home-focus event and signed-in foreground and saved target users. Reuse the account from the last successful manual Bluetooth start.                      |
-| After resume (experimental)              | Start without waiting for login; after a third-party controller connects, create an application-unbound virtual controller and inject input to test system user selection. |
-
-The experiment permits one input source, ignores the saved account and lets you press PS/Home to choose a user on PS5. **User selection and game input still require hardware validation.** “System binding unverified” is not a success indicator. This mode does not start immediately when settings are saved or the payload loads, and it cannot wake the console with a third-party controller. Use the console power button for this test and keep an original controller available.
-
-After-login USB startup requires its saved account. Resume mode can start USB before sign-in. Press PS/Home to choose a user on the console. Resume mode permits only Bluetooth or USB; after-login mode supports both.
+- **After login (recommended):** Wait for a fresh home-screen focus event and a signed-in foreground user. Reuse an available saved account, or choose a user on the console.
+- **After resume (experimental):** Start the timer when the console resumes, even before sign-in. Press PS/Home on the connected controller to choose a user. This feature cannot wake the console.
 
 Each automatic attempt runs once. Start manually if no trigger arrives, observation expires or startup fails. [Lifecycle details](docs/bluetooth.md#可选自动启动) · [Test procedure](docs/test-checklist.md) (Chinese)
 

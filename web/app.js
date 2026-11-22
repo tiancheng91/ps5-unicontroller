@@ -93,11 +93,16 @@ document.addEventListener("alpine:init", () => {
       return this.btBusy || this.usbBusy || this.stopping || this.deviceBusy;
     },
     get btStartDisabled() {
-      return !this.ready || !this.userReady || this.busy || this.btRunning || this.virtualRunning;
+      return (
+        !this.ready ||
+        (this.users.length > 0 && !this.userReady) ||
+        this.busy ||
+        this.btRunning ||
+        this.virtualRunning
+      );
     },
     get usbStartDisabled() {
       return (
-        !!this.bt.system_assignment ||
         !this.ready ||
         (this.users.length > 0 && !this.userReady) ||
         this.busy ||

@@ -358,9 +358,19 @@
                         <option value="login" x-label="login"></option>
                         <option value="resume" x-label="resume"></option></select
                     ></label>
+                    <label class="setting"
+                      ><span x-label="autoDelay"></span>
+                      <input
+                        type="number"
+                        min="5"
+                        max="60"
+                        step="1"
+                        :value="form.auto_start_delay_seconds"
+                        data-form="auto_start_delay_seconds"
+                        @input="formChanged"
+                      />
+                    </label>
                     <p class="group-hint" x-label="autoHint"></p>
-                    <p class="group-hint" x-show="usbAutoNeedsUser" x-label="usbAutoNeedsUser"></p>
-                    <p class="error" x-show="autoConflict" x-label="autoConflict"></p>
                   </div>
                   <h2 class="group-title" x-label="diagnostics"></h2>
                   <div class="settings-group">

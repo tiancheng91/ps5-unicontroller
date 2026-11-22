@@ -103,9 +103,9 @@ void uc_backend_auto_watch(int enabled)
 {
     (void)enabled;
 }
-int uc_backend_auto_due(int32_t user, int idle)
+int uc_backend_auto_due(unsigned delay_ms, int idle)
 {
-    (void)user;
+    (void)delay_ms;
     (void)idle;
     return 0; /* A host cannot manufacture PS5 desktop events. */
 }

@@ -4,11 +4,9 @@
 #include <stdint.h>
 #include "bluetooth/host.h"
 /* Single event-loop owner. Explicit start only; no transport auto-reopen.
+ * User 0 requests system user selection; positive IDs must be signed in.
  * 0 success, 2 cleanup pending/busy, -1 unsupported/error. */
 int uc_bt_start(int32_t user);
-/* Experimental resume: one physical source drives an exclusive, initially
- * unbound virtual pad. PS5 user selection owns binding; never assume success. */
-int uc_bt_start_system_assigned(void);
 /* Assign a connected slot only if its current canonical address still matches.
  * New assignments require a fresh report; additional pads never auto-inherit.
  * 2 means accepted reassignment awaiting owned cleanup; conflict returns -1. */
