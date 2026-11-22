@@ -538,6 +538,20 @@ int main(void)
     event(1, 0, 25510);
     event(2, 0, 25511);
     assert(sessions[1]);
+    int prior_closes = closes;
+    unavailable_user = 1;
+    uc_bt_poll(25512);
+    assert(uc_bt_running() && closes == prior_closes && !sessions[1]);
+    assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"waiting_for_user\":true"));
+    unavailable_user = 0;
+    event(2, 0, 25513);
+    assert(!sessions[1]); /* A returning user cannot silently reclaim the controller. */
+    assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 0);
+    event(2, 0, 25514);
+    assert(sessions[0] && ready[0] && closes == prior_closes);
+    assert(uc_bt_assign(0, "06:05:04:03:02:01", 1) == 0);
+    event(2, 0, 25515);
+    assert(sessions[1]);
     uint64_t old_owner_session = sessions[1];
     assert(uc_bt_reselect_user(0, "00:00:00:00:00:00") < 0);
     cleanup_fail = 1;
@@ -545,9 +559,9 @@ int main(void)
     assert(uc_bt_reselect_user(0, "06:05:04:03:02:01") == 2);
     assert(sessions[1] == old_owner_session && !sessions[0]);
     cleanup_fail = 0;
-    uc_bt_poll(25512);
+    uc_bt_poll(25516);
     assert(!sessions[1] && !sessions[0]);
-    event(2, 0, 25513);
+    event(2, 0, 25517);
     assert(sessions[0] && ready[0]);
     assert(uc_bt_status_json(json, sizeof json) && strstr(json, "\"system_assignment\":true"));
     assert(!uc_bt_stop());

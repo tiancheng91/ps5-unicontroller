@@ -53,6 +53,7 @@ typedef struct {
 
 typedef struct {
     int fd;
+    void (*wait_hook)(void);
     struct usb_fs_endpoint ep[N_XFER];
     void *bufp[N_XFER][1];
     uint32_t lenp[N_XFER][1];
@@ -129,6 +130,8 @@ static int xfer_open(usb_ctx *c, int index, int ep_addr, int size)
     op.ep_no = (uint8_t)ep_addr;
     op.max_bufsize = (uint32_t)size;
     op.max_frames = 1;
+    if (c->wait_hook)
+        c->wait_hook();
     if (ioctl(c->fd, USB_FS_OPEN, &op) != 0) {
         log_line("usb: open endpoint %#x as transfer %d: errno %d", ep_addr, index, errno);
         return 0;
@@ -308,6 +311,8 @@ static int op_acl_send(void *ctx, const unsigned char *pkt, int len)
             log_line("usb: ACL out still busy");
             return 0;
         }
+        if (c->wait_hook)
+            c->wait_hook();
         usleep(500);
     }
     memcpy(c->buf[c->out_idx], pkt, (size_t)len);
@@ -493,13 +498,14 @@ static const hci_ops k_usb_ops = {
     op_cmd, op_acl_send, op_pump, op_next_event, op_next_acl, op_close, op_diag,
 };
 
-int hci_usb_open(hci_t *out)
+int hci_usb_open(hci_t *out, void (*wait_hook)(void))
 {
     usb_ctx *c = &g_ctx;
     struct usb_fs_init init;
     int i;
 
     memset(c, 0, sizeof *c);
+    c->wait_hook = wait_hook;
     c->fd = open(NODE, O_RDWR);
     if (c->fd < 0) {
         log_line("usb: open %s: errno %d", NODE, errno);

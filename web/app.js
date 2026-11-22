@@ -317,6 +317,7 @@ document.addEventListener("alpine:init", () => {
         identity: wireless ? d.address : d.node,
         detail: d.vid + ":" + d.pid + " · " + (d.profile || "HID"),
         input: this.t("frames", { count: d.input_frames }),
+        waitingForUser: d.waiting_for_user === true,
         inputStatus:
           !wireless && d.waiting_for_input === true
             ? this.t("usbHidWaiting", {
@@ -325,7 +326,13 @@ document.addEventListener("alpine:init", () => {
                   : 30,
               })
             : this.t(Number(d.input_frames) > 0 ? "inputParsed" : "inputWaiting"),
-        stateText: this.t(d.output_active || d.bound ? "outputActive" : "outputWaiting"),
+        stateText: this.t(
+          d.waiting_for_user
+            ? "waitingForUser"
+            : d.output_active || d.bound
+              ? "outputActive"
+              : "outputWaiting",
+        ),
         batteryText:
           Number(d.battery) >= 0
             ? this.t("battery", { percent: d.battery })

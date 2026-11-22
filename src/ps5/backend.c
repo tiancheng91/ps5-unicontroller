@@ -178,8 +178,8 @@ static int user_live(int32_t user)
 int uc_backend_transport_ready(void)
 {
     uint64_t current = now_ms();
-    return ready && power_status == 0 && working_since && current >= working_since &&
-           current - working_since >= 5000;
+    return ready && !suspend_event && power_status == 0 && working_since &&
+           current >= working_since && current - working_since >= 5000;
 }
 int uc_backend_can_start(int32_t user)
 {

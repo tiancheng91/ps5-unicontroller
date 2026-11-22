@@ -89,6 +89,18 @@ static uint64_t millis(void)
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
 }
+static void poll_during_bluetooth_wait(void)
+{
+    uc_backend_poll();
+    if (stop_requested || !uc_backend_transport_ready()) {
+        if (uc_usb_running())
+            uc_usb_suspend();
+        return;
+    }
+    if (uc_usb_running())
+        uc_usb_poll(millis());
+    (void)uc_core_tick(millis());
+}
 static int nonblock(int fd)
 {
     int f = fcntl(fd, F_GETFL, 0);
@@ -1158,6 +1170,7 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
     signal(SIGTERM, request_stop);
     signal(SIGINT, request_stop);
     signal(SIGCONT, request_resume);
+    uc_bt_set_wait_hook(poll_during_bluetooth_wait);
     while (!stop_requested) {
         uc_backend_poll();
         int power = uc_backend_power_state();
@@ -1220,8 +1233,8 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
                                                                            : UC_AUTO_DESKTOP);
             bt_start_queued = bt_start_automatic = 0;
             usb_start_queued = 0;
-            uc_bt_suspend();
             uc_usb_suspend();
+            uc_bt_suspend();
             uc_core_suspend();
             active_session = 0;
             active_user = -1;
@@ -1376,8 +1389,9 @@ int uc_runtime_run(const char *bind_address, unsigned short port, const char *se
         close(listener);
     bt_start_queued = 0;
     usb_start_queued = 0;
-    (void)uc_bt_stop();
+    uc_bt_set_wait_hook(NULL);
     (void)uc_usb_stop();
+    (void)uc_bt_stop();
     uc_core_disable();
     uc_backend_cancel_pending();
     return run_failed ? -1 : 0;

@@ -8,7 +8,6 @@
 #include "../ps5/uc_backend.h"
 #ifdef UC_PS5
 #include "bluetooth/hci_usb.h"
-#include "common/util.h"
 #endif
 #include <stdio.h>
 #include <string.h>
@@ -30,13 +29,14 @@ typedef struct {
     uint64_t last_input, frames, connected_at, rumble_test_last;
     int rumble_test_seen;
     int notice_pending, pending, closing, assigning, failed;
-    int reselecting;
+    int reselecting, waiting_for_user;
     int32_t user, next_user;
     uint64_t session, sequence, submitted;
 } Slot;
 static struct {
     host_t *host;
     uc_bt_factory factory;
+    void (*wait_hook)(void);
     char database[256];
     Slot slots[HOST_MAX_PADS];
     int32_t user;
@@ -182,8 +182,8 @@ static void on_state(void *unused, int slot, const pad_state *state)
         bt.selected = slot;
         s->user = 0;
         log_code("system_choice_source_selected");
-    } else if (!s->failed && !bt.system_assignment && bt.selected == -1 && s->user < 0 &&
-               uc_backend_can_start(bt.user)) {
+    } else if (!s->failed && !s->waiting_for_user && !bt.system_assignment && bt.selected == -1 &&
+               s->user < 0 && uc_backend_can_start(bt.user)) {
         int taken = 0;
         for (int i = 0; i < HOST_MAX_PADS; i++)
             if (bt.slots[i].user == bt.user)
@@ -219,13 +219,22 @@ static void on_disconnect(void *unused, int slot)
     }
     log_code("physical_disconnected");
 }
+void uc_bt_set_wait_hook(void (*hook)(void))
+{
+    bt.wait_hook = hook;
+}
+static void service_transition(void)
+{
+    if ((bt.opening || bt.stopping) && bt.wait_hook)
+        bt.wait_hook();
+}
 static host_t *default_open(const char *path, const host_events *events, void *unused)
 {
     (void)unused;
 #ifdef UC_PS5
     hci_t hci;
     memset(&hci, 0, sizeof(hci));
-    if (!hci_usb_open(&hci))
+    if (!hci_usb_open(&hci, service_transition))
         return NULL;
     host_t *host = host_open(hci, path, events);
     if (!host && hci.ops && hci.ops->close)
@@ -249,21 +258,16 @@ int uc_bt_set_factory(const uc_bt_factory *factory, const char *path)
     snprintf(bt.database, sizeof(bt.database), "%s", path ? path : "/data/unicontroller/bonds.db");
     return 0;
 }
-#ifdef UC_PS5
-static void startup_idle(void *unused)
+static void host_idle(void *unused)
 {
     (void)unused;
-    /* Keep power observation live during bounded HCI initialization waits. */
-    uc_backend_poll();
-    /* Normal host_poll callbacks use the caller's captured bt.now. Advancing
-     * core's clock here would make that same poll's input appear regressed. */
-    if (bt.opening || bt.stopping) {
-        long current = now_ms();
-        if (current >= 0)
-            (void)uc_core_tick((uint64_t)current);
-    }
-}
+    if (bt.opening || bt.stopping)
+        service_transition();
+#ifdef UC_PS5
+    else
+        uc_backend_poll();
 #endif
+}
 static int start_transport(int32_t user, int system_assignment)
 {
     if (bt.host || bt.opening || bt.stopping || any_output())
@@ -283,12 +287,8 @@ static int start_transport(int32_t user, int system_assignment)
     bt.opening = 1;
     host_events events = {.on_connect = on_connect,
                           .on_state = on_state,
-                          .on_disconnect = on_disconnect
-#ifdef UC_PS5
-                          ,
-                          .idle = startup_idle
-#endif
-    };
+                          .on_disconnect = on_disconnect,
+                          .idle = host_idle};
     host_t *(*open_host)(const char *, const host_events *, void *) =
         bt.factory.open ? bt.factory.open : default_open;
     bt.host = open_host(bt.database, &events, bt.factory.userdata);
@@ -379,15 +379,13 @@ void uc_bt_poll(uint64_t now)
     }
     if (!bt.host)
         return;
-    int working_user = uc_backend_can_start(bt.user);
-    for (int i = 0; i < HOST_MAX_PADS; i++)
-        if (bt.slots[i].user > 0 && uc_backend_can_start(bt.slots[i].user))
-            working_user = 1;
-    if (bt.system_assignment ? !uc_backend_transport_ready() : !working_user) {
-        bt.error = "power_or_user_unavailable";
+    if (!uc_backend_transport_ready()) {
+        bt.error = "power_unavailable";
         (void)uc_bt_stop();
         return;
     }
+    if (bt.user > 0 && !uc_backend_can_start(bt.user))
+        bt.user = -1;
     host_poll(bt.host, 0);
     if (host_transport_lost(bt.host)) {
         bt.error = "transport_lost_manual_restart_required";
@@ -418,16 +416,16 @@ void uc_bt_poll(uint64_t now)
         }
         if (s->failed || !s->connected || s->user < 0)
             continue;
-        if (s->user == 0 ? !uc_backend_transport_ready() : !uc_backend_can_start(s->user)) {
-            s->valid = 0;
-            if (cleanup_output(s))
-                s->closing = 1;
-            else {
-                s->user = -1;
-                if (bt.selected == slot)
-                    bt.selected = -1;
-            }
-            bt.error = "assigned_user_unavailable";
+        if (s->user > 0 && !uc_backend_can_start(s->user)) {
+            uc_log_info("[bluetooth] slot=%d user=%d signed out; releasing output, retaining link",
+                        slot, s->user);
+            (void)host_rumble_stop(bt.host, slot);
+            s->valid = s->notice_pending = s->reselecting = 0;
+            s->waiting_for_user = 1;
+            s->user = s->next_user = -1;
+            if (bt.selected == slot)
+                bt.selected = -1;
+            (void)cleanup_output(s); /* Keeps closing set until removal succeeds. */
             continue;
         }
         if (!s->valid || now < s->last_input) {
@@ -575,6 +573,7 @@ int uc_bt_assign(int slot, const char *address, int32_t user)
         if (i != slot &&
             (bt.slots[i].user == user || (bt.slots[i].assigning && bt.slots[i].next_user == user)))
             return -1;
+    s->waiting_for_user = 0;
     s->failed = 0; /* Explicit assignment permits one new creation attempt. */
     s->notice_pending = 0;
     (void)host_rumble_stop(bt.host, slot);
@@ -613,6 +612,7 @@ int uc_bt_reselect_user(int slot, const char *address)
     if (!uc_core_system_assignment_available(s->session))
         return -3;
 
+    s->waiting_for_user = 0;
     s->reselecting = 1;
     s->failed = s->notice_pending = s->valid = 0;
     (void)host_rumble_stop(bt.host, slot);
@@ -709,6 +709,7 @@ size_t uc_bt_status_json(char *buffer, size_t capacity)
             ADD("-1");
         ADD(",\"system_assignment\":%s,\"output_active\":%s", s->user == 0 ? "true" : "false",
             own_output(s) ? "true" : "false");
+        ADD(",\"waiting_for_user\":%s", s->waiting_for_user ? "true" : "false");
         ADD(",\"output_failed\":%s", s->failed ? "true" : "false");
         ADD(",\"settings_key\":\"%s\",\"rumble\":%s,\"swap_ab\":%s,\"known_device\":%s,\"rumble_"
             "available\":%s,\"rumble_enabled\":%s",

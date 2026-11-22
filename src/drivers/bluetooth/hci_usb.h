@@ -10,6 +10,6 @@
 #include "hci.h"
 
 /* Opens the controller. Returns 0 on failure, with the reason logged. */
-int hci_usb_open(hci_t *out);
+int hci_usb_open(hci_t *out, void (*wait_hook)(void));
 
 #endif

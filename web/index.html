@@ -92,7 +92,9 @@
                         <span class="tag" x-text="device.transport"></span>
                       </div>
                       <div class="device-metadata">
-                        <span x-label="connected"></span><span x-text="device.batteryText"></span
+                        <span x-label="connected"></span
+                        ><span x-show="device.waitingForUser" x-label="waitingForUser"></span
+                        ><span x-text="device.batteryText"></span
                         ><span x-text="device.inputStatus"></span>
                       </div>
                     </div>

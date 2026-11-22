@@ -6,6 +6,8 @@
 /* Single event-loop owner. Explicit start only; no transport auto-reopen.
  * User 0 requests system user selection; positive IDs must be signed in.
  * 0 success, 2 cleanup pending/busy, -1 unsupported/error. */
+/* Pump other runtime work during synchronous open/close only. */
+void uc_bt_set_wait_hook(void (*hook)(void));
 int uc_bt_start(int32_t user);
 /* Assign a connected slot only if its current canonical address still matches.
  * New assignments require a fresh report; additional pads never auto-inherit.
